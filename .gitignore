@@ -1,0 +1,28 @@
+# Go
+*.exe
+*.test
+*.out
+/dist/
+/bin/
+vendor/
+
+# Node / React (player/)
+node_modules/
+build/
+.env
+.env.*
+!.env.example
+
+# Editors
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Audio + plan output (local-only sinks)
+*.wav
+/recordings/
+
+# Claude handoff state — per-machine, regenerable; never commit
+.claude/handoff/
