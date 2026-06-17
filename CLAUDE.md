@@ -33,7 +33,7 @@ Hub-and-spoke around the **narration plan** — one JSON-on-wire schema serving 
 - **Prose without intelligence.** Under ~120 words / ~45 s → read verbatim (`Status = degraded`). Over → refuse with `RefuseNoIntelligence` (`Status = refused`). Never a silent invented gist.
 - **Oversized-block splitting.** Prose: ~20 lines / ~800 chars. Structured-with-clean-seams (func boundary / top-level YAML key / table row): ~60–80 lines / ~2000–3000 chars. Split only on clean structural seams — never arbitrary cuts.
 - **Audio format:** 24 kHz mono PCM/WAV (Kokoro native rate, no resampling).
-- **Voice selection:** ≥2 Kokoro voices wired phase one (female default + male). MCP `gender` arg picks one; `voice` hint in `PlanDefaults` is engine-neutral.
+- **Voice selection:** ≥2 Kokoro voices wired phase one (`af_bella` female default + `am_michael` male). MCP `gender` arg picks one; `voice` hint in `PlanDefaults` is engine-neutral.
 - **MCP `speak` tool shape:** `{text|source, level, sink, gender}`. `gender` default `female`. Summarization rides on client LLM via MCP sampling — zero extra cost.
 - **Intelligence caching:** by `(block content hash, level, model)`. Escalation doesn't re-bill.
 - **Persistent-sink stale behavior:** on `content_hash` or path mismatch, mark stale in `manifest.json`. Do not auto-regenerate.
