@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Kokoro TTS subprocess wrapper.
+#
+# Activates the project-local venv and dispatches to the Python runner.
+# Reads text from --text and writes a 24 kHz mono PCM s16le WAV to stdout.
+#
+# See render/sherpa/README.md for install + invocation + failure modes.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="$SCRIPT_DIR/.venv"
+
+if [[ ! -f "$VENV/bin/activate" ]]; then
+  echo "kokoro: venv missing at $VENV — run install steps in render/sherpa/README.md" >&2
+  exit 2
+fi
+
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
+
+exec python3 "$SCRIPT_DIR/scripts/kokoro_runner.py" "$@"
