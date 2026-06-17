@@ -23,6 +23,13 @@ build/
 # Audio + plan output (local-only sinks)
 *.wav
 /recordings/
+/tmp/kokoro-*
+
+# Python venv (kokoro subprocess runtime — per-machine)
+.venv/
+
+# TTS model weights (large, downloaded out-of-band per render/sherpa/README.md)
+models/
 
 # Claude handoff state — per-machine, regenerable; never commit
 .claude/handoff/
