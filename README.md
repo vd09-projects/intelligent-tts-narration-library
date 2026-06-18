@@ -20,6 +20,8 @@ go run ./cmd/narrate --file docs/samples/sample.md
 
 Expected: speakers play the document one block at a time, including an honest spoken refusal for the bare-image block. Exit code `0` on success.
 
+The ephemeral sink cleans up its temp WAV directory at the end of the run. The path is printed to stdout while the run completes; the dir is gone by the time the process exits. Persistent sink (phase 2) will own its own retention policy.
+
 ## CLI flags
 
 | Flag | Default | Choices | Meaning |
