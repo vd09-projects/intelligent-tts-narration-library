@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "plan_id": "01HXXAAA00BBBCCDDFFGGHHJJKK",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "testdata/sample.md",
+    "content_hash": "sha256:fake",
+    "adapter": "file"
+  },
+  "defaults": {
+    "level": 2,
+    "voice": "",
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "blk-001",
+      "order": 0,
+      "class": "prose",
+      "level": 2,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "Hello world."
+      },
+      "segments": [
+        {"id": "seg-001-1", "kind": "speech", "text": "Hello world."}
+      ],
+      "provenance": {
+        "voiced_by": "verbatim",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    },
+    {
+      "id": "blk-002",
+      "order": 1,
+      "class": "config",
+      "level": 2,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 3,
+        "end_line": 5,
+        "raw_excerpt": "replicas: 3"
+      },
+      "segments": [
+        {"id": "seg-002-1", "kind": "speech", "text": "Config snippet: replicas set to three."}
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    },
+    {
+      "id": "blk-003",
+      "order": 2,
+      "class": "unknown",
+      "level": 2,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 7,
+        "end_line": 7,
+        "raw_excerpt": "![](diagram.png)"
+      },
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "Image at line 7 has no description; skipping.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 7,
+          "end_line": 7
+        }
+      },
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    }
+  ]
+}
