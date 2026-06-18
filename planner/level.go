@@ -311,9 +311,8 @@ func extractTopLevelDecls(body string) []string {
 			continue
 		}
 		for _, p := range prefixes {
-			if strings.HasPrefix(ln, p) {
-				name := strings.TrimPrefix(ln, p)
-				name = strings.TrimSpace(name)
+			if rest, ok := strings.CutPrefix(ln, p); ok {
+				name := strings.TrimSpace(rest)
 				// Trim at first non-identifier char.
 				cut := len(name)
 				for i, c := range name {
@@ -807,17 +806,11 @@ func splitTable(rb rawBlock) []rawBlock {
 	}
 	header, sep := lines[0], lines[1]
 	body := lines[2:]
-	rowsPerChunk := structuredMaxLines - 2
-	if rowsPerChunk < 4 {
-		rowsPerChunk = 4
-	}
+	rowsPerChunk := max(structuredMaxLines-2, 4)
 	var blocks []rawBlock
 	lineNo := rb.startLine + 2
 	for i := 0; i < len(body); i += rowsPerChunk {
-		end := i + rowsPerChunk
-		if end > len(body) {
-			end = len(body)
-		}
+		end := min(i+rowsPerChunk, len(body))
 		chunk := strings.Join(append([]string{header, sep}, body[i:end]...), "\n")
 		blocks = append(blocks, rawBlock{
 			text:      chunk,

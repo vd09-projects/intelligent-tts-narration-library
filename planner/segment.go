@@ -251,10 +251,7 @@ func byteSpanToLines(src []byte, startByte, endByte int) (int, int) {
 		}
 	}
 	endLine := startLine
-	last := endByte - 1
-	if last < startByte {
-		last = startByte
-	}
+	last := max(endByte-1, startByte)
 	if last >= len(src) {
 		last = len(src) - 1
 	}

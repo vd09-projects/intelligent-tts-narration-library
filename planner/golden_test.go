@@ -59,7 +59,6 @@ func goldenCases() []goldenCase {
 func TestGoldenFixtures(t *testing.T) {
 	defer installDeterministicSeams(t)()
 	for _, tc := range goldenCases() {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			inPath := filepath.Join("testdata", tc.inputFile)
 			data, err := os.ReadFile(inPath)

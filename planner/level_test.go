@@ -125,7 +125,7 @@ func TestLevel_OversizedProseSplits(t *testing.T) {
 	lex := compileLexicon()
 	// Build prose well past 800 chars with sentence boundaries.
 	var b strings.Builder
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		b.WriteString("Sentence number ")
 		for range 10 {
 			b.WriteString("filler ")
@@ -143,7 +143,7 @@ func TestLevel_OversizedCodeSplitsOnDecls(t *testing.T) {
 	t.Parallel()
 	lex := compileLexicon()
 	var b strings.Builder
-	for i := 0; i < 80; i++ {
+	for i := range 80 {
 		b.WriteString("func F")
 		b.WriteByte(byte('A' + i%26))
 		b.WriteString("() {}\n  // body line\n")

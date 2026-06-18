@@ -49,7 +49,7 @@ func TestDegrade_ProseLongRefused(t *testing.T) {
 	t.Parallel()
 	lex := compileLexicon()
 	var b strings.Builder
-	for i := 0; i < 150; i++ {
+	for range 150 {
 		b.WriteString("word ")
 	}
 	rb := rawBlock{text: b.String(), startLine: 1, endLine: 5, hint: hintProse}
