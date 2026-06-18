@@ -4,6 +4,23 @@
 
 ```yaml
 scopes:
+  - slug: sink-ephemeral-issue-6
+    title: Ephemeral OutputSink + sink interface (issue #6)
+    created: 2026-06-19
+    reasoning: |
+      Build + review + iterate cycle for GitHub issue #6 (sink/ interface
+      replacing stub + sink/ephemeral concrete impl shelling to afplay).
+      Plan was approved out-of-band by user; this scope skips planner-task
+      and goes straight to implementation-build. Issue-numbered naming
+      continues the convention.
+  - slug: render-sherpa-issue-5
+    title: Renderer + Kokoro subprocess (issue #5)
+    created: 2026-06-18
+    reasoning: |
+      Plan + build + review + iterate cycle for GitHub issue #5
+      (render/render.go interface + render/sherpa/ subprocess backend
+      wrapping the existing scripts/kokoro launcher). Issue-numbered
+      naming continues the convention.
   - slug: planner-issue-4
     title: planner/ intelligence-light core (issue #4)
     created: 2026-06-18
