@@ -8,6 +8,60 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-18-pipeline-composition-root-pattern
+    title: "Pipeline composition root pattern"
+    date: 2026-06-18
+    status: accepted
+    category: architecture
+    tags: [pipeline, composition-root, cmd, mcp, phase-one, issue-7]
+    path: architecture/2026-06-18-pipeline-composition-root-pattern.md
+    summary: "pipeline.Pipeline is the only struct holding concrete edge instances; Narrate is the only public method; ctor takes interfaces so cmd/narrate and cmd/narrate-mcp reuse it without duplication. Rejected per-cmd wiring and global singleton."
+
+  - id: 2026-06-18-cli-flag-taxonomy-named-only
+    title: "cmd/narrate CLI flag taxonomy: named flags only"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [cmd/narrate, cli, cobra, flags, phase-one, issue-7]
+    path: convention/2026-06-18-cli-flag-taxonomy-named-only.md
+    summary: "--file required, --level {1|2|3} default 1, --sink {ephemeral|persistent} default ephemeral, --gender {female|male} default female. Named flags only — no positional args. Engine-neutral --gender maps to engine voice ids inside the renderer."
+
+  - id: 2026-06-18-persistent-sink-deferred-fast-error
+    title: "--sink=persistent deferred to phase 2 with fast-error"
+    date: 2026-06-18
+    status: accepted
+    category: tradeoff
+    tags: [cmd/narrate, sink, persistent, honesty-rule, phase-one, issue-7]
+    path: tradeoff/2026-06-18-persistent-sink-deferred-fast-error.md
+    summary: "Vertical slice rejects --sink=persistent fast with errPersistentNotImplemented and exit code 2. Rejected silent fallback to ephemeral. Honest contract beats silent fallback — extends the project's refusal-as-data discipline from the narration layer to the CLI surface."
+
+  - id: 2026-06-18-single-canonical-demo-doc
+    title: "Single canonical demo doc at docs/samples/sample.md"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [docs, samples, fixtures, demo, phase-one, issue-7]
+    path: convention/2026-06-18-single-canonical-demo-doc.md
+    summary: "One 561-word file covering prose + code + list + table + bare-image refusal serves the README quickstart, the manual smoke test, and the planner benchmark. Rejected a directory of per-class fixtures because drift across siblings is worse than a single concentrated example."
+
+  - id: 2026-06-18-pipeline-manual-smoke-build-tag-gating
+    title: "Pipeline manual smoke test gated by //go:build manual"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [pipeline, testing, build-tags, manual-smoke, phase-one, issue-7]
+    path: convention/2026-06-18-pipeline-manual-smoke-build-tag-gating.md
+    summary: "pipeline/pipeline_manual_smoke_test.go uses //go:build manual matching the sink-side pattern. Default `go test ./...` skips it; `go test -tags manual ./pipeline/...` runs it. Rejected env-var gating because env-var skips are invisible in `go test` output."
+
+  - id: 2026-06-18-two-track-benchmark-methodology
+    title: "Two-track benchmark methodology"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [pipeline, benchmark, performance, planner, phase-one, issue-7]
+    path: convention/2026-06-18-two-track-benchmark-methodology.md
+    summary: "BenchmarkNarratePlanner measures planner alone (gate 100 ms, landed 0.344 ms — 290× headroom). BenchmarkNarrateEndToEnd uses noop renderer + sink so pipeline overhead is observable separately. Rejected single end-to-end bench with real Kokoro because subprocess latency would mask planner regressions."
+
   - id: 2026-06-19-sink-receipt-planned-duration-not-wall-time
     title: "SinkReceipt.TotalDurationMs reports planned duration, not subprocess wall time"
     date: 2026-06-19
