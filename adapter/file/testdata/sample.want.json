@@ -1,0 +1,118 @@
+{
+  "Source": {
+    "kind": "file",
+    "content_hash": "3fdf5db4c5a8b2a867c66d8ef3511751457b08cd4a1b7abebc1bc8f69ddef0c8",
+    "adapter": "file@0.1.0"
+  },
+  "Bytes": "IyBTYW1wbGUKCkEgc2hvcnQgcGFyYWdyYXBoIHRoYXQgZXhpc3RzIHNvbGVseSB0byBnaXZlIHRoZSBmaWxlIGFkYXB0ZXIgc29tZXRoaW5nCmRldGVybWluaXN0aWMgdG8gaGFzaC4KCmBgYHlhbWwKc2VydmljZToKICBuYW1lOiBkZW1vCiAgcmVwbGljYXM6IDIKYGBgCgpUcmFpbGluZyBwYXJhZ3JhcGggYWZ0ZXIgdGhlIGZlbmNlZCBibG9jay4K",
+  "OffsetMap": [
+    {
+      "StartByte": 0,
+      "EndByte": 9,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1
+      }
+    },
+    {
+      "StartByte": 9,
+      "EndByte": 10,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 2,
+        "end_line": 2
+      }
+    },
+    {
+      "StartByte": 10,
+      "EndByte": 82,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 3,
+        "end_line": 3
+      }
+    },
+    {
+      "StartByte": 82,
+      "EndByte": 105,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 4,
+        "end_line": 4
+      }
+    },
+    {
+      "StartByte": 105,
+      "EndByte": 106,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 5,
+        "end_line": 5
+      }
+    },
+    {
+      "StartByte": 106,
+      "EndByte": 114,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 6,
+        "end_line": 6
+      }
+    },
+    {
+      "StartByte": 114,
+      "EndByte": 123,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 7,
+        "end_line": 7
+      }
+    },
+    {
+      "StartByte": 123,
+      "EndByte": 136,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 8,
+        "end_line": 8
+      }
+    },
+    {
+      "StartByte": 136,
+      "EndByte": 150,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 9,
+        "end_line": 9
+      }
+    },
+    {
+      "StartByte": 150,
+      "EndByte": 154,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 10,
+        "end_line": 10
+      }
+    },
+    {
+      "StartByte": 154,
+      "EndByte": 155,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 11,
+        "end_line": 11
+      }
+    },
+    {
+      "StartByte": 155,
+      "EndByte": 198,
+      "Origin": {
+        "kind": "line_range",
+        "start_line": 12,
+        "end_line": 12
+      }
+    }
+  ]
+}
