@@ -41,7 +41,6 @@ const (
 
 // Wrapper exit codes (mirrors render/sherpa/README.md "Failure modes").
 const (
-	exitOK             = 0
 	exitBadArg         = 2 // unsupported voice OR empty text OR venv missing.
 	exitModelMissing   = 3 // models/ files absent.
 	exitSampleRateBad  = 4 // kokoro-onnx returned non-24000 Hz.
