@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
-	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
@@ -64,17 +63,6 @@ func (f *fakeSink) Consume(_ context.Context, p plan.NarrationPlan, res render.R
 	f.gotPlan = p
 	f.gotRes = res
 	return f.receipt, f.err
-}
-
-// fakeIntelligence is a stub that records calls; pipeline tests typically
-// pass nil to exercise the deterministic path.
-type fakeIntelligence struct {
-	calls int
-}
-
-func (f *fakeIntelligence) Voice(_ context.Context, _ intelligence.IntelligenceRequest) (intelligence.IntelligenceResult, error) {
-	f.calls++
-	return intelligence.IntelligenceResult{Refused: true, RefusalNote: "not used"}, nil
 }
 
 // helpers -------------------------------------------------------------------

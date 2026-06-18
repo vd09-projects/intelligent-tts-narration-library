@@ -155,8 +155,10 @@ func runNarrate(ctx context.Context, args flagSet, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s\n",
-		receipt.BlocksPlayed, receipt.TotalDurationMs, outDir)
+	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s\n",
+		receipt.BlocksPlayed, receipt.TotalDurationMs, outDir); err != nil {
+		return fmt.Errorf("write summary: %w", err)
+	}
 	return nil
 }
 
@@ -171,7 +173,7 @@ func main() {
 	cmd.SetOut(deps.stdout)
 	cmd.SetErr(deps.stderr)
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
-		fmt.Fprintln(deps.stderr, "narrate: "+err.Error())
+		_, _ = fmt.Fprintln(deps.stderr, "narrate: "+err.Error())
 		// Distinguish flag errors (cobra returns *flagError) from runtime
 		// errors at the exit code level. Persistent-sink rejection counts
 		// as a flag-style error per Decision v3.
