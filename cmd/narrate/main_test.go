@@ -102,7 +102,6 @@ func TestFlagSet_Validate_InvalidLevel(t *testing.T) {
 	t.Parallel()
 	cases := []int{0, -1, 4, 99}
 	for _, lvl := range cases {
-		lvl := lvl
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			a := flagSet{File: "/tmp/x.md", Level: lvl, Sink: "ephemeral", Gender: "female"}
@@ -207,7 +206,6 @@ func TestExitCodeFor_RoutesFlagErrorsTo2(t *testing.T) {
 		{"unrelated", errors.New("kaboom"), 1},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := exitCodeFor(tc.err); got != tc.want {
@@ -235,7 +233,6 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 		{"success path does not call exit", nil, 0, 0},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			hits := 0

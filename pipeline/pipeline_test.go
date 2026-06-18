@@ -266,7 +266,6 @@ func TestPipeline_New_PanicsOnNilEdges(t *testing.T) {
 		{"nil sink", &fakeAdapter{}, &fakeRenderer{}, nil},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			defer func() {
