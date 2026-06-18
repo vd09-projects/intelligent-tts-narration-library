@@ -1,0 +1,6 @@
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  replicas: 3
+```

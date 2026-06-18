@@ -202,7 +202,7 @@ func looksLikeASCIIDiagram(text string) bool {
 		if hasTwoDistinctRunes(ln, diagramRunes) || hasTwoDistinctRunes(ln, asciiAlt) {
 			hits++
 		}
-		if hits >= 3 {
+		if hits >= 2 {
 			return true
 		}
 	}

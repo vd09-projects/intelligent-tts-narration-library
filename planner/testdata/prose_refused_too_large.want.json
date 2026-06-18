@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "prose_refused_too_large.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 1,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "prose",
+      "level": 1,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "A long prose passage that is intentionally well past the verbatim threshold of one hundred and twenty words so that the planner has to refuse with RefuseNoIntelligence rather than silently invent a gist. We pad with additional clauses, additional sentences, and additional structure so the word counter clears the threshold reliably. The intent is to exercise the honesty rule in the most common nil intelligence path without depending on any specific sentence boundary heuristic. We continue to add words until the threshold is safely crossed. Even more words follow. And more. And more still. The point is the threshold check and the resulting refusal carries Spoken true and a populated SourceMap."
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A long prose passage that is intentionally well past the verbatim threshold of one hundred and twenty words so that the planner has to refuse with RefuseNoIntelligence rather than silently invent a gist. We pad with additional clauses, additional sentences, and additional structure so the word counter clears the threshold reliably. The intent is to exercise the honesty rule in the most common nil intelligence path without depending on any specific sentence boundary heuristic. We continue to add words until the threshold is safely crossed. Even more words follow. And more. And more still. The point is the threshold check and the resulting refusal carries Spoken true and a populated SourceMap."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "verbatim",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "intelligence_unavailable",
+      "severity": "info",
+      "message": "prose block under 120 words read verbatim without an intelligence adapter",
+      "block_id": "b001"
+    }
+  ]
+}

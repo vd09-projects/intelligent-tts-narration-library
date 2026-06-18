@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "prose_l1_short.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 2,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "prose",
+      "level": 2,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "A short paragraph about how narration plans turn meaning into voiced words."
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "This is the L2 summary expanding on the short paragraph."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "intelligence",
+        "deterministic": false,
+        "model": "scripted@test",
+        "level_asked": 2
+      }
+    }
+  ]
+}

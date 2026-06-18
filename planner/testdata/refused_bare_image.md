@@ -1,0 +1,1 @@
+![throughput chart](bench.png)

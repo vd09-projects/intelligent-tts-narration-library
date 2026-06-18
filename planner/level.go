@@ -122,7 +122,7 @@ func levelHeading(rb rawBlock, target plan.Level, lex *compiledLex) levelResult 
 func levelList(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 	items := extractListItems(rb.text)
 	var spoken strings.Builder
-	spoken.WriteString(fmt.Sprintf("List of %d items: ", len(items)))
+	fmt.Fprintf(&spoken, "List of %d items: ", len(items))
 	for i, item := range items {
 		spoken.WriteString(voice(item, lex))
 		if i < len(items)-1 {
@@ -264,6 +264,25 @@ func levelCode(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 	return levelResult{}
 }
 
+// isIdentChar — identifier-rune predicate for declared-symbol scraping.
+// Underscore + ASCII letter + ASCII digit. Kept separate so staticcheck
+// doesn't dock the inline form for De Morgan's law applicability.
+func isIdentChar(c rune) bool {
+	if c == '_' {
+		return true
+	}
+	if c >= 'a' && c <= 'z' {
+		return true
+	}
+	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return false
+}
+
 func humanLang(lang string) string {
 	switch strings.ToLower(lang) {
 	case "go", "golang":
@@ -298,8 +317,7 @@ func extractTopLevelDecls(body string) []string {
 				// Trim at first non-identifier char.
 				cut := len(name)
 				for i, c := range name {
-					if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-						(c >= '0' && c <= '9')) {
+					if !isIdentChar(c) {
 						cut = i
 						break
 					}
@@ -474,29 +492,30 @@ func kvHumanize(line string) string {
 
 // levelTable — L1 = "a {C}-column, {R}-row table". L2 = headers + first/
 // last rows. L3 = read every row meaningfully.
+//
+// Row counting: if row[1] is a separator (markdown's `|---|---|`), then
+// row[0] is the header and data rows start at index 2. Otherwise every
+// non-separator row is data.
 func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 	rows := parseTableRows(rb.text)
 	cols := 0
 	if len(rows) > 0 {
 		cols = len(rows[0])
 	}
-	dataRows := rows
-	if len(rows) > 0 && isSeparatorRow(rows[0]) {
-		dataRows = rows[1:]
-	}
-	if len(rows) > 1 && isSeparatorRow(rows[1]) {
-		dataRows = append([]([]string){rows[0]}, rows[2:]...)
+	headerIdx := -1
+	var dataRows [][]string
+	if len(rows) >= 2 && isSeparatorRow(rows[1]) {
+		headerIdx = 0
+		dataRows = rows[2:]
+	} else {
+		for _, r := range rows {
+			if isSeparatorRow(r) {
+				continue
+			}
+			dataRows = append(dataRows, r)
+		}
 	}
 	nRows := len(dataRows)
-	if nRows > 0 && isSeparatorRow(dataRows[0]) {
-		dataRows = dataRows[1:]
-		nRows = len(dataRows)
-	}
-
-	headerIdx := -1
-	if len(rows) > 1 && isSeparatorRow(rows[1]) {
-		headerIdx = 0
-	}
 
 	l1 := fmt.Sprintf("A %d-column, %d-row table.", cols, nRows)
 	facts := []string{fmt.Sprintf("class: table, cols: %d, rows: %d", cols, nRows)}

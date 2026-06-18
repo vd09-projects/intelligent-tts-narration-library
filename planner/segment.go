@@ -199,19 +199,45 @@ func nodeHint(n ast.Node, src []byte) (blockKindHint, string) {
 }
 
 // nodeByteSpan — compute the byte span of a top-level node within src.
-// Goldmark exposes Lines() for block nodes; we take the first line's
-// Start and the last line's Stop. For nodes without lines, return -1.
-func nodeByteSpan(n ast.Node, _ []byte) (int, int) {
+// Goldmark exposes Lines() for leaf block nodes; container nodes (lists,
+// tables) have empty Lines() and store their range in their children.
+// For containers we walk descendants and union the byte spans.
+func nodeByteSpan(n ast.Node, src []byte) (int, int) {
 	if n.Type() != ast.TypeBlock {
 		return -1, -1
 	}
 	lines := n.Lines()
-	if lines == nil || lines.Len() == 0 {
-		return -1, -1
+	if lines != nil && lines.Len() > 0 {
+		first := lines.At(0)
+		last := lines.At(lines.Len() - 1)
+		return first.Start, last.Stop
 	}
-	first := lines.At(0)
-	last := lines.At(lines.Len() - 1)
-	return first.Start, last.Stop
+	// Container node — walk descendants using goldmark's own walker
+	// to find min start / max stop across block descendants.
+	start, end := -1, -1
+	_ = ast.Walk(n, func(d ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if d.Type() != ast.TypeBlock {
+			return ast.WalkSkipChildren, nil
+		}
+		dl := d.Lines()
+		if dl == nil || dl.Len() == 0 {
+			return ast.WalkContinue, nil
+		}
+		s := dl.At(0).Start
+		e := dl.At(dl.Len() - 1).Stop
+		if start < 0 || s < start {
+			start = s
+		}
+		if e > end {
+			end = e
+		}
+		return ast.WalkContinue, nil
+	})
+	_ = src
+	return start, end
 }
 
 // byteSpanToLines — convert byte offsets in src to 1-indexed line numbers.

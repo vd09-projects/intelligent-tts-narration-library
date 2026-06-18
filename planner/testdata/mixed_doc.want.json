@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "mixed_doc.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 1,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "Narration plan"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "Section: Narration plan."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    },
+    {
+      "id": "b002",
+      "order": 2,
+      "class": "prose",
+      "level": 1,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 3,
+        "end_line": 3,
+        "raw_excerpt": "A brief intro paragraph."
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A brief intro paragraph."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "verbatim",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    },
+    {
+      "id": "b003",
+      "order": 3,
+      "class": "config",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 6,
+        "end_line": 7,
+        "raw_excerpt": "replicas: 3\nname: web\n"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A YAML config block, 2 top-level keys."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    },
+    {
+      "id": "b004",
+      "order": 4,
+      "class": "unknown",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 10,
+        "end_line": 10,
+        "raw_excerpt": "![diagram](arch.png)"
+      },
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "There's an image here that isn't voiced — check the source, line 10.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 10,
+          "end_line": 10,
+          "raw_excerpt": "![diagram](arch.png)"
+        }
+      },
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "intelligence_unavailable",
+      "severity": "info",
+      "message": "prose block under 120 words read verbatim without an intelligence adapter",
+      "block_id": "b002"
+    }
+  ]
+}
