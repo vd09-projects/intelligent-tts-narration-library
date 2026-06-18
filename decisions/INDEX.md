@@ -8,6 +8,33 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-19-sink-receipt-planned-duration-not-wall-time
+    title: "SinkReceipt.TotalDurationMs reports planned duration, not subprocess wall time"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [sink, ephemeral, receipt, telemetry, phase-one]
+    path: convention/2026-06-19-sink-receipt-planned-duration-not-wall-time.md
+    summary: "SinkReceipt.TotalDurationMs is summed from Plan.Timeline BlockTiming, not wall time around afplay. Wall time is contaminated by subprocess startup, scheduler jitter, and is zero under the test stub. Additive-compatible: add ActualDurationMs later if telemetry needs it."
+
+  - id: 2026-06-19-sink-imports-render-for-renderresult
+    title: "sink/ imports render/ for RenderResult and AudioStream"
+    date: 2026-06-19
+    status: accepted
+    category: architecture
+    tags: [sink, render, layering, dependency-direction, phase-one]
+    path: architecture/2026-06-19-sink-imports-render-for-renderresult.md
+    summary: "Direction stays a DAG: plan/ ← render/ ← sink/. Re-defining RenderResult/AudioStream in sink/ would fork the contract; hoisting them into plan/ would inflate the engine-neutral plan surface with audio bytes the planner never touches."
+
+  - id: 2026-06-19-ephemeral-stubbed-play-seam-build-tag
+    title: "Ephemeral sink default play seam is stubbed; real afplay is opt-in behind //go:build manual"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [sink, ephemeral, testing, build-tags, phase-one]
+    path: convention/2026-06-19-ephemeral-stubbed-play-seam-build-tag.md
+    summary: "Package-level play function variable is no-op in unit tests; real afplay lives in ephemeral_smoke_test.go behind //go:build manual. Build tags chosen over env vars because env-var gating is invisible in go test output."
+
   - id: 2026-06-18-empty-text-blocks-zero-ms-no-audioref
     title: "Empty-text blocks emit zero-duration timing with empty AudioRef"
     date: 2026-06-18
