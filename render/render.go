@@ -1,5 +1,7 @@
 // Package render defines the Renderer interface — phase one of the four edges
 // (design doc §3.3). Concrete engine backends live in subpackages (sherpa).
+// The Timeline + BlockTiming types this package returns are defined in §2.6
+// (block-level sync, no per-word timing).
 //
 // Invariants (CLAUDE.md):
 //   - render/ imports plan/ + its own subpackages only. NOT planner/.
@@ -96,10 +98,12 @@ type BlockRender struct {
 
 // AudioStream — opaque-ish handle to the on-disk WAVs the renderer produced.
 //
-// Dir is an absolute path. Files are filenames (not paths) relative to Dir,
-// ordered to match Timeline.Blocks. ManifestPath, when set, is the sink-
-// readable list of (order, block_id, relpath) the renderer wrote; sinks
-// that prefer to read the directory directly may ignore it.
+// Dir is an absolute path. Files holds one entry per non-empty rendered
+// block, in plan order — empty-text blocks (all-pause or no-speech) are
+// omitted from Files but still appear in Timeline.Blocks with an empty
+// AudioRef. ManifestPath, when set, is the sink-readable list of
+// (order, block_id, audio_ref) the renderer wrote; sinks that prefer to
+// read the directory directly may ignore it.
 //
 // The renderer never reads back the bytes it just wrote — bytes belong to
 // the sink.

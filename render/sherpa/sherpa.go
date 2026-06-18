@@ -17,10 +17,10 @@
 package sherpa
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,10 +58,14 @@ type EngineConfig struct {
 
 // Engine is the concrete render.Renderer backed by the Kokoro subprocess.
 //
-// Engine is safe for concurrent Render / RenderBlock calls only if the
-// caller supplies distinct OutDir values per call — the subprocess writes
-// blocking files. Phase one's pipeline serializes calls; concurrency is
-// not a goal.
+// Concurrent calls to Render / RenderBlock must use distinct OutDir
+// values; the renderer writes files with deterministic block-id
+// filenames (`<blockID>.wav`, `manifest.txt`) and provides no internal
+// locking. Phase one's pipeline serializes calls; concurrency is not a
+// goal.
+//
+// On context-timeout, exec.CommandContext sends SIGKILL by default
+// (Go 1.20+) — fast-fail over graceful, intentional for phase one.
 type Engine struct {
 	binaryPath string
 }
@@ -121,11 +125,14 @@ func (e *Engine) Render(ctx context.Context, p plan.NarrationPlan, opts render.R
 		outPath := filepath.Join(opts.OutDir, relName)
 
 		var durMs int
+		var audioRef string
 		if text == "" {
 			// All-pause / empty-voiced block — emit zero-duration timing,
-			// no subprocess call, no WAV written. Sink decides what to do
-			// with the absent file (phase one: pauses are sink-level).
+			// no subprocess call, no WAV written. AudioRef stays empty so
+			// downstream sinks do not hit ENOENT trying to open a missing
+			// file (review-findings B2).
 			durMs = 0
+			audioRef = ""
 		} else {
 			if err := e.synthesize(ctx, perBlock, voice, text, outPath); err != nil {
 				return render.RenderResult{}, err
@@ -136,13 +143,14 @@ func (e *Engine) Render(ctx context.Context, p plan.NarrationPlan, opts render.R
 			}
 			durMs = d
 			files = append(files, relName)
+			audioRef = relName
 		}
 
 		timing = append(timing, plan.BlockTiming{
 			BlockID:  blk.ID,
 			StartMs:  cursorMs,
 			EndMs:    cursorMs + durMs,
-			AudioRef: relName,
+			AudioRef: audioRef,
 		})
 		cursorMs += durMs
 	}
@@ -211,6 +219,7 @@ func (e *Engine) RenderBlock(ctx context.Context, p plan.NarrationPlan, blockID 
 	outPath := filepath.Join(opts.OutDir, relName)
 
 	var durMs int
+	var audioRef string
 	files := []string{}
 	if text != "" {
 		if err := e.synthesize(ctx, perBlock, voice, text, outPath); err != nil {
@@ -222,6 +231,7 @@ func (e *Engine) RenderBlock(ctx context.Context, p plan.NarrationPlan, blockID 
 		}
 		durMs = d
 		files = append(files, relName)
+		audioRef = relName
 	}
 
 	return render.BlockRender{
@@ -234,7 +244,7 @@ func (e *Engine) RenderBlock(ctx context.Context, p plan.NarrationPlan, blockID 
 			BlockID:  blockID,
 			StartMs:  0, // caller patches into existing timeline.
 			EndMs:    durMs,
-			AudioRef: relName,
+			AudioRef: audioRef,
 		},
 		Format: format,
 	}, nil
@@ -260,61 +270,49 @@ func spokenTextFor(blk plan.Block) (string, error) {
 
 // synthesize runs the wrapper subprocess once and writes the WAV bytes
 // from stdout to outPath atomically (temp file + rename).
+//
+// Stdout is captured into an in-memory buffer (one block of phase-one
+// Kokoro audio is bounded — a 40 s clip is ~2 MB at 24 kHz mono s16le).
+// Using bytes.Buffer avoids the StdoutPipe drain race documented in
+// review-findings.md B1.
 func (e *Engine) synthesize(ctx context.Context, perBlock time.Duration, voice, text, outPath string) error {
 	callCtx, cancel := context.WithTimeout(ctx, perBlock)
 	defer cancel()
 
 	cmd := exec.CommandContext(callCtx, e.binaryPath, "--voice", voice, "--text", text)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("sherpa: stdout pipe: %w", err)
-	}
+	var stdout bytes.Buffer
 	var stderr strings.Builder
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		// Most plausible: script not on disk → exec returns ENOENT.
-		return fmt.Errorf("%w: start %q: %v", ErrMissingBinary, e.binaryPath, err)
+	if err := cmd.Run(); err != nil {
+		return classifySubprocessErr(err, callCtx, stderr.String())
 	}
 
 	tmpPath := outPath + ".tmp"
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return fmt.Errorf("sherpa: create temp %q: %w", tmpPath, err)
+	if err := os.WriteFile(tmpPath, stdout.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("sherpa: write temp %q: %w", tmpPath, err)
 	}
-
-	_, copyErr := io.Copy(tmpFile, stdout)
-	closeErr := tmpFile.Close()
-	waitErr := cmd.Wait()
-
-	if copyErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sherpa: read subprocess stdout: %w", copyErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sherpa: close temp %q: %w", tmpPath, closeErr)
-	}
-
-	if waitErr != nil {
-		_ = os.Remove(tmpPath)
-		return classifySubprocessErr(waitErr, callCtx, stderr.String())
-	}
-
 	if err := os.Rename(tmpPath, outPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sherpa: rename %q→%q: %w", tmpPath, outPath, err)
+		return fmt.Errorf("sherpa: rename %q to %q: %w", tmpPath, outPath, err)
 	}
 	return nil
 }
 
-// classifySubprocessErr maps wrapper exit codes / context state to the
-// package's sentinel errors.
+// classifySubprocessErr maps wrapper exit codes / context state / exec
+// errors to the package's sentinel errors. Underlying errors are wrapped
+// with %w so callers can errors.Is / errors.As all the way down (e.g.
+// errors.Is(err, exec.ErrNotFound) for missing-binary diagnosis).
 func classifySubprocessErr(waitErr error, callCtx context.Context, stderr string) error {
 	if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("%w: %v (stderr: %s)", ErrTimeout, context.DeadlineExceeded, strings.TrimSpace(stderr))
+		return fmt.Errorf("%w: %w (stderr: %s)", ErrTimeout, context.DeadlineExceeded, strings.TrimSpace(stderr))
+	}
+	// exec.Run can fail to start the process at all (binary not on disk).
+	// That's our ErrMissingBinary case — surface before the ExitError check
+	// since a start-failure has no exit code.
+	if errors.Is(waitErr, exec.ErrNotFound) || isENOENT(waitErr) {
+		return fmt.Errorf("%w: %w", ErrMissingBinary, waitErr)
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
@@ -334,7 +332,20 @@ func classifySubprocessErr(waitErr error, callCtx context.Context, stderr string
 			return fmt.Errorf("%w: exit %d: %s", ErrSubprocess, exitErr.ExitCode(), strings.TrimSpace(stderr))
 		}
 	}
-	return fmt.Errorf("%w: %v (stderr: %s)", ErrSubprocess, waitErr, strings.TrimSpace(stderr))
+	return fmt.Errorf("%w: %w (stderr: %s)", ErrSubprocess, waitErr, strings.TrimSpace(stderr))
+}
+
+// isENOENT detects "binary not on disk" wrapped inside an os.PathError.
+// exec.Cmd.Run returns *exec.Error{Err: syscall.ENOENT} on Linux/macOS
+// when the binary path doesn't exist; errors.Is doesn't catch it without
+// this unwrap on some Go versions.
+func isENOENT(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "executable file not found")
 }
 
 // writeManifest writes a sink-readable manifest: "<order> <block_id> <relpath>"

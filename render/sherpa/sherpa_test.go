@@ -349,6 +349,59 @@ func TestEngine_Render_OutDirRequired(t *testing.T) {
 	}
 }
 
+func TestEngine_Render_EmptyTextBlock_NoAudioRef(t *testing.T) {
+	// Regression: review-findings B2. An all-pause / no-speech-segment block
+	// must emit a BlockTiming with empty AudioRef, no WAV file, and not
+	// appear in Audio.Files.
+	bin := fakeBinary(t)
+	engine := New(EngineConfig{BinaryPath: bin})
+	out := t.TempDir()
+
+	p := trivialPlan()
+	p.Blocks[0].Segments = []plan.Segment{
+		{ID: "seg-1", Kind: plan.SegmentKindPause, PauseMs: 250},
+	}
+	res, err := engine.Render(context.Background(), p, render.RenderOptions{OutDir: out})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Timeline.Blocks) != 1 {
+		t.Fatalf("want 1 BlockTiming, got %d", len(res.Timeline.Blocks))
+	}
+	if got := res.Timeline.Blocks[0].AudioRef; got != "" {
+		t.Errorf("empty-text block AudioRef = %q, want empty", got)
+	}
+	if len(res.Audio.Files) != 0 {
+		t.Errorf("empty-text block must not appear in Audio.Files, got %v", res.Audio.Files)
+	}
+	if _, err := os.Stat(filepath.Join(out, "blk-001.wav")); !os.IsNotExist(err) {
+		t.Errorf("empty-text block must not write wav: stat err = %v", err)
+	}
+}
+
+func TestEngine_RenderBlock_EmptyText_NoAudioRef(t *testing.T) {
+	// Regression: review-findings B3 — RenderBlock mirror of B2.
+	bin := fakeBinary(t)
+	engine := New(EngineConfig{BinaryPath: bin})
+	out := t.TempDir()
+
+	p := trivialPlan()
+	p.Blocks[0].Segments = []plan.Segment{
+		{ID: "seg-1", Kind: plan.SegmentKindPause, PauseMs: 100},
+	}
+	br, err := engine.RenderBlock(context.Background(), p, "blk-001",
+		render.RenderOptions{OutDir: out})
+	if err != nil {
+		t.Fatalf("RenderBlock: %v", err)
+	}
+	if br.Timing.AudioRef != "" {
+		t.Errorf("RenderBlock AudioRef = %q for empty-text block, want empty", br.Timing.AudioRef)
+	}
+	if len(br.Audio.Files) != 0 {
+		t.Errorf("RenderBlock Audio.Files = %v, want empty", br.Audio.Files)
+	}
+}
+
 func TestDefaultFormat_PhaseOne(t *testing.T) {
 	f := render.DefaultFormat()
 	if f.SampleRate != 24000 || f.Channels != 1 || f.Encoding != "pcm_s16le" {
