@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01J0ABCDXYZ0000000000000ZZ",
+  "created_at": "2026-06-18T10:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "docs/example.md",
+    "content_hash": "sha256:deadbeef",
+    "adapter": "file@0.1"
+  },
+  "defaults": {
+    "level": 1,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b004",
+      "order": 4,
+      "class": "config",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 12,
+        "end_line": 18,
+        "raw_excerpt": "spec:\n  replicas: 3\n  ..."
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A Kubernetes Deployment. Replicas set to three, one container image nginx version 1.27."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true
+      }
+    },
+    {
+      "id": "b009",
+      "order": 9,
+      "class": "unknown",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 40,
+        "end_line": 40,
+        "raw_excerpt": "![throughput chart](bench.png)"
+      },
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "There's a chart here that isn't voiced — check the source, lines 40.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 40,
+          "end_line": 40
+        }
+      },
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true
+      }
+    }
+  ]
+}
