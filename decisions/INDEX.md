@@ -8,6 +8,69 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-18-empty-text-blocks-zero-ms-no-audioref
+    title: "Empty-text blocks emit zero-duration timing with empty AudioRef"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [render, timeline, audioref, pause, phase-one]
+    path: convention/2026-06-18-empty-text-blocks-zero-ms-no-audioref.md
+    summary: "All-pause / no-speech blocks emit BlockTiming{StartMs==EndMs, AudioRef=''} and skip the subprocess. Empty AudioRef is the honest signal 'no audio for this block'; alternative (writing 44-byte empty WAV) hides data gaps from sinks. Pauses are sink-side phase one."
+
+  - id: 2026-06-18-kokoro-wrapper-in-scripts-dir
+    title: "Kokoro wrapper script lives in `scripts/`, not `render/sherpa/`"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [render, kokoro, subprocess, layout, phase-one]
+    path: convention/2026-06-18-kokoro-wrapper-in-scripts-dir.md
+    summary: "scripts/kokoro + scripts/kokoro_runner.py at project root; render/sherpa default BinaryPath='./scripts/kokoro'. Co-locating the Python launcher inside the Go package dir would break tooling conventions and imply Go owns the Python runtime."
+
+  - id: 2026-06-18-voice-resolution-order
+    title: "Voice resolution order: opts > plan defaults > backend default"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [render, voice, kokoro, phase-one]
+    path: convention/2026-06-18-voice-resolution-order.md
+    summary: "RenderOptions.Voice (errors on unknown) > Plan.Defaults.Voice (silent fallback on unknown) > 'af_bella'. PlanDefaults stays engine-neutral per CLAUDE.md — unknown hint must not error or the planner would be coupled to renderer voice ids."
+
+  - id: 2026-06-18-per-block-wavs-no-concat-in-renderer
+    title: "Per-block WAVs stay separate; renderer does not concatenate"
+    date: 2026-06-18
+    status: accepted
+    category: architecture
+    tags: [render, sink, audiostream, escalation, phase-one]
+    path: architecture/2026-06-18-per-block-wavs-no-concat-in-renderer.md
+    summary: "Engine.Render writes one WAV per block + manifest.txt; concatenation is sink concern. Required for RenderBlock to be truly surgical (swap one WAV) and to keep the ephemeral sink from having to split a monolithic file."
+
+  - id: 2026-06-18-subprocess-timeouts-60s-10min
+    title: "Phase-one subprocess timeouts: 60 s per-block, 10 min wall"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [render, subprocess, timeout, phase-one]
+    path: convention/2026-06-18-subprocess-timeouts-60s-10min.md
+    summary: "RenderOptions exposes PerBlockTimeout (default 60 s) and WallClockTimeout (default 10 min). Exceeded → sherpa.ErrTimeout wrapping context.DeadlineExceeded. Timeouts are errors, not refusals — honesty rule applies only to readable-but-unvoiceable source, not backend failure."
+
+  - id: 2026-06-18-refused-block-message-rendered
+    title: "Refused blocks render Refusal.Message through the same Kokoro path"
+    date: 2026-06-18
+    status: accepted
+    category: convention
+    tags: [render, refusal, honesty-rule, phase-one]
+    path: convention/2026-06-18-refused-block-message-rendered.md
+    summary: "Status==StatusRefused blocks feed Block.Refusal.Message to Kokoro like any voiced block; BlockTiming emitted with AudioRef. Empty Refusal.Message → ErrMalformedPlan (upstream bug, not a refusal). Earcons / silence / dropping the block all violate the honesty rule."
+
+  - id: 2026-06-18-audiostream-on-disk-handle
+    title: "AudioStream is an on-disk handle, not in-memory bytes"
+    date: 2026-06-18
+    status: accepted
+    category: architecture
+    tags: [render, audiostream, memory, sink, phase-one]
+    path: architecture/2026-06-18-audiostream-on-disk-handle.md
+    summary: "render.AudioStream carries Dir+Files+ManifestPath, not []byte. Avoids 50–200 MB resident audio for long docs and makes RenderBlock surgical (swap one file). Sinks read from disk; renderer never reads back its own output."
+
   - id: 2026-06-18-intelligence-adapter-lives-in-intelligence-pkg
     title: "IntelligenceAdapter interface lives in `intelligence/` package, not `planner/`"
     date: 2026-06-18
