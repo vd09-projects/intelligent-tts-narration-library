@@ -4,6 +4,14 @@
 
 ```yaml
 scopes:
+  - slug: cmd-narrate-issue-7
+    title: Wire cmd/narrate vertical slice (issue #7)
+    created: 2026-06-18
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #7
+      (cmd/narrate composition root: cobra CLI + pipeline.Pipeline wiring
+      adapter/file + planner + render/sherpa + sink/ephemeral). Issue-numbered
+      naming continues the convention.
   - slug: sink-ephemeral-issue-6
     title: Ephemeral OutputSink + sink interface (issue #6)
     created: 2026-06-19
