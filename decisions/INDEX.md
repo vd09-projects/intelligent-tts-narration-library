@@ -8,6 +8,51 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-19-runspeak-newpipeline-composition-seam
+    title: "runSpeak composition seam — newPipeline factory hook"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [cmd/narrate-mcp, mcp, testability, composition-root, seam, factory, phase-one, issue-12]
+    path: convention/2026-06-19-runspeak-newpipeline-composition-seam.md
+    summary: "Package-level newPipeline var + narrator interface lets tests substitute the pipeline composition; verifies level/voice/locale wiring + temp-dir lifecycle without spawning Kokoro. Resolves build-review B2."
+
+  - id: 2026-06-19-text-arg-transient-sentinel
+    title: "text arg as transient sentinel — fast-error until ticket #17 lands"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [cmd/narrate-mcp, mcp, text-arg, transient-sentinel, honesty-rule, phase-one, issue-12]
+    path: convention/2026-06-19-text-arg-transient-sentinel.md
+    summary: "text arg stays in the schema for forward-compat; handler fast-errors with errTextNotImplemented until mcptext adapter (#17) lands. Honest contract over silent fallback."
+
+  - id: 2026-06-19-mcp-tool-family-narrate-namespace
+    title: "MCP tool family — narrate.* namespace"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [cmd/narrate-mcp, mcp, tool-naming, namespace, documentation, phase-one, issue-12]
+    path: convention/2026-06-19-mcp-tool-family-narrate-namespace.md
+    summary: "Tool family narrate.*; `speak` is the canonical entry point. README install snippet targets Claude Desktop's claude_desktop_config.json as canonical; mcp CLI is secondary."
+
+  - id: 2026-06-19-mcp-error-classifier-caller-vs-internal-split
+    title: "MCP error classifier — caller-error vs internal-error split"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [cmd/narrate-mcp, mcp, error-handling, classifier, honesty-rule, phase-one, issue-12]
+    path: convention/2026-06-19-mcp-error-classifier-caller-vs-internal-split.md
+    summary: "classifyPipelineErr splits caller-errors (fs.ErrNotExist, fs.ErrPermission, validation, text-arg, sink=persistent) from internal-errors (renderer/sink failure). Wire prefixes 'caller-error: invalid_argument:' and 'internal_error:' make the split observable in IsError content. Cancellation gets its own 'cancelled:' bucket."
+
+  - id: 2026-06-19-mcp-speak-response-receipt-only-envelope
+    title: "speak tool response envelope — receipt-only for v1"
+    date: 2026-06-19
+    status: accepted
+    category: convention
+    tags: [cmd/narrate-mcp, mcp, response-envelope, schema-version, phase-one, issue-12]
+    path: convention/2026-06-19-mcp-speak-response-receipt-only-envelope.md
+    summary: "Response v1 is receipt-only: {receipt: {blocks_played, total_duration_ms, out_dir}}. plan envelope deferred as additive future change under CLAUDE.md schema_version rule. Locked at plan-review v1 (B1) to prevent contract drift before build."
+
   - id: 2026-06-18-pipeline-composition-root-pattern
     title: "Pipeline composition root pattern"
     date: 2026-06-18
