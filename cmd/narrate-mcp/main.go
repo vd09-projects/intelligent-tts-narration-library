@@ -36,6 +36,12 @@
 //	  replaces this path with a real implementation. Until then, the `text`
 //	  arg path stays in the schema (for forward-compat) but the handler
 //	  fast-errors so the contract is honest.
+//	Decision (v5) — convention: accepted. Composition seam — `newPipeline`
+//	  is a package-level factory hook (var) so tests can substitute a
+//	  narrator stub and verify that level/voice/locale wiring threads
+//	  through runSpeak without spawning Kokoro. The seam is a deliberate
+//	  testability concession; the production var still builds the real
+//	  pipeline.Pipeline. Resolves build-review B2.
 package main
 
 import (
@@ -164,6 +170,32 @@ type runDeps struct {
 	run    func(ctx context.Context, args speakArgs) (speakResponse, error)
 }
 
+// narrator — the minimal surface runSpeak needs from a wired pipeline.
+// Pulled out as an interface so tests can substitute the pipeline without
+// spawning Kokoro. Production wires pipeline.Pipeline (which satisfies
+// this interface via its Narrate method). Per Decision v5.
+type narrator interface {
+	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (sink.SinkReceipt, error)
+}
+
+// newPipeline — package-level factory hook. Production builds the real
+// pipeline.Pipeline; tests swap this var to inject a stub narrator.
+// Per Decision v5 (build-review B2 fix): the seam lets unit tests verify
+// the level/voice/locale wiring without spawning Kokoro.
+var newPipeline = func(outDir string, args speakArgs) narrator {
+	return pipeline.New(
+		file.New(),
+		nil, // nil intelligence — phase one deterministic + degraded path.
+		sherpa.New(sherpa.EngineConfig{}),
+		ephemeral.New(),
+		pipeline.PipelineDefaults{
+			Level:  plan.Level(args.Level),
+			OutDir: outDir,
+			Locale: "en",
+		},
+	)
+}
+
 // runSpeak is the production wiring — composition root for one tool call.
 // Same shape as cmd/narrate's runNarrate; the differences are arg parsing,
 // the XOR source/text validation, and that we return the receipt rather
@@ -189,17 +221,7 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 		_ = os.RemoveAll(outDir)
 	}()
 
-	pl := pipeline.New(
-		file.New(),
-		nil, // nil intelligence — phase one deterministic + degraded path.
-		sherpa.New(sherpa.EngineConfig{}),
-		ephemeral.New(),
-		pipeline.PipelineDefaults{
-			Level:  plan.Level(args.Level),
-			OutDir: outDir,
-			Locale: "en",
-		},
-	)
+	pl := newPipeline(outDir, args)
 
 	receipt, err := pl.Narrate(ctx, plan.SourceRef{
 		Kind: plan.SourceKindFile,

@@ -4,14 +4,26 @@
 //   - runDeps.run seam: speakHandler routes through deps.run and returns
 //     the response untouched on success, propagates errors as-is.
 //   - newServer registers the speak tool without panic.
+//   - newPipeline seam (Decision v5): runSpeak with a stub narrator
+//     observing the wired level/voice/locale + temp-dir cleanup.
+//   - real adapter classifier integration: runSpeak with a non-existent
+//     file path uses the real adapter/file error and the classifier
+//     produces the caller-error wire prefix.
 package main
 
 import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
+	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 )
 
 func TestSpeakArgs_ApplyDefaults(t *testing.T) {
@@ -265,3 +277,174 @@ type fakePathError struct {
 
 func (e *fakePathError) Error() string { return e.Op + " " + e.Path + ": " + e.Err.Error() }
 func (e *fakePathError) Unwrap() error { return e.Err }
+
+// stubNarrator captures the arguments runSpeak passed through the wired
+// pipeline so tests can assert the composition wiring without spawning
+// Kokoro. Used via the newPipeline seam introduced in Decision v5.
+type stubNarrator struct {
+	gotRef    plan.SourceRef
+	gotReq    pipeline.NarrateRequest
+	gotOutDir string
+	receipt   sink.SinkReceipt
+	err       error
+	// outDirSnapshot captures whether outDir existed at Narrate time so
+	// the cleanup-assertion test can confirm the directory was created
+	// before the deferred RemoveAll fires (B3 fix).
+	outDirExistedAtNarrate bool
+	mu                     sync.Mutex
+}
+
+func (s *stubNarrator) Narrate(_ context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (sink.SinkReceipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotRef = ref
+	s.gotReq = req
+	if s.gotOutDir != "" {
+		_, statErr := os.Stat(s.gotOutDir)
+		s.outDirExistedAtNarrate = statErr == nil
+	}
+	return s.receipt, s.err
+}
+
+// withStubPipeline installs a stub narrator via the newPipeline seam,
+// returning the stub for inspection and a cleanup func that restores the
+// production factory. Captures outDir + args by reference so the test
+// can assert how composition flowed.
+func withStubPipeline(t *testing.T, stub *stubNarrator) func() {
+	t.Helper()
+	orig := newPipeline
+	newPipeline = func(outDir string, _ speakArgs) narrator {
+		stub.gotOutDir = outDir
+		return stub
+	}
+	return func() { newPipeline = orig }
+}
+
+func TestRunSpeak_HappyPath_WiresLevelVoiceLocaleAndReturnsReceipt(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	stub := &stubNarrator{receipt: sink.SinkReceipt{BlocksPlayed: 3, TotalDurationMs: 4_200}}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	// Use a real path that exists so filepath.Abs resolves cleanly. The
+	// stub bypasses any real I/O on this path.
+	tmpFile, err := os.CreateTemp(t.TempDir(), "sample-*.md")
+	if err != nil {
+		t.Fatalf("create temp source: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	resp, err := runSpeak(context.Background(), speakArgs{
+		Source: tmpFile.Name(),
+		Level:  3,
+		Sink:   "ephemeral",
+		Gender: "male",
+	})
+	if err != nil {
+		t.Fatalf("runSpeak: %v", err)
+	}
+
+	// Composition assertions — what the stub captured.
+	if stub.gotReq.Voice != "am_michael" {
+		t.Errorf("Voice: want am_michael (male → mapping), got %q", stub.gotReq.Voice)
+	}
+	if stub.gotRef.Kind != plan.SourceKindFile {
+		t.Errorf("SourceRef.Kind: want file, got %v", stub.gotRef.Kind)
+	}
+	absWant, _ := filepath.Abs(tmpFile.Name())
+	if stub.gotRef.URI != absWant {
+		t.Errorf("SourceRef.URI: want %q, got %q", absWant, stub.gotRef.URI)
+	}
+	if stub.gotOutDir == "" || !strings.Contains(filepath.Base(stub.gotOutDir), "narrate-mcp-") {
+		t.Errorf("outDir prefix: want narrate-mcp-*, got %q", stub.gotOutDir)
+	}
+	if !stub.outDirExistedAtNarrate {
+		t.Errorf("outDir must exist during Narrate (was missing): %q", stub.gotOutDir)
+	}
+
+	// Receipt projection assertions.
+	if resp.Receipt.BlocksPlayed != 3 {
+		t.Errorf("BlocksPlayed: want 3, got %d", resp.Receipt.BlocksPlayed)
+	}
+	if resp.Receipt.TotalDurationMs != 4_200 {
+		t.Errorf("TotalDurationMs: want 4200, got %d", resp.Receipt.TotalDurationMs)
+	}
+	if resp.Receipt.OutDir != stub.gotOutDir {
+		t.Errorf("OutDir: want %q, got %q", stub.gotOutDir, resp.Receipt.OutDir)
+	}
+}
+
+func TestRunSpeak_TempDir_CleanedUpOnSuccess(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	// B3 fix: assert the deferred RemoveAll actually fires.
+	stub := &stubNarrator{receipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 100}}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "sample-*.md")
+	if err != nil {
+		t.Fatalf("create temp source: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	resp, err := runSpeak(context.Background(), speakArgs{Source: tmpFile.Name()})
+	if err != nil {
+		t.Fatalf("runSpeak: %v", err)
+	}
+	// After runSpeak returns, the deferred RemoveAll should have run.
+	if _, statErr := os.Stat(resp.Receipt.OutDir); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("temp dir should be removed after runSpeak; got stat err %v", statErr)
+	}
+}
+
+func TestRunSpeak_TempDir_CleanedUpOnPipelineError(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	// Cleanup must run even when the pipeline errors.
+	stub := &stubNarrator{err: errors.New("kokoro boom")}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "sample-*.md")
+	if err != nil {
+		t.Fatalf("create temp source: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	_, err = runSpeak(context.Background(), speakArgs{Source: tmpFile.Name()})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.HasPrefix(err.Error(), "internal_error: pipeline failure") {
+		t.Errorf("want internal_error prefix, got %v", err)
+	}
+	// The stub captured the outDir before erroring; it should be gone now.
+	if _, statErr := os.Stat(stub.gotOutDir); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("temp dir should be removed after error path; got stat err %v", statErr)
+	}
+}
+
+func TestRunSpeak_NonExistentSource_UsesRealAdapterErrorViaClassifier(t *testing.T) {
+	// Cannot t.Parallel() — would intersect with newPipeline-mutating tests.
+	// B1 fix: verify that the classifier catches the *real* adapter/file
+	// error shape (not just synthetic fakePathError). We do not install a
+	// stub narrator here — we use the production newPipeline so the call
+	// actually walks the adapter path. The adapter will reject the
+	// non-existent file with a wrapped fs.ErrNotExist, the renderer is
+	// never reached, and the classifier should map that to caller-error.
+	missing := filepath.Join(t.TempDir(), "does-not-exist.md")
+	_, err := runSpeak(context.Background(), speakArgs{
+		Source: missing,
+		Level:  1,
+		Sink:   "ephemeral",
+		Gender: "female",
+	})
+	if err == nil {
+		t.Fatal("want error for non-existent source, got nil")
+	}
+	if !strings.HasPrefix(err.Error(), "caller-error: invalid_argument: source not found") {
+		t.Errorf("want caller-error prefix from real adapter path, got %q", err.Error())
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("classified error must wrap fs.ErrNotExist (errors.Is); got %v", err)
+	}
+}

@@ -8,7 +8,7 @@ See `problem-statement.md` for framing and `docs/solution-phase-design.md` for m
 
 Prerequisites:
 
-- Go 1.25+ (the MCP SDK requires it; the rest of the library targets 1.22+ historically).
+- Go 1.25+. The MCP SDK (`github.com/modelcontextprotocol/go-sdk` v1.5.0) requires it; this bumped the project's minimum Go from 1.22 to 1.25.0. See the "Go toolchain" note below.
 - macOS (phase one uses `afplay` for the ephemeral sink).
 - A working `scripts/kokoro` wrapper — see `render/sherpa/README.md` for the Kokoro-onnx setup (Python venv + ONNX model files).
 
@@ -96,10 +96,10 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Build the binary first:
+Build the binary first (the `bin/` path matches the snippet above; `make build-mcp` only compile-checks — emit the binary explicitly):
 
 ```sh
-make build-mcp && mkdir -p bin && go build -o bin/narrate-mcp ./cmd/narrate-mcp
+mkdir -p bin && go build -o bin/narrate-mcp ./cmd/narrate-mcp
 ```
 
 Restart Claude Desktop. The `narrate.speak` tool will appear in the model's tool list.
@@ -158,6 +158,10 @@ MCP server manual smoke (same audio path as above, in-process through the `speak
 ```sh
 make test-mcp-manual
 ```
+
+## Go toolchain
+
+The MCP SDK pulls the minimum Go version to `1.25.0` (transitive requirement from `github.com/modelcontextprotocol/go-sdk` v1.5.0). This is intentional — the SDK is a first-class dependency in CLAUDE.md's stack list, and pinning the SDK lower than 1.5.0 would forfeit the speak-tool wiring. Consumers on Go 1.22–1.24 cannot build the library until they upgrade their toolchain.
 
 ## Architecture, briefly
 
