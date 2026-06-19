@@ -61,11 +61,11 @@ func WithPromptTemplates(m map[plan.Class]PromptTemplate) Option {
 		}
 		// Copy so the caller cannot mutate the adapter's template
 		// table after construction.
-		copy := make(map[plan.Class]PromptTemplate, len(m))
+		dst := make(map[plan.Class]PromptTemplate, len(m))
 		for k, v := range m {
-			copy[k] = v
+			dst[k] = v
 		}
-		a.promptTemplates = copy
+		a.promptTemplates = dst
 	}
 }
 
