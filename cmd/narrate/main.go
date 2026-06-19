@@ -173,6 +173,13 @@ func (a flagSet) validate() error {
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		return fmt.Errorf("--gender must be female or male (got %q)", a.Gender)
 	}
+	// F3 (#14 review): --expected-content-hash is only meaningful with
+	// --block — without --block the pipeline takes the whole-doc path and
+	// never compares hashes, so a non-empty value would be a silent no-op.
+	// Reject it at flag-time so the caller knows their guard is ineffective.
+	if a.ExpectedContentHash != "" && a.Block == "" {
+		return fmt.Errorf("--expected-content-hash is only meaningful with --block")
+	}
 	return nil
 }
 
@@ -215,7 +222,18 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 		_ = os.RemoveAll(outDir)
 	}()
 
-	pl := newPipeline(outDir, args)
+	// Build the pipeline. F2 fix: on a --block invocation, the document
+	// default level must stay at L1 so the planner does NOT re-plan every
+	// untargeted block at the block's escalation level (which would waste
+	// planner work AND make the returned BlockSummaries roster misrepresent
+	// the document's default-level shape). Pass a copy of args with Level
+	// forced back to 1 into the factory; the original args.Level only
+	// drives LevelOverrides[args.Block] below.
+	factoryArgs := args
+	if args.Block != "" {
+		factoryArgs.Level = 1
+	}
+	pl := newPipeline(outDir, factoryArgs)
 
 	req := pipeline.NarrateRequest{
 		Voice:               genderToVoice[args.Gender],
@@ -254,8 +272,13 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 		)
 	}
 
-	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s\n",
-		result.BlocksPlayed, result.TotalDurationMs, outDir); err != nil {
+	// Summary on stdout — machine-readable key=value line.
+	// content_hash is exposed so callers can capture it and pass it back via
+	// --expected-content-hash on a later --block re-render (F1 from #14
+	// review). Trailing keys are additive — older parsers must tolerate
+	// unknown trailing key=value pairs.
+	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s content_hash=%s\n",
+		result.BlocksPlayed, result.TotalDurationMs, outDir, result.DocumentContentHash); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 
@@ -264,6 +287,10 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 	// targeted). Roster goes to stderr so it never mixes with the
 	// machine-readable stdout summary; format is tab-separated so a
 	// shell pipeline can `cut -f1` to grab ids.
+	//
+	// TODO(#16): when the persistent sink lands, this gate must
+	// expand to print on persistent runs too — the roster is just as
+	// useful there. Today persistent fast-errors before we get here.
 	if args.Block == "" && args.Sink == "ephemeral" {
 		printRoster(stderr, args.File, result.BlockSummaries)
 	}

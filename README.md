@@ -39,18 +39,21 @@ Exit codes: `0` success (including refused blocks and hash-mismatch warnings); `
 
 Real workflow: listen at gist (`--level=1`), spot a block you want more detail on, re-run that block at `--level=2` or `--level=3` without re-narrating the whole document. The renderer patches just that block's audio + timing — every other block is untouched.
 
-After every ephemeral whole-doc run, `narrate` prints a tab-separated block roster to stderr so you can grab an id:
+After every ephemeral whole-doc run, `narrate` prints a tab-separated block roster to stderr so you can grab an id, and the document's `content_hash` is appended to the stdout summary so you can capture it for a later staleness guard:
 
 ```sh
-go run ./cmd/narrate --file docs/samples/sample.md 2>&1 >/dev/null
-# # 4 blocks — escalate one with: narrate --file docs/samples/sample.md --block <id> --level {2|3}
-# b001	heading	1	voiced	1
-# b002	prose	1	degraded	3-9
-# b003	code	1	voiced	11-15
-# b004	unknown	1	refused	17
+go run ./cmd/narrate --file docs/samples/sample.md
+# stdout (last line):
+#   blocks_played=4 total_duration_ms=9215 out_dir=/tmp/narrate-XXXXXX content_hash=8a3f…
+# stderr (after audio finishes):
+#   # 4 blocks — escalate one with: narrate --file docs/samples/sample.md --block <id> --level {2|3}
+#   b001	heading	1	voiced	1
+#   b002	prose	1	degraded	3-9
+#   b003	code	1	voiced	11-15
+#   b004	unknown	1	refused	17
 ```
 
-Columns: `id`, `class`, `level`, `status`, `lines`. Status `refused` blocks are still voiced — they speak a short honest notice (refusal-is-data per `CLAUDE.md`).
+Roster columns: `id`, `class`, `level`, `status`, `lines`. Status `refused` blocks are still voiced — they speak a short honest notice (refusal-is-data per `CLAUDE.md`).
 
 Escalate one of them:
 
@@ -60,15 +63,19 @@ go run ./cmd/narrate --file docs/samples/sample.md --block b002 --level 3
 
 The roster is suppressed on `--block` runs (you already know which block you're targeting). Downgrade is symmetric — `--level=1` is allowed on a block that voiced at L3.
 
-Want to be sure the document hasn't changed under you between the roster and the re-render? Pass the document's content hash you captured at roster time:
+Want to be sure the document hasn't changed under you between the roster and the re-render? Capture the `content_hash` from the stdout summary above and pass it back:
 
 ```sh
-narrate --file docs/samples/sample.md \
+# In a shell pipeline, grab the hash with awk / sed / cut as a key=value parse:
+HASH=$(go run ./cmd/narrate --file docs/samples/sample.md \
+       | tail -1 | tr ' ' '\n' | grep '^content_hash=' | cut -d= -f2)
+
+go run ./cmd/narrate --file docs/samples/sample.md \
         --block b002 --level 3 \
-        --expected-content-hash <hex-you-got-earlier>
+        --expected-content-hash "$HASH"
 ```
 
-If the document's hash differs, you'll see a stderr warning — `warning: content_hash mismatch (expected …, got …) — block content has changed since you got that id` — and the re-render still runs (exit `0`). An unknown `--block` id exits `2` with `block not found: <id>`.
+If the document's hash differs, you'll see a stderr warning — `warning: content_hash mismatch (expected …, got …) — block content has changed since you got that id` — and the re-render still runs (exit `0`). An unknown `--block` id exits `2` with `block not found: <id>`. Passing `--expected-content-hash` without `--block` is a flag error (exit `2`) — without `--block` the pipeline does not check the hash and the guard would be silently ineffective.
 
 Phase-one caveats: per-block re-render works against the ephemeral sink only. The persistent sink (issue #16) will keep `manifest.json` consistent and rewrite just the patched block's WAV in place — until then, `--block --sink=persistent` returns the same `errPersistentNotImplemented` fast-error as any other persistent-sink call.
 

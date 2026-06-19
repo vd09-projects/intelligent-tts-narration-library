@@ -73,10 +73,19 @@ type BlockHashMismatch struct {
 
 // NarrateResult is the envelope Narrate returns. Embeds the sink.SinkReceipt
 // (preserving everything callers used to read directly) and adds the
-// per-block roster + the optional hash-mismatch warning.
+// per-block roster + the optional hash-mismatch warning + the document
+// content hash callers need to pass back on a later --expected-content-hash
+// guard.
 //
 // Additive within the pipeline API: callers reading Receipt fields can do so
 // via the embedded SinkReceipt without any field renames.
+//
+// Error contract: on a non-nil error return from Narrate, NarrateResult
+// fields may be partially populated (BlockSummaries when the planner ran,
+// SinkReceipt when the sink ran with a partial receipt, BlockHashMismatch
+// when the hash was checked before a downstream error). Callers should
+// generally honor the error first and consult result fields only when
+// surfacing diagnostic context.
 type NarrateResult struct {
 	sink.SinkReceipt
 
@@ -84,8 +93,16 @@ type NarrateResult struct {
 	// Always populated on success.
 	BlockSummaries []BlockSummary
 
+	// DocumentContentHash is the planner-produced document content_hash
+	// (mirror of NarrationPlan.Source.ContentHash). Populated on every
+	// successful Narrate call — callers persist it alongside a chosen
+	// BlockID and pass it back via NarrateRequest.ExpectedContentHash on
+	// a later --block re-render to detect staleness.
+	DocumentContentHash string
+
 	// BlockHashMismatch is non-nil iff NarrateRequest.ExpectedContentHash was
-	// set and did not match the document's content_hash. Non-fatal.
+	// set and did not match the document's content_hash. Non-fatal — see
+	// the error contract on NarrateResult.
 	BlockHashMismatch *BlockHashMismatch
 }
 
@@ -210,6 +227,13 @@ func New(
 // Returns (NarrateResult, nil) on the honest path — including plans containing
 // refused blocks. NarrateResult embeds sink.SinkReceipt so callers that read
 // receipt fields directly continue to compile. Errors propagate from any edge.
+//
+// Error contract for NarrateResult fields: see the NarrateResult docstring.
+// In short — when err is non-nil, prefer surfacing the error; the result
+// envelope may carry partial fields (e.g. BlockSummaries from a successful
+// planner pass, or a BlockHashMismatch warning that fired before the
+// downstream error) but those are diagnostic context, not the primary
+// signal.
 func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateRequest) (NarrateResult, error) {
 	if err := ctx.Err(); err != nil {
 		return NarrateResult{}, fmt.Errorf("pipeline: %w", err)
@@ -229,6 +253,7 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 	}
 
 	summaries := summarizeBlocks(narrationPlan.Blocks)
+	docHash := narrationPlan.Source.ContentHash
 
 	if req.BlockID == "" {
 		// Whole-document path — unchanged behavior plus block roster.
@@ -241,7 +266,11 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		}
 
 		receipt, err := p.Sink.Consume(ctx, narrationPlan, result)
-		out := NarrateResult{SinkReceipt: receipt, BlockSummaries: summaries}
+		out := NarrateResult{
+			SinkReceipt:         receipt,
+			BlockSummaries:      summaries,
+			DocumentContentHash: docHash,
+		}
 		if err != nil {
 			return out, fmt.Errorf("pipeline: sink: %w", err)
 		}
@@ -257,15 +286,21 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		}
 	}
 	if targetIdx < 0 {
-		return NarrateResult{BlockSummaries: summaries}, fmt.Errorf("%w: %s", ErrBlockNotFound, req.BlockID)
+		return NarrateResult{
+			BlockSummaries:      summaries,
+			DocumentContentHash: docHash,
+		}, fmt.Errorf("%w: %s", ErrBlockNotFound, req.BlockID)
 	}
 
-	out := NarrateResult{BlockSummaries: summaries}
-	if req.ExpectedContentHash != "" && req.ExpectedContentHash != narrationPlan.Source.ContentHash {
+	out := NarrateResult{
+		BlockSummaries:      summaries,
+		DocumentContentHash: docHash,
+	}
+	if req.ExpectedContentHash != "" && req.ExpectedContentHash != docHash {
 		out.BlockHashMismatch = &BlockHashMismatch{
 			BlockID:  req.BlockID,
 			Expected: req.ExpectedContentHash,
-			Got:      narrationPlan.Source.ContentHash,
+			Got:      docHash,
 		}
 	}
 
@@ -277,8 +312,13 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		return out, fmt.Errorf("pipeline: renderer: %w", err)
 	}
 
+	// Build a one-block sub-plan. F4 fix: also trim Diagnostics to those
+	// scoped to the targeted block (or document-level, BlockID==""); a sink
+	// or future consumer that walks Diagnostics expects every BlockID to
+	// resolve in plan.Blocks.
 	subPlan := narrationPlan
 	subPlan.Blocks = []plan.Block{narrationPlan.Blocks[targetIdx]}
+	subPlan.Diagnostics = filterDiagnosticsForBlock(narrationPlan.Diagnostics, req.BlockID)
 
 	subResult := render.RenderResult{
 		Audio:    br.Audio,
@@ -292,6 +332,25 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		return out, fmt.Errorf("pipeline: sink: %w", err)
 	}
 	return out, nil
+}
+
+// filterDiagnosticsForBlock keeps only diagnostics scoped to blockID or to
+// the document level (empty BlockID). Returns nil when there is nothing to
+// keep (skips an empty allocation).
+func filterDiagnosticsForBlock(in []plan.Diagnostic, blockID string) []plan.Diagnostic {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]plan.Diagnostic, 0, len(in))
+	for _, d := range in {
+		if d.BlockID == "" || d.BlockID == blockID {
+			out = append(out, d)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // summarizeBlocks builds the per-block roster from the latest plan. Pure;

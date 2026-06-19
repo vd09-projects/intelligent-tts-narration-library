@@ -461,11 +461,20 @@ func TestPipeline_SingleBlock_ValidID(t *testing.T) {
 	if len(sk.gotPlan.Blocks) > 0 && sk.gotPlan.Blocks[0].ID != "b002" {
 		t.Errorf("Sub-plan block id: got %q want %q", sk.gotPlan.Blocks[0].ID, "b002")
 	}
+	// F8 fix: assert the targeted block carries the requested level so a
+	// planner refactor that drops the LevelOverrides plumbing is caught
+	// at the pipeline boundary.
+	if len(sk.gotPlan.Blocks) > 0 && sk.gotPlan.Blocks[0].Level != plan.L3 {
+		t.Errorf("Sub-plan block Level: got %v want L3 (LevelOverrides must reach planner)", sk.gotPlan.Blocks[0].Level)
+	}
 	if len(got.BlockSummaries) < 2 {
 		t.Errorf("BlockSummaries should list ALL plan blocks (for caller roster), got %d", len(got.BlockSummaries))
 	}
 	if got.BlockHashMismatch != nil {
 		t.Errorf("BlockHashMismatch should be nil when ExpectedContentHash unset; got %+v", got.BlockHashMismatch)
+	}
+	if got.DocumentContentHash != "doc-hash-actual" {
+		t.Errorf("DocumentContentHash: got %q want %q (must mirror plan.Source.ContentHash)", got.DocumentContentHash, "doc-hash-actual")
 	}
 }
 
@@ -513,6 +522,32 @@ func TestPipeline_SingleBlock_HashMismatch(t *testing.T) {
 	}
 	if sk.calls != 1 {
 		t.Errorf("Sink.Consume should still be called on hash mismatch: got %d", sk.calls)
+	}
+}
+
+// TestPipeline_WholeDoc_DocumentContentHashSurfaced covers F1: the
+// document's content hash is exposed on NarrateResult on every successful
+// run, so cmd/narrate can print it and callers can capture it for a later
+// --expected-content-hash guard.
+func TestPipeline_WholeDoc_DocumentContentHashSurfaced(t *testing.T) {
+	t.Parallel()
+	ad := &fakeAdapter{doc: multiBlockDoc()} // Source.ContentHash = "doc-hash-actual"
+	rd := &fakeRenderer{res: render.RenderResult{
+		Timeline: plan.Timeline{Blocks: []plan.BlockTiming{{BlockID: "b001", EndMs: 100, AudioRef: "b001.wav"}}},
+	}}
+	sk := &fakeSink{receipt: ephemeralReceipt()}
+
+	p := pipeline.New(ad, nil, rd, sk, pipeline.PipelineDefaults{Level: plan.L1, OutDir: "/tmp/out"})
+
+	got, err := p.Narrate(context.Background(),
+		plan.SourceRef{Kind: plan.SourceKindFile, URI: "/tmp/multi.md"},
+		pipeline.NarrateRequest{},
+	)
+	if err != nil {
+		t.Fatalf("Narrate unexpected error: %v", err)
+	}
+	if got.DocumentContentHash != "doc-hash-actual" {
+		t.Errorf("DocumentContentHash on whole-doc result: got %q want %q", got.DocumentContentHash, "doc-hash-actual")
 	}
 }
 

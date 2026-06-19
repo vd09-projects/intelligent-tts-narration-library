@@ -272,10 +272,22 @@ func TestRunNarrate_Block_ValidID_LevelOverride(t *testing.T) {
 			BlockSummaries: []pipeline.BlockSummary{
 				{ID: "b002", Class: plan.ClassCode, Level: plan.L3, Status: plan.StatusVoiced, StartLine: 3, EndLine: 5},
 			},
+			DocumentContentHash: "abcd",
 		},
 	}
 	cleanup := withStubPipeline(stub)
 	defer cleanup()
+
+	// Capture the factoryArgs the newPipeline factory receives so we can
+	// assert the F2 fix: when --block is set, --level must NOT propagate
+	// into PipelineDefaults.Level (the planner default stays at L1).
+	var gotFactoryArgs flagSet
+	origNew := newPipeline
+	newPipeline = func(outDir string, args flagSet) narrator {
+		gotFactoryArgs = args
+		return stub
+	}
+	defer func() { newPipeline = origNew }()
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -292,14 +304,123 @@ func TestRunNarrate_Block_ValidID_LevelOverride(t *testing.T) {
 	if got := stub.gotReq.LevelOverrides["b002"]; got != plan.L3 {
 		t.Errorf("LevelOverrides[b002]: got %v want L3", got)
 	}
+	// F2 fix: factory-arg Level must be 1 (document default), not 3.
+	if gotFactoryArgs.Level != 1 {
+		t.Errorf("factory args Level: got %d want 1 (--block must not propagate --level to PipelineDefaults)", gotFactoryArgs.Level)
+	}
 	if !strings.Contains(stdout.String(), "blocks_played=1") {
 		t.Errorf("stdout summary missing or wrong: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "content_hash=abcd") {
+		t.Errorf("stdout summary missing content_hash key (F1 fix): %q", stdout.String())
 	}
 	if strings.Contains(stderr.String(), "# ") && strings.Contains(stderr.String(), "blocks — escalate") {
 		t.Errorf("roster should NOT print when --block is set; got stderr=%q", stderr.String())
 	}
 	if strings.Contains(stderr.String(), "warning: content_hash mismatch") {
 		t.Errorf("unexpected hash-mismatch warning when --expected-content-hash unset: %q", stderr.String())
+	}
+}
+
+// TestRunNarrate_WholeDoc_StdoutCarriesContentHash covers F1: the stdout
+// summary must expose content_hash so callers can capture it and feed it
+// back via --expected-content-hash on a later --block re-render.
+func TestRunNarrate_WholeDoc_StdoutCarriesContentHash(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt:         sink.SinkReceipt{BlocksPlayed: 4, TotalDurationMs: 9_000},
+			BlockSummaries:      []pipeline.BlockSummary{{ID: "b001", Class: plan.ClassHeading, Level: plan.L1, Status: plan.StatusVoiced, StartLine: 1, EndLine: 1}},
+			DocumentContentHash: "feedface",
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female"},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error: %v", err)
+	}
+	const wantSuffix = "content_hash=feedface\n"
+	if !strings.HasSuffix(stdout.String(), wantSuffix) {
+		t.Errorf("stdout summary should end with %q; got %q", wantSuffix, stdout.String())
+	}
+}
+
+// TestFlagSet_Validate_ExpectedContentHashRequiresBlock covers F3: passing
+// --expected-content-hash without --block is a validation error.
+func TestFlagSet_Validate_ExpectedContentHashRequiresBlock(t *testing.T) {
+	t.Parallel()
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", ExpectedContentHash: "deadbeef"}
+	err := a.validate()
+	if err == nil {
+		t.Fatal("validate accepted --expected-content-hash without --block")
+	}
+	if !strings.Contains(err.Error(), "--expected-content-hash") || !strings.Contains(err.Error(), "--block") {
+		t.Errorf("error message should mention both flags; got %q", err.Error())
+	}
+	// And the converse: with --block it's allowed.
+	b := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "b002", ExpectedContentHash: "deadbeef"}
+	if err := b.validate(); err != nil {
+		t.Errorf("validate rejected --expected-content-hash + --block: %v", err)
+	}
+}
+
+// TestRunNarrate_ExactMessageFormats covers F7: pin the exact wording of
+// the hash-mismatch stderr warning AND the block-not-found error suffix,
+// so future refactors that rephrase them break a test instead of breaking
+// downstream MCP wrappers parsing the strings.
+func TestRunNarrate_ExactMessageFormats(t *testing.T) {
+	// Hash-mismatch warning.
+	{
+		stub := &stubNarrator{
+			result: pipeline.NarrateResult{
+				SinkReceipt:         sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 100},
+				DocumentContentHash: "actual-hash",
+				BlockHashMismatch:   &pipeline.BlockHashMismatch{BlockID: "b001", Expected: "bad", Got: "actual-hash"},
+			},
+		}
+		cleanup := withStubPipeline(stub)
+		defer cleanup()
+
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		if err := runNarrate(context.Background(),
+			flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "b001", ExpectedContentHash: "bad"},
+			stdout, stderr,
+		); err != nil {
+			t.Fatalf("runNarrate unexpected error: %v", err)
+		}
+		const want = "warning: content_hash mismatch (expected bad, got actual-hash) — block content has changed since you got that id\n"
+		if got := stderr.String(); got != want {
+			t.Errorf("hash-mismatch wording drift\ngot:  %q\nwant: %q", got, want)
+		}
+	}
+	// Block-not-found error.
+	{
+		stub := &stubNarrator{
+			err: fmt.Errorf("%w: bogus", pipeline.ErrBlockNotFound),
+		}
+		cleanup := withStubPipeline(stub)
+		defer cleanup()
+
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		err := runNarrate(context.Background(),
+			flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "bogus"},
+			stdout, stderr,
+		)
+		if err == nil {
+			t.Fatal("runNarrate accepted unknown --block id")
+		}
+		const want = "block not found: bogus"
+		if got := err.Error(); got != want {
+			t.Errorf("block-not-found wording drift\ngot:  %q\nwant: %q", got, want)
+		}
 	}
 }
 
