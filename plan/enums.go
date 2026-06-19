@@ -167,3 +167,71 @@ func (k SegmentKind) IsValid() bool {
 	}
 	return false
 }
+
+// Severity — Diagnostic severity. Diagnostics are plan-level notes from the
+// planner (e.g. "intelligence adapter unavailable; prose blocks under
+// threshold read verbatim"), not audio. Unknown values round-trip through
+// JSON (additive-compatible: consumers ignore unknown values).
+type Severity string
+
+const (
+	// SeverityInfo — informational note; nothing to act on.
+	SeverityInfo Severity = "info"
+	// SeverityWarning — degraded behavior worth surfacing to the caller.
+	SeverityWarning Severity = "warning"
+)
+
+// IsValid reports whether s is a recognized Severity value.
+func (s Severity) IsValid() bool {
+	switch s {
+	case SeverityInfo, SeverityWarning:
+		return true
+	}
+	return false
+}
+
+// SayAs — VoicingDirective.SayAs hint over a rune span of Segment.Text. Values
+// overlap with SSML 1.0; if SSML 1.1 adds a value, add a named constant —
+// unknown values continue to round-trip in the meantime (additive-compatible).
+type SayAs string
+
+const (
+	// SayAsCharacters — speak each character (e.g. "API" → "A. P. I.").
+	SayAsCharacters SayAs = "characters"
+	// SayAsDigits — speak each digit individually (e.g. "123" → "one two three").
+	SayAsDigits SayAs = "digits"
+	// SayAsVerbatim — speak the text exactly as written, no expansion.
+	SayAsVerbatim SayAs = "verbatim"
+)
+
+// IsValid reports whether s is a recognized SayAs value.
+func (s SayAs) IsValid() bool {
+	switch s {
+	case SayAsCharacters, SayAsDigits, SayAsVerbatim:
+		return true
+	}
+	return false
+}
+
+// Emphasis — VoicingDirective.Emphasis level over a rune span of Segment.Text.
+// Values overlap with SSML 1.0; renderers may ignore the hint entirely.
+// Unknown values round-trip (additive-compatible).
+type Emphasis string
+
+const (
+	// EmphasisNone — no extra emphasis (engine default delivery).
+	EmphasisNone Emphasis = "none"
+	// EmphasisModerate — slight emphasis above the surrounding line.
+	EmphasisModerate Emphasis = "moderate"
+	// EmphasisStrong — strong emphasis.
+	EmphasisStrong Emphasis = "strong"
+)
+
+// IsValid reports whether e is a recognized Emphasis value.
+func (e Emphasis) IsValid() bool {
+	switch e {
+	case EmphasisNone, EmphasisModerate, EmphasisStrong:
+		return true
+	}
+	return false
+}

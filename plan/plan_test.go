@@ -254,6 +254,77 @@ func TestSegmentKind_IsValid(t *testing.T) {
 	}
 }
 
+func TestSeverity_IsValid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		s    Severity
+		want bool
+	}{
+		{"info", SeverityInfo, true},
+		{"warning", SeverityWarning, true},
+		{"critical", "critical", false},
+		{"empty", "", false},
+		{"uppercase", "WARNING", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.s.IsValid(); got != tt.want {
+				t.Errorf("Severity(%q).IsValid() = %v, want %v", tt.s, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSayAs_IsValid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		s    SayAs
+		want bool
+	}{
+		{"characters", SayAsCharacters, true},
+		{"digits", SayAsDigits, true},
+		{"verbatim", SayAsVerbatim, true},
+		{"spell", "spell", false},
+		{"empty", "", false},
+		{"uppercase", "CHARACTERS", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.s.IsValid(); got != tt.want {
+				t.Errorf("SayAs(%q).IsValid() = %v, want %v", tt.s, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEmphasis_IsValid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		e    Emphasis
+		want bool
+	}{
+		{"none", EmphasisNone, true},
+		{"moderate", EmphasisModerate, true},
+		{"strong", EmphasisStrong, true},
+		{"sing", "sing", false},
+		{"empty", "", false},
+		{"uppercase", "STRONG", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.e.IsValid(); got != tt.want {
+				t.Errorf("Emphasis(%q).IsValid() = %v, want %v", tt.e, got, tt.want)
+			}
+		})
+	}
+}
+
 // ----------------------------------------------------------------------------
 // SchemaVersion / IsCompatible — table-driven.
 // ----------------------------------------------------------------------------
@@ -622,6 +693,36 @@ func TestForwardCompat_UnknownEnumValuesRoundTrip(t *testing.T) {
 				var r Refusal
 				err := json.Unmarshal(raw, &r)
 				return r, r.Reason.IsValid(), err
+			},
+		},
+		{
+			name:          "diagnostic_severity",
+			raw:           `{"code":"x","severity":"future_severity_v1_5","message":"x"}`,
+			expectLiteral: "future_severity_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var d Diagnostic
+				err := json.Unmarshal(raw, &d)
+				return d, d.Severity.IsValid(), err
+			},
+		},
+		{
+			name:          "voicing_say_as",
+			raw:           `{"start":0,"end":3,"say_as":"future_say_as_v1_5"}`,
+			expectLiteral: "future_say_as_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var v VoicingDirective
+				err := json.Unmarshal(raw, &v)
+				return v, v.SayAs.IsValid(), err
+			},
+		},
+		{
+			name:          "voicing_emphasis",
+			raw:           `{"start":0,"end":3,"emphasis":"future_emphasis_v1_5"}`,
+			expectLiteral: "future_emphasis_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var v VoicingDirective
+				err := json.Unmarshal(raw, &v)
+				return v, v.Emphasis.IsValid(), err
 			},
 		},
 	}
