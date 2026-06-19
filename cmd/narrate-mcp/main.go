@@ -58,6 +58,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
+	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
+	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
@@ -82,6 +84,7 @@ var (
 	errBothSourceAndText        = errors.New("caller-error: invalid_argument: cannot supply both source and text")
 	errTextNotImplemented       = errors.New("caller-error: invalid_argument: text arg not implemented in issue #12 (see mcptext adapter ticket #17); use source")
 	errPersistentNotImplemented = errors.New("caller-error: invalid_argument: persistent sink not implemented in phase one; use ephemeral")
+	errUnknownIntelligence      = errors.New("caller-error: invalid_argument: intelligence must be none or mcpsampling")
 )
 
 // speakArgs — JSON-tagged tool arguments. Field defaults are not applied
@@ -90,11 +93,12 @@ var (
 //
 // jsonschema struct tags drive the SDK's auto-generated input schema.
 type speakArgs struct {
-	Source string `json:"source,omitempty" jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
-	Text   string `json:"text,omitempty"   jsonschema:"inline markdown text to narrate (not implemented in this release; use source)"`
-	Level  int    `json:"level,omitempty"  jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
-	Sink   string `json:"sink,omitempty"   jsonschema:"output sink: ephemeral | persistent (persistent not implemented). default ephemeral"`
-	Gender string `json:"gender,omitempty" jsonschema:"voice gender: female | male. default female"`
+	Source       string `json:"source,omitempty"       jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
+	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (not implemented in this release; use source)"`
+	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
+	Sink         string `json:"sink,omitempty"         jsonschema:"output sink: ephemeral | persistent (persistent not implemented). default ephemeral"`
+	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
+	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
 }
 
 // applyDefaults — the SDK does not fill JSON-schema defaults for us.
@@ -109,6 +113,9 @@ func (a *speakArgs) applyDefaults() {
 	}
 	if a.Gender == "" {
 		a.Gender = "female"
+	}
+	if a.Intelligence == "" {
+		a.Intelligence = "none"
 	}
 }
 
@@ -139,6 +146,12 @@ func (a speakArgs) validate() error {
 	}
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		return fmt.Errorf("caller-error: invalid_argument: gender must be female or male (got %q)", a.Gender)
+	}
+	switch a.Intelligence {
+	case "none", "mcpsampling":
+		// ok
+	default:
+		return fmt.Errorf("%w (got %q)", errUnknownIntelligence, a.Intelligence)
 	}
 	return nil
 }
@@ -182,10 +195,15 @@ type narrator interface {
 // pipeline.Pipeline; tests swap this var to inject a stub narrator.
 // Per Decision v5 (build-review B2 fix): the seam lets unit tests verify
 // the level/voice/locale wiring without spawning Kokoro.
-var newPipeline = func(outDir string, args speakArgs) narrator {
+//
+// Phase 5 of #13 adds the intel arg: the intelligence adapter the caller
+// selected via args.Intelligence. nil = current deterministic+degraded
+// behavior. Constructed by runSpeak after applyDefaults+validate so the
+// factory stays a pure composition step.
+var newPipeline = func(outDir string, args speakArgs, intel intelligence.IntelligenceAdapter) narrator {
 	return pipeline.New(
 		file.New(),
-		nil, // nil intelligence — phase one deterministic + degraded path.
+		intel,
 		sherpa.New(sherpa.EngineConfig{}),
 		ephemeral.New(),
 		pipeline.PipelineDefaults{
@@ -200,6 +218,15 @@ var newPipeline = func(outDir string, args speakArgs) narrator {
 // Same shape as cmd/narrate's runNarrate; the differences are arg parsing,
 // the XOR source/text validation, and that we return the receipt rather
 // than printing to stdout.
+//
+// Phase 5 of #13 wires the optional intelligence adapter. When
+// args.Intelligence == "none" (the default), nil flows into newPipeline
+// and the planner takes its current deterministic+degraded path. When
+// "mcpsampling", a per-call mcpsampling.Adapter is constructed with a
+// per-call in-memory cache. The speak handler threads the live
+// *mcp.ServerSession into ctx via mcpsampling.WithSamplingClient — see
+// speakHandler — so the adapter can call CreateMessage without crossing
+// the pipeline.New layer boundary (plan Decision v3).
 func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 	args.applyDefaults()
 	if err := args.validate(); err != nil {
@@ -221,7 +248,8 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 		_ = os.RemoveAll(outDir)
 	}()
 
-	pl := newPipeline(outDir, args)
+	intel := buildIntelligence(args)
+	pl := newPipeline(outDir, args, intel)
 
 	receipt, err := pl.Narrate(ctx, plan.SourceRef{
 		Kind: plan.SourceKindFile,
@@ -236,6 +264,25 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 	return speakResponse{
 		Receipt: receiptFromSink(receipt, outDir),
 	}, nil
+}
+
+// buildIntelligence selects an IntelligenceAdapter per args.Intelligence.
+// Returns nil for "none" so the planner takes its deterministic+degraded
+// path. For "mcpsampling":
+//
+// Per-call cache: scoped to one MCP tool call. Catches intra-call
+// escalation (L1 → L2 re-narration of the same block) without persisting
+// across calls. Promoting to per-server lifetime is a deliberate future
+// change requiring eviction policy + cross-call thread-safety review;
+// out of scope for #13. (Per S4.)
+func buildIntelligence(args speakArgs) intelligence.IntelligenceAdapter {
+	if args.Intelligence != "mcpsampling" {
+		return nil
+	}
+	return mcpsampling.New(
+		mcpsampling.WithClientID("narrate-mcp"),
+		mcpsampling.WithCache(mcpsampling.NewInMemoryCache()),
+	)
 }
 
 // receiptFromSink projects the sink-side SinkReceipt into our wire shape.
@@ -272,6 +319,16 @@ func classifyPipelineErr(err error) error {
 	if errors.Is(err, fs.ErrPermission) {
 		return fmt.Errorf("caller-error: invalid_argument: source permission denied: %w", err)
 	}
+	// Phase 5 of #13: mcpsampling sentinels. ErrNoSamplingClient means the
+	// server failed to thread the session — operator bug, not caller bug.
+	// ErrUnexpectedContentKind means the client returned non-text content
+	// from a sampling request — outside the caller's control.
+	if errors.Is(err, mcpsampling.ErrNoSamplingClient) {
+		return fmt.Errorf("internal_error: sampling client missing from ctx: %w", err)
+	}
+	if errors.Is(err, mcpsampling.ErrUnexpectedContentKind) {
+		return fmt.Errorf("internal_error: sampling reply not text: %w", err)
+	}
 	return fmt.Errorf("internal_error: pipeline failure: %w", err)
 }
 
@@ -279,8 +336,19 @@ func classifyPipelineErr(err error) error {
 // All handler errors are returned via the `error` return — the SDK
 // surfaces them as IsError=true content per the SDK's documented design.
 // The classification text inside the error message is the wire contract.
+//
+// Phase 5 of #13: when args.Intelligence == "mcpsampling", the live
+// *mcp.ServerSession from the CallToolRequest is threaded into ctx via
+// mcpsampling.WithSamplingClient so the adapter (constructed inside
+// runSpeak via buildIntelligence) can reach the client without
+// pipeline.New knowing about MCP sessions. Threading happens before
+// deps.run so the runSpeak → newPipeline → Narrate path sees the
+// SamplingClient on the ctx.Value chain.
 func speakHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, speakArgs) (*mcp.CallToolResult, speakResponse, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, args speakArgs) (*mcp.CallToolResult, speakResponse, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args speakArgs) (*mcp.CallToolResult, speakResponse, error) {
+		if args.Intelligence == "mcpsampling" && req != nil && req.Session != nil {
+			ctx = mcpsampling.WithSamplingClient(ctx, req.Session)
+		}
 		resp, err := deps.run(ctx, args)
 		if err != nil {
 			return nil, speakResponse{}, err
