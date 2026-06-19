@@ -89,11 +89,11 @@ type Segment struct {
 // (design doc §2.3). Renderer may ignore every directive and still speak
 // correct words.
 type VoicingDirective struct {
-	Start    int    `json:"start"` // rune offset into Segment.Text
-	End      int    `json:"end"`
-	SayAs    string `json:"say_as,omitempty"`    // "characters" | "digits" | "verbatim"
-	Phoneme  string `json:"phoneme,omitempty"`   // engine-neutral pronunciation hint
-	Emphasis string `json:"emphasis,omitempty"`  // "none" | "moderate" | "strong"
+	Start    int      `json:"start"` // rune offset into Segment.Text
+	End      int      `json:"end"`
+	SayAs    SayAs    `json:"say_as,omitempty"`
+	Phoneme  string   `json:"phoneme,omitempty"` // engine-neutral pronunciation hint
+	Emphasis Emphasis `json:"emphasis,omitempty"`
 }
 
 // SourceMap — one shape for files, screenshots, and raw text (design doc §2.4).
@@ -133,10 +133,10 @@ type Refusal struct {
 // adapter unavailable; prose blocks under threshold read verbatim").
 // Not surfaced as audio; consumers may render it in UI.
 type Diagnostic struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"` // "info" | "warning"
-	Message  string `json:"message"`
-	BlockID  string `json:"block_id,omitempty"`
+	Code     string   `json:"code"`
+	Severity Severity `json:"severity"`
+	Message  string   `json:"message"`
+	BlockID  string   `json:"block_id,omitempty"`
 }
 
 // ----------------------------------------------------------------------------

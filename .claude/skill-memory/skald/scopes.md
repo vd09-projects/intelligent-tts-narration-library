@@ -52,3 +52,12 @@ scopes:
       (cmd/narrate-mcp stdio MCP server exposing `speak` tool, wiring the
       same pipeline.Pipeline composition root as cmd/narrate). Issue-numbered
       naming continues the convention.
+  - slug: plan-enum-consistency-issue-10
+    title: refactor(plan) enum consistency for VoicingDirective + Diagnostic (issue #10)
+    created: 2026-06-20
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #10
+      (refactor plan/ to lift Diagnostic.Severity, VoicingDirective.SayAs,
+      VoicingDirective.Emphasis from freeform strings to typed enum aliases
+      with IsValid() — consistency with existing six enums in plan/enums.go).
+      Issue-numbered naming continues the convention.
