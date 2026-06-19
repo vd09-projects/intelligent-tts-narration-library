@@ -537,3 +537,158 @@ func TestRefusalInvariant_RecursesIntoSubBlocks(t *testing.T) {
 		t.Errorf("error should mention offending sub-block id 'child', got: %v", err)
 	}
 }
+
+// ----------------------------------------------------------------------------
+// Forward compatibility — unknown enum values round-trip without crashing.
+//
+// CLAUDE.md says the schema is "additive-compatible within a major
+// schema_version: consumers ignore unknown fields." Unknown enum *values*
+// (e.g. v1.5 adds StatusPartiallyVoiced) are the more common forward-compat
+// case. A v1.0 reader must (a) decode without error, (b) report IsValid()
+// false, (c) re-encode preserving the unknown value verbatim so the document
+// survives a read-write cycle.
+// ----------------------------------------------------------------------------
+
+// fwdCompatProbe — covers one enum type at one struct site. raw is a minimal
+// JSON document; decode parses raw into a fresh target; isValid runs IsValid()
+// against the decoded field; expectLiteral is the unknown string that must
+// survive in re-encoded JSON.
+type fwdCompatProbe struct {
+	name          string
+	raw           string
+	decode        func(raw []byte) (any, bool, error) // returns (target, isValid, err)
+	expectLiteral string
+}
+
+func TestForwardCompat_UnknownEnumValuesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	probes := []fwdCompatProbe{
+		{
+			name:          "block_status",
+			raw:           `{"id":"b1","status":"future_status_added_in_v1_5"}`,
+			expectLiteral: "future_status_added_in_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var b Block
+				err := json.Unmarshal(raw, &b)
+				return b, b.Status.IsValid(), err
+			},
+		},
+		{
+			name:          "block_class",
+			raw:           `{"id":"b1","class":"future_class_v1_5"}`,
+			expectLiteral: "future_class_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var b Block
+				err := json.Unmarshal(raw, &b)
+				return b, b.Class.IsValid(), err
+			},
+		},
+		{
+			name:          "sourcemap_kind",
+			raw:           `{"kind":"future_source_kind_v1_5"}`,
+			expectLiteral: "future_source_kind_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var sm SourceMap
+				err := json.Unmarshal(raw, &sm)
+				return sm, sm.Kind.IsValid(), err
+			},
+		},
+		{
+			name:          "sourceref_kind",
+			raw:           `{"kind":"future_source_kind_v1_5","content_hash":"x","adapter":"y"}`,
+			expectLiteral: "future_source_kind_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var sr SourceRef
+				err := json.Unmarshal(raw, &sr)
+				return sr, sr.Kind.IsValid(), err
+			},
+		},
+		{
+			name:          "segment_kind",
+			raw:           `{"id":"s1","kind":"future_segment_kind_v1_5"}`,
+			expectLiteral: "future_segment_kind_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var s Segment
+				err := json.Unmarshal(raw, &s)
+				return s, s.Kind.IsValid(), err
+			},
+		},
+		{
+			name:          "refusal_reason",
+			raw:           `{"reason":"future_refusal_reason_v1_5","message":"x","spoken":true}`,
+			expectLiteral: "future_refusal_reason_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var r Refusal
+				err := json.Unmarshal(raw, &r)
+				return r, r.Reason.IsValid(), err
+			},
+		},
+	}
+
+	for _, p := range probes {
+		t.Run(p.name, func(t *testing.T) {
+			t.Parallel()
+
+			target, isValid, err := p.decode([]byte(p.raw))
+			if err != nil {
+				t.Fatalf("decode unknown value should not error, got: %v", err)
+			}
+			if isValid {
+				t.Errorf("IsValid() expected false for unknown value, got true")
+			}
+
+			out, err := json.Marshal(target)
+			if err != nil {
+				t.Fatalf("re-encode: %v", err)
+			}
+			if !strings.Contains(string(out), p.expectLiteral) {
+				t.Errorf("re-encoded JSON should preserve unknown value %q verbatim, got: %s",
+					p.expectLiteral, string(out))
+			}
+		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Omitempty smoke — zero-value plan + zero-value block emit minimal JSON.
+//
+// Catches a future regression where someone drops `,omitempty` on
+// NarrationPlan.Diagnostics, PlanDefaults.Voice, Block.SubBlocks, etc. The
+// schema's additive-compatibility guarantee depends on optional fields not
+// appearing in encoded output unless populated.
+// ----------------------------------------------------------------------------
+
+func TestOmitempty_ZeroValuePlanProducesMinimalJSON(t *testing.T) {
+	t.Parallel()
+
+	// Zero-value NarrationPlan: diagnostics slice empty, defaults.voice
+	// unset — neither should appear in encoded JSON.
+	planJSON, err := json.Marshal(NarrationPlan{})
+	if err != nil {
+		t.Fatalf("marshal NarrationPlan{}: %v", err)
+	}
+	planStr := string(planJSON)
+	forbiddenPlanKeys := []string{`"diagnostics"`, `"voice"`}
+	for _, key := range forbiddenPlanKeys {
+		if strings.Contains(planStr, key) {
+			t.Errorf("zero-value NarrationPlan JSON should not contain %s, got: %s",
+				key, planStr)
+		}
+	}
+
+	// Zero-value Block: segments / sub_blocks / refusal all omitempty —
+	// none should appear in encoded JSON.
+	blockJSON, err := json.Marshal(Block{})
+	if err != nil {
+		t.Fatalf("marshal Block{}: %v", err)
+	}
+	blockStr := string(blockJSON)
+	forbiddenBlockKeys := []string{`"segments"`, `"sub_blocks"`, `"refusal"`}
+	for _, key := range forbiddenBlockKeys {
+		if strings.Contains(blockStr, key) {
+			t.Errorf("zero-value Block JSON should not contain %s, got: %s",
+				key, blockStr)
+		}
+	}
+}
