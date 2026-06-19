@@ -8,7 +8,7 @@ See `problem-statement.md` for framing and `docs/solution-phase-design.md` for m
 
 Prerequisites:
 
-- Go 1.22+.
+- Go 1.25+. The MCP SDK (`github.com/modelcontextprotocol/go-sdk` v1.5.0) requires it; this bumped the project's minimum Go from 1.22 to 1.25.0. See the "Go toolchain" note below.
 - macOS (phase one uses `afplay` for the ephemeral sink).
 - A working `scripts/kokoro` wrapper — see `render/sherpa/README.md` for the Kokoro-onnx setup (Python venv + ONNX model files).
 
@@ -33,6 +33,104 @@ The ephemeral sink cleans up its temp WAV directory at the end of the run. The p
 
 Exit codes: `0` success; `1` adapter / planner / renderer / sink error; `2` flag error or `--sink=persistent`.
 
+## MCP server (`cmd/narrate-mcp`)
+
+`cmd/narrate-mcp` is a sibling composition root that exposes the same pipeline over the Model Context Protocol's stdio transport. MCP clients (Claude Desktop, Claude Code, the `mcp` CLI) can call a single `speak` tool to narrate a markdown document.
+
+Tool family: `narrate.*` — `speak` is the canonical entry point. Future tools belong under the same server.
+
+Start the server (mostly useful for the `mcp` CLI or local development):
+
+```sh
+make run-mcp
+```
+
+The server logs to stderr and runs until stdin EOF or Ctrl-C (both clean shutdowns, exit `0`).
+
+### `speak` tool arguments
+
+| Field | Required | Default | Choices | Meaning |
+|---|---|---|---|---|
+| `source` | one of source/text | — | path | File path to the markdown document. |
+| `text` | one of source/text | — | string | Inline markdown text. **Not implemented in this release** — see follow-up ticket #17 (mcptext in-memory adapter). Calling with `text` set returns a tool error. |
+| `level` | no | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. |
+| `sink` | no | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` returns a tool error in phase one. |
+| `gender` | no | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. |
+
+### Tool response
+
+```json
+{
+  "receipt": {
+    "blocks_played": 7,
+    "total_duration_ms": 12345,
+    "out_dir": "/tmp/narrate-mcp-XXXXXX"
+  }
+}
+```
+
+`out_dir` is the renderer's per-call temp directory and is deleted after the call returns. A `plan` envelope may be added additively in future releases under the schema-versioning rule.
+
+### Tool errors
+
+The `speak` handler returns errors via `CallToolResult.IsError = true`. The error text uses one of these prefixes so callers can self-correct:
+
+- `caller-error: invalid_argument: …` — bad request (missing/conflicting args, unknown enum, file not found, permission denied, text arg supplied, `sink=persistent`).
+- `internal_error: pipeline failure: …` — renderer/sink failure unrelated to the request shape.
+- `cancelled: …` — context cancelled by the client.
+
+Refusals (e.g. bare images, oversized prose without an intelligence adapter) are not errors. The block is voiced with a spoken notice per the honesty rule, and the call still returns a normal receipt.
+
+### Claude Desktop config (canonical)
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "narrate": {
+      "command": "/absolute/path/to/intelligent-tts-narration-library/bin/narrate-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Build the binary first (the `bin/` path matches the snippet above; `make build-mcp` only compile-checks — emit the binary explicitly):
+
+```sh
+mkdir -p bin && go build -o bin/narrate-mcp ./cmd/narrate-mcp
+```
+
+Restart Claude Desktop. The `narrate.speak` tool will appear in the model's tool list.
+
+For local development, you can also point `command` at `go` and `args` at `["run", "./cmd/narrate-mcp"]` from the repo root — startup is slower but no build step.
+
+### `mcp` CLI (secondary, for power-user smoke)
+
+If you have the [`mcp` CLI](https://github.com/modelcontextprotocol) installed:
+
+```sh
+mcp tool call --server "go run ./cmd/narrate-mcp" speak \
+  --arg source=docs/samples/sample.md --arg level=1 --arg gender=female
+```
+
+(The exact `mcp` CLI invocation may vary with the CLI's release version; see upstream docs.)
+
+### Manual smoke
+
+```sh
+make test-mcp-manual
+```
+
+This runs `runSpeak` against `docs/samples/sample.md` in-process (bypassing the stdio transport), plays audio via afplay, and asserts the receipt shape. Listener confirms the bare-image refusal by ear, same as `make test-manual`.
+
+### Known limitations
+
+- `text` arg is not implemented (deferred to ticket #17 — mcptext in-memory adapter).
+- `sink=persistent` is not implemented (phase two).
+- No intelligence adapter wired in this release — the planner uses the deterministic + degraded path; prose under ~120 words is read verbatim, larger prose is refused honestly.
+
 ## Running the tests
 
 Default test pass — no audio, no subprocess to Kokoro / afplay:
@@ -54,6 +152,16 @@ go test -tags manual ./pipeline/...
 ```
 
 The manual smoke must run from the repo root so `./scripts/kokoro` resolves.
+
+MCP server manual smoke (same audio path as above, in-process through the `speak` handler):
+
+```sh
+make test-mcp-manual
+```
+
+## Go toolchain
+
+The MCP SDK pulls the minimum Go version to `1.25.0` (transitive requirement from `github.com/modelcontextprotocol/go-sdk` v1.5.0). This is intentional — the SDK is a first-class dependency in CLAUDE.md's stack list, and pinning the SDK lower than 1.5.0 would forfeit the speak-tool wiring. Consumers on Go 1.22–1.24 cannot build the library until they upgrade their toolchain.
 
 ## Architecture, briefly
 

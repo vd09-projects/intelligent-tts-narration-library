@@ -6,7 +6,7 @@ Go library that turns text into TTS narration by *meaning* rather than character
 
 ## Stack
 
-- **Language:** Go (core + interfaces + edges). React (reference player).
+- **Language:** Go 1.25+ (core + interfaces + edges; minimum bumped from 1.22 in issue #12 by the MCP SDK transitive requirement). React (reference player).
 - **Framework:** stdlib + `goldmark` (CommonMark AST segmenter); `github.com/k2-fsa/sherpa-onnx-go` (in-process upgrade path, deferred); official `github.com/modelcontextprotocol/go-sdk` v1.5.0.
 - **Database:** none in core. Persistent sink writes filesystem directories (`audio.wav` + `plan.json` + `manifest.json`).
 - **Deployment:** local-only. Hobby project, no recurring spend.
