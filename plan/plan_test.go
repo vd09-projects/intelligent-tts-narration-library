@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -389,5 +390,150 @@ func TestInvariant_AllJSONTagsAreSnakeCase(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Refusal invariant — Block.Refusal present iff Block.Status == StatusRefused.
+//
+// The schema doc (plan.go Block.Refusal comment) says: "present iff Block.Status
+// == StatusRefused". Round-trip fixtures happen to obey it, but a future
+// construction path could violate it silently — these tests catch that.
+// ----------------------------------------------------------------------------
+
+// checkRefusalInvariant reports an error if Block.Refusal presence does not
+// match Block.Status == StatusRefused. Walks SubBlocks recursively so a
+// violation in a nested block is also caught. Returns nil when the invariant
+// holds for b and every descendant.
+func checkRefusalInvariant(b Block) error {
+	hasRefusal := b.Refusal != nil
+	wantRefusal := b.Status == StatusRefused
+	if hasRefusal != wantRefusal {
+		return fmt.Errorf("block %q: status=%q refusal_present=%t, want refusal_present=%t",
+			b.ID, b.Status, hasRefusal, wantRefusal)
+	}
+	for i, sb := range b.SubBlocks {
+		if err := checkRefusalInvariant(sb); err != nil {
+			return fmt.Errorf("block %q sub_block[%d]: %w", b.ID, i, err)
+		}
+	}
+	return nil
+}
+
+func TestInvariant_RefusalPresenceMatchesStatus(t *testing.T) {
+	t.Parallel()
+
+	// Single-Block fixtures: decode as Block, check directly.
+	singleBlockFixtures := []string{
+		"example_voiced_config.json",
+		"example_refused_image.json",
+	}
+	for _, fixture := range singleBlockFixtures {
+		t.Run(fixture, func(t *testing.T) {
+			t.Parallel()
+			raw := readFixture(t, fixture)
+			var b Block
+			if err := json.Unmarshal(raw, &b); err != nil {
+				t.Fatalf("decode %s: %v", fixture, err)
+			}
+			if err := checkRefusalInvariant(b); err != nil {
+				t.Errorf("fixture %s violates refusal invariant: %v", fixture, err)
+			}
+		})
+	}
+
+	// Full-plan fixture: decode as NarrationPlan, check every block.
+	t.Run("example_full_plan.json", func(t *testing.T) {
+		t.Parallel()
+		raw := readFixture(t, "example_full_plan.json")
+		var p NarrationPlan
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("decode example_full_plan.json: %v", err)
+		}
+		for _, b := range p.Blocks {
+			if err := checkRefusalInvariant(b); err != nil {
+				t.Errorf("fixture example_full_plan.json violates refusal invariant: %v", err)
+			}
+		}
+	})
+}
+
+func TestRefusalInvariant_SyntheticCases(t *testing.T) {
+	t.Parallel()
+
+	// Minimal refusal stub — only Status/Refusal participate in the invariant,
+	// so other fields stay zero.
+	stubRefusal := &Refusal{
+		Reason:  RefuseBareImage,
+		Message: "stub",
+		Spoken:  true,
+	}
+
+	tests := []struct {
+		name    string
+		block   Block
+		wantErr bool
+	}{
+		{
+			name:    "refused_with_refusal",
+			block:   Block{ID: "b1", Status: StatusRefused, Refusal: stubRefusal},
+			wantErr: false,
+		},
+		{
+			name:    "refused_without_refusal",
+			block:   Block{ID: "b2", Status: StatusRefused, Refusal: nil},
+			wantErr: true,
+		},
+		{
+			name:    "voiced_with_refusal",
+			block:   Block{ID: "b3", Status: StatusVoiced, Refusal: stubRefusal},
+			wantErr: true,
+		},
+		{
+			name:    "voiced_without_refusal",
+			block:   Block{ID: "b4", Status: StatusVoiced, Refusal: nil},
+			wantErr: false,
+		},
+		{
+			name:    "degraded_without_refusal",
+			block:   Block{ID: "b5", Status: StatusDegraded, Refusal: nil},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkRefusalInvariant(tt.block)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("checkRefusalInvariant(%+v) err = %v, wantErr %v",
+					tt.block, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRefusalInvariant_RecursesIntoSubBlocks(t *testing.T) {
+	t.Parallel()
+
+	stubRefusal := &Refusal{Reason: RefuseBareImage, Message: "stub", Spoken: true}
+
+	// Parent is valid (voiced + no refusal). Sub-block violates (voiced with
+	// refusal). The checker must surface the sub-block error.
+	parent := Block{
+		ID:     "parent",
+		Status: StatusVoiced,
+		SubBlocks: []Block{
+			{ID: "child", Status: StatusVoiced, Refusal: stubRefusal},
+		},
+	}
+	err := checkRefusalInvariant(parent)
+	if err == nil {
+		t.Fatal("expected error from sub-block violation, got nil")
+	}
+	if !strings.Contains(err.Error(), "sub_block") {
+		t.Errorf("error should mention sub_block path, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"child"`) {
+		t.Errorf("error should mention offending sub-block id 'child', got: %v", err)
 	}
 }
