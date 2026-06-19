@@ -1,9 +1,11 @@
 package mcpsampling
 
+import (
+	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
+)
+
 // Option configures an Adapter. Pure data; no I/O is performed in any
-// Option closure. Cache and PromptTemplates land in Phase 2 / Phase 4 —
-// the options are declared here so the New signature is stable from
-// Phase 1.
+// Option closure.
 
 // Option mutates an Adapter during construction.
 type Option func(*Adapter)
@@ -49,24 +51,30 @@ func WithTemperature(t float64) Option {
 }
 
 // WithPromptTemplates overrides DefaultPromptTemplates with a caller-
-// supplied per-class map. Phase 2 defines DefaultPromptTemplates and
-// wires the override path; this Option is declared here so the New
-// surface is stable across the phase sequence.
-//
-// Phase 1 stores the override on the Adapter but does not consume it
-// (Voice still stubs). The actual storage field lands in Phase 2 when
-// prompts.go is added.
-func WithPromptTemplates(_ any) Option {
-	// Phase 2 will replace the parameter type with
-	// map[plan.Class]PromptTemplate and the body will assign to
-	// a.promptTemplates. For Phase 1 we keep the surface visible but
-	// inert so cmd/narrate-mcp wiring in Phase 5 compiles unchanged.
-	return func(_ *Adapter) {}
+// supplied per-class map. Missing entries cause Voice() to refuse for
+// that class with "no prompt template for class …" — the honest path,
+// per CLAUDE.md.
+func WithPromptTemplates(m map[plan.Class]PromptTemplate) Option {
+	return func(a *Adapter) {
+		if len(m) == 0 {
+			return
+		}
+		// Copy so the caller cannot mutate the adapter's template
+		// table after construction.
+		copy := make(map[plan.Class]PromptTemplate, len(m))
+		for k, v := range m {
+			copy[k] = v
+		}
+		a.promptTemplates = copy
+	}
 }
 
-// WithCache injects a custom Cache implementation. Phase 4 defines the
-// Cache interface and consumes this option; declared here for the same
-// stability reason as WithPromptTemplates.
-func WithCache(_ any) Option {
-	return func(_ *Adapter) {}
+// WithCache injects a Cache implementation. Defaults to nil — when nil,
+// Voice() skips the cache wrapper entirely. Production wiring in
+// cmd/narrate-mcp (Phase 5) passes NewInMemoryCache() with per-call
+// lifetime.
+func WithCache(c Cache) Option {
+	return func(a *Adapter) {
+		a.cache = c
+	}
 }
