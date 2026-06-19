@@ -19,6 +19,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
@@ -28,6 +29,65 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 )
+
+// ErrBlockNotFound is returned by Narrate when NarrateRequest.BlockID is
+// non-empty and the planner-produced plan has no Block with that ID. The
+// wrapped error message always includes the requested ID so callers can
+// surface it without re-deriving.
+//
+// Sentinel error: callers compare with errors.Is(err, pipeline.ErrBlockNotFound).
+var ErrBlockNotFound = errors.New("pipeline: block not found")
+
+// BlockSummary is one row of the block roster returned in NarrateResult.
+// Populated on every successful Narrate call (both whole-doc and single-block
+// paths) so callers can render a "narrate --block <id> --level 2|3" roster
+// without re-planning.
+//
+// StartLine / EndLine come from the block's SourceMap when SourceKindLineRange
+// applies; zero when the source map has no line range (e.g. screenshot OCR).
+type BlockSummary struct {
+	ID        string
+	Class     plan.Class
+	Level     plan.Level
+	Status    plan.Status
+	StartLine int
+	EndLine   int
+}
+
+// BlockHashMismatch is non-nil on NarrateResult only when
+// NarrateRequest.ExpectedContentHash was set AND it did not match the actual
+// document content_hash the planner produced. Carried as a warning, NOT an
+// error — the block content has changed since the caller obtained its ID,
+// but the re-render still proceeds.
+//
+// Decision (v1) — pipeline-block-rerender: accepted. ExpectedContentHash is
+// compared against the document-level Source.ContentHash (the only hash the
+// plan carries). Block-level hashes are not part of the schema — the planner
+// regenerates blocks deterministically from the document, so a document hash
+// mismatch is the correct "your block id is stale" signal.
+type BlockHashMismatch struct {
+	BlockID  string
+	Expected string
+	Got      string
+}
+
+// NarrateResult is the envelope Narrate returns. Embeds the sink.SinkReceipt
+// (preserving everything callers used to read directly) and adds the
+// per-block roster + the optional hash-mismatch warning.
+//
+// Additive within the pipeline API: callers reading Receipt fields can do so
+// via the embedded SinkReceipt without any field renames.
+type NarrateResult struct {
+	sink.SinkReceipt
+
+	// BlockSummaries lists every block from the latest plan, in plan order.
+	// Always populated on success.
+	BlockSummaries []BlockSummary
+
+	// BlockHashMismatch is non-nil iff NarrateRequest.ExpectedContentHash was
+	// set and did not match the document's content_hash. Non-fatal.
+	BlockHashMismatch *BlockHashMismatch
+}
 
 // Pipeline wires the four edges into a single Narrate call.
 //
@@ -65,9 +125,25 @@ type PipelineDefaults struct {
 //
 // LevelOverrides is the block-level escalation map (design doc §4) — empty
 // in the phase-one vertical slice.
+//
+// BlockID switches Narrate into single-block re-render mode. Empty (the
+// zero value) preserves the whole-document flow. When non-empty, Narrate
+// runs adapter + planner over the whole document (planner stays I/O-free
+// and pure — see CLAUDE.md), locates the block by ID, then calls
+// Renderer.RenderBlock and sinks a one-block plan. ErrBlockNotFound when
+// the ID is absent from the resulting plan.
+//
+// ExpectedContentHash is the caller-supplied document content hash they
+// got the BlockID alongside. When set together with BlockID, Narrate
+// compares it against the planner-produced Source.ContentHash; on
+// mismatch, NarrateResult.BlockHashMismatch is populated and the
+// re-render still proceeds (warning, not error). Empty disables the
+// check.
 type NarrateRequest struct {
-	Voice          string
-	LevelOverrides map[string]plan.Level
+	Voice               string
+	LevelOverrides      map[string]plan.Level
+	BlockID             string
+	ExpectedContentHash string
 }
 
 // New constructs a Pipeline. All four edges are required; Intelligence may
@@ -106,7 +182,7 @@ func New(
 
 // Narrate runs the full pipeline once for one source ref.
 //
-// Pipeline (design doc §3.5):
+// Whole-document path (NarrateRequest.BlockID empty — design doc §3.5):
 //  1. adapter.Read(ctx, ref) → RawDocument. Errors stop.
 //  2. planner.Plan(ctx, doc, Request{Level, Overrides}, intel) → NarrationPlan.
 //     Errors stop. Refused blocks land inside the plan as data.
@@ -115,16 +191,33 @@ func New(
 //  4. sink.Consume(ctx, plan, renderResult) → SinkReceipt. Errors stop with
 //     a partial receipt.
 //
-// Returns (SinkReceipt, nil) on the honest path — including plans containing
-// refused blocks. Errors propagate from any edge.
-func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateRequest) (sink.SinkReceipt, error) {
+// Single-block re-render path (NarrateRequest.BlockID non-empty — issue #14):
+//  1. adapter.Read — same as whole-doc.
+//  2. planner.Plan — same. Whole document re-planned; the planner is pure
+//     and sub-100ms, so trimming the source would risk segmenter
+//     reclassification with no real win (and the planner cannot do I/O
+//     anyway — CLAUDE.md invariant).
+//  3. Index by BlockID. Missing → ErrBlockNotFound wrapping the ID.
+//  4. If ExpectedContentHash is set, compare it against the document's
+//     Source.ContentHash. Mismatch is surfaced as BlockHashMismatch on the
+//     result, NOT as an error — the block content has changed since the
+//     caller obtained the ID, but the re-render still runs.
+//  5. renderer.RenderBlock(ctx, plan, BlockID, …) → BlockRender.
+//  6. Build a one-block sub-plan (defaults + the targeted block) so the
+//     sink plays only that block; sink.Consume runs against the sub-plan
+//     and a one-row RenderResult.
+//
+// Returns (NarrateResult, nil) on the honest path — including plans containing
+// refused blocks. NarrateResult embeds sink.SinkReceipt so callers that read
+// receipt fields directly continue to compile. Errors propagate from any edge.
+func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateRequest) (NarrateResult, error) {
 	if err := ctx.Err(); err != nil {
-		return sink.SinkReceipt{}, fmt.Errorf("pipeline: %w", err)
+		return NarrateResult{}, fmt.Errorf("pipeline: %w", err)
 	}
 
 	doc, err := p.Adapter.Read(ctx, ref)
 	if err != nil {
-		return sink.SinkReceipt{}, fmt.Errorf("pipeline: adapter: %w", err)
+		return NarrateResult{}, fmt.Errorf("pipeline: adapter: %w", err)
 	}
 
 	narrationPlan, err := planner.Plan(ctx, doc, planner.Request{
@@ -132,20 +225,91 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		Overrides: req.LevelOverrides,
 	}, p.Intelligence)
 	if err != nil {
-		return sink.SinkReceipt{}, fmt.Errorf("pipeline: planner: %w", err)
+		return NarrateResult{}, fmt.Errorf("pipeline: planner: %w", err)
 	}
 
-	result, err := p.Renderer.Render(ctx, narrationPlan, render.RenderOptions{
+	summaries := summarizeBlocks(narrationPlan.Blocks)
+
+	if req.BlockID == "" {
+		// Whole-document path — unchanged behavior plus block roster.
+		result, err := p.Renderer.Render(ctx, narrationPlan, render.RenderOptions{
+			OutDir: p.Defaults.OutDir,
+			Voice:  req.Voice,
+		})
+		if err != nil {
+			return NarrateResult{}, fmt.Errorf("pipeline: renderer: %w", err)
+		}
+
+		receipt, err := p.Sink.Consume(ctx, narrationPlan, result)
+		out := NarrateResult{SinkReceipt: receipt, BlockSummaries: summaries}
+		if err != nil {
+			return out, fmt.Errorf("pipeline: sink: %w", err)
+		}
+		return out, nil
+	}
+
+	// Single-block re-render path.
+	targetIdx := -1
+	for i := range narrationPlan.Blocks {
+		if narrationPlan.Blocks[i].ID == req.BlockID {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		return NarrateResult{BlockSummaries: summaries}, fmt.Errorf("%w: %s", ErrBlockNotFound, req.BlockID)
+	}
+
+	out := NarrateResult{BlockSummaries: summaries}
+	if req.ExpectedContentHash != "" && req.ExpectedContentHash != narrationPlan.Source.ContentHash {
+		out.BlockHashMismatch = &BlockHashMismatch{
+			BlockID:  req.BlockID,
+			Expected: req.ExpectedContentHash,
+			Got:      narrationPlan.Source.ContentHash,
+		}
+	}
+
+	br, err := p.Renderer.RenderBlock(ctx, narrationPlan, req.BlockID, render.RenderOptions{
 		OutDir: p.Defaults.OutDir,
 		Voice:  req.Voice,
 	})
 	if err != nil {
-		return sink.SinkReceipt{}, fmt.Errorf("pipeline: renderer: %w", err)
+		return out, fmt.Errorf("pipeline: renderer: %w", err)
 	}
 
-	receipt, err := p.Sink.Consume(ctx, narrationPlan, result)
-	if err != nil {
-		return receipt, fmt.Errorf("pipeline: sink: %w", err)
+	subPlan := narrationPlan
+	subPlan.Blocks = []plan.Block{narrationPlan.Blocks[targetIdx]}
+
+	subResult := render.RenderResult{
+		Audio:    br.Audio,
+		Format:   br.Format,
+		Timeline: plan.Timeline{Blocks: []plan.BlockTiming{br.Timing}},
 	}
-	return receipt, nil
+
+	receipt, err := p.Sink.Consume(ctx, subPlan, subResult)
+	out.SinkReceipt = receipt
+	if err != nil {
+		return out, fmt.Errorf("pipeline: sink: %w", err)
+	}
+	return out, nil
+}
+
+// summarizeBlocks builds the per-block roster from the latest plan. Pure;
+// safe to call before or after rendering.
+func summarizeBlocks(blocks []plan.Block) []BlockSummary {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]BlockSummary, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, BlockSummary{
+			ID:        b.ID,
+			Class:     b.Class,
+			Level:     b.Level,
+			Status:    b.Status,
+			StartLine: b.SourceMap.StartLine,
+			EndLine:   b.SourceMap.EndLine,
+		})
+	}
+	return out
 }

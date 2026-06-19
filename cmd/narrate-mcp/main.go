@@ -188,7 +188,7 @@ type runDeps struct {
 // spawning Kokoro. Production wires pipeline.Pipeline (which satisfies
 // this interface via its Narrate method). Per Decision v5.
 type narrator interface {
-	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (sink.SinkReceipt, error)
+	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error)
 }
 
 // newPipeline — package-level factory hook. Production builds the real
@@ -262,7 +262,7 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 	}
 
 	return speakResponse{
-		Receipt: receiptFromSink(receipt, outDir),
+		Receipt: receiptFromSink(receipt.SinkReceipt, outDir),
 	}, nil
 }
 
