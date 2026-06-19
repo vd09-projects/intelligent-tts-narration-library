@@ -44,3 +44,11 @@ scopes:
       Slug includes issue number to disambiguate from future adapter-mcptext-issue-N,
       adapter-ocr-issue-N. Kept short.
 ```
+  - slug: cmd-narrate-mcp-issue-12
+    title: MCP server cmd/narrate-mcp (issue #12)
+    created: 2026-06-19
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #12
+      (cmd/narrate-mcp stdio MCP server exposing `speak` tool, wiring the
+      same pipeline.Pipeline composition root as cmd/narrate). Issue-numbered
+      naming continues the convention.
