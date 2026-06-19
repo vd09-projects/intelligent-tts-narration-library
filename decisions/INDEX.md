@@ -8,6 +8,15 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-typed-enum-pattern-wins-for-all-enum-shaped
+    title: "Typed-enum pattern wins for all enum-shaped string fields in plan/ (Severity, SayAs, Emphasis)"
+    date: 2026-06-20
+    status: accepted
+    category: schema
+    tags: [plan, enum, severity, sayas, emphasis, ssml, additive-compatible, refactor, issue-10, issue-13]
+    path: schema/2026-06-20-typed-enum-pattern-wins-for-all-enum-shaped.md
+    summary: "Adopt typed string alias + IsValid() pattern for Severity, SayAs, Emphasis — the three remaining freeform enum-shaped fields. Severity intentionally 2-valued; pipeline-stopping uses Go error per CLAUDE.md honesty rule. Wire format unchanged, additive-compat preserved. Rejected freeform-with-docs (Option B) and hybrid (Option C). Closes #10; validating use case #13."
+
   - id: 2026-06-19-runspeak-newpipeline-composition-seam
     title: "runSpeak composition seam — newPipeline factory hook"
     date: 2026-06-19
