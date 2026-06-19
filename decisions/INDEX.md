@@ -8,6 +8,42 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-mcpsampling-cache-key-includes-full-model-id
+    title: "mcpsampling cache key includes the full chosen-model id"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, mcpsampling, cache, cache-key, escalation, claude-md-rule, issue-13]
+    path: convention/2026-06-20-mcpsampling-cache-key-includes-full-model-id.md
+    summary: "CacheKey.Model is the full mcp-sampling@<clientID>/<actualModel> string. Two-phase lookup via per-clientID last-known-model map (sync.RWMutex). First call per clientID always misses; model switches invalidate; refusals never cached. Honors CLAUDE.md (content_hash, level, model) literally. Plan-review B1 fix."
+
+  - id: 2026-06-20-mcpsampling-client-threaded-via-ctx
+    title: "mcpsampling client threaded via ctx, not adapter constructor"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, mcpsampling, mcp, server-session, ctx-threading, composition-root, pipeline, issue-13]
+    path: convention/2026-06-20-mcpsampling-client-threaded-via-ctx.md
+    summary: "SamplingClient interface + WithSamplingClient(ctx, client). *mcp.ServerSession satisfies it as-is. Keeps pipeline.New engine-neutral; avoids per-call pipeline rebuild and interface widening. ErrNoSamplingClient sentinel routes to internal_error: via classifier."
+
+  - id: 2026-06-20-mcpsampling-refuse-sentinel-token
+    title: "mcpsampling refusal sentinel — literal __REFUSE__ as the leading token"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, mcpsampling, refusal, honesty-rule, llm-contract, issue-13]
+    path: convention/2026-06-20-mcpsampling-refuse-sentinel-token.md
+    summary: "Refusal contract: __REFUSE__ as the very first non-whitespace characters of the assistant reply, optional reason after one space. Boundary explicit (sentinel mid-body is content). Rejected stopReason matching (clients may ignore) and JSON-mode (overhead)."
+
+  - id: 2026-06-20-mcpsampling-prompt-templates-stay-in-package-for-13
+    title: "mcpsampling prompt templates stay inside the package for #13"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, mcpsampling, prompts, templates, issue-13, issue-15, deferred-abstraction]
+    path: convention/2026-06-20-mcpsampling-prompt-templates-stay-in-package-for-13.md
+    summary: "DefaultPromptTemplates stays in intelligence/mcpsampling/prompts.go for #13. Lift to internal/intelligencetmpl when #15 (Anthropic direct-API) lands — file move + import rewrite. Avoids speculative abstraction with one consumer."
+
   - id: 2026-06-20-typed-enum-pattern-wins-for-all-enum-shaped
     title: "Typed-enum pattern wins for all enum-shaped string fields in plan/ (Severity, SayAs, Emphasis)"
     date: 2026-06-20
