@@ -191,8 +191,8 @@ func (s Severity) IsValid() bool {
 }
 
 // SayAs — VoicingDirective.SayAs hint over a rune span of Segment.Text. Values
-// overlap with SSML 1.0; if SSML 1.1 adds a value, add a named constant —
-// unknown values continue to round-trip in the meantime (additive-compatible).
+// overlap with SSML 1.0; if a future SSML revision adds a value, add a named
+// constant — unknown values continue to round-trip (additive-compatible).
 type SayAs string
 
 const (
