@@ -73,8 +73,15 @@ func WithPromptTemplates(m map[plan.Class]PromptTemplate) Option {
 // Voice() skips the cache wrapper entirely. Production wiring in
 // cmd/narrate-mcp (Phase 5) passes NewInMemoryCache() with per-call
 // lifetime.
+//
+// Setting WithCache also allocates the per-adapter last-known-model
+// map used by the two-phase lookup (see cache.go). Without it, the
+// lookup has no way to build the full CacheKey BEFORE the call.
 func WithCache(c Cache) Option {
 	return func(a *Adapter) {
 		a.cache = c
+		if c != nil && a.cacheLookup == nil {
+			a.cacheLookup = newCacheLookupState()
+		}
 	}
 }

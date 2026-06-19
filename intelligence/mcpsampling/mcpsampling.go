@@ -61,7 +61,12 @@ type Adapter struct {
 	temperature     float64
 	clientID        string
 	promptTemplates map[plan.Class]PromptTemplate
-	cache           Cache // Phase 4
+	cache           Cache
+	// cacheLookup tracks the per-clientID last-known actualModel so the
+	// two-phase cache lookup can build the full CacheKey BEFORE the
+	// call. Allocated lazily when WithCache is supplied; nil when
+	// caching is off.
+	cacheLookup *cacheLookupState
 }
 
 // Compile-time assertion: *Adapter satisfies intelligence.IntelligenceAdapter.
