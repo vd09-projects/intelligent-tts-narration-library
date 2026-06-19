@@ -7,11 +7,16 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
+	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 )
 
 // stubDeps builds a runDeps wired to in-memory io and a recording exit fn.
-func stubDeps(runFn func(context.Context, flagSet, io.Writer) error) (*runDeps, *bytes.Buffer, *bytes.Buffer, *int) {
+func stubDeps(runFn func(context.Context, flagSet, io.Writer, io.Writer) error) (*runDeps, *bytes.Buffer, *bytes.Buffer, *int) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	exitCode := -1
@@ -27,7 +32,7 @@ func stubDeps(runFn func(context.Context, flagSet, io.Writer) error) (*runDeps, 
 func TestRoot_FlagParsing_AllFlags(t *testing.T) {
 	t.Parallel()
 	var got flagSet
-	deps, _, _, _ := stubDeps(func(_ context.Context, a flagSet, _ io.Writer) error {
+	deps, _, _, _ := stubDeps(func(_ context.Context, a flagSet, _, _ io.Writer) error {
 		got = a
 		return nil
 	})
@@ -46,7 +51,7 @@ func TestRoot_FlagParsing_AllFlags(t *testing.T) {
 func TestRoot_FlagDefaults(t *testing.T) {
 	t.Parallel()
 	var got flagSet
-	deps, _, _, _ := stubDeps(func(_ context.Context, a flagSet, _ io.Writer) error {
+	deps, _, _, _ := stubDeps(func(_ context.Context, a flagSet, _, _ io.Writer) error {
 		got = a
 		return nil
 	})
@@ -65,11 +70,17 @@ func TestRoot_FlagDefaults(t *testing.T) {
 	if got.Gender != "female" {
 		t.Errorf("default gender: got %q want female", got.Gender)
 	}
+	if got.Block != "" {
+		t.Errorf("default --block: got %q want empty", got.Block)
+	}
+	if got.ExpectedContentHash != "" {
+		t.Errorf("default --expected-content-hash: got %q want empty", got.ExpectedContentHash)
+	}
 }
 
 func TestRoot_MissingFile_ReturnsError(t *testing.T) {
 	t.Parallel()
-	deps, _, _, _ := stubDeps(func(_ context.Context, _ flagSet, _ io.Writer) error {
+	deps, _, _, _ := stubDeps(func(_ context.Context, _ flagSet, _, _ io.Writer) error {
 		t.Fatal("run should not be called when --file is missing")
 		return nil
 	})
@@ -87,9 +98,10 @@ func TestRoot_MissingFile_ReturnsError(t *testing.T) {
 func TestRunNarrate_PersistentSink_ReturnsKnownError(t *testing.T) {
 	t.Parallel()
 	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
 	args := flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female"}
 
-	err := runNarrate(context.Background(), args, stdout)
+	err := runNarrate(context.Background(), args, stdout, stderr)
 	if err == nil {
 		t.Fatal("runNarrate returned nil for --sink=persistent")
 	}
@@ -158,9 +170,10 @@ func TestRunNarrate_FlagErrorWrapsSentinel(t *testing.T) {
 	// can route to exit code 2 rather than 1. Pass an invalid level via
 	// runNarrate directly — adapter / planner never get called.
 	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
 	err := runNarrate(context.Background(),
 		flagSet{File: "/tmp/x.md", Level: 99, Sink: "ephemeral", Gender: "female"},
-		stdout,
+		stdout, stderr,
 	)
 	if err == nil {
 		t.Fatal("runNarrate accepted invalid level")
@@ -179,9 +192,10 @@ func TestRunNarrate_PersistentSink_WrapsSentinel(t *testing.T) {
 	// errPersistentNotImplemented so main()'s exit routing (B1 fix)
 	// reaches exit code 2 without relying on string equality.
 	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
 	err := runNarrate(context.Background(),
 		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female"},
-		stdout,
+		stdout, stderr,
 	)
 	if err == nil {
 		t.Fatal("runNarrate accepted --sink=persistent")
@@ -202,6 +216,8 @@ func TestExitCodeFor_RoutesFlagErrorsTo2(t *testing.T) {
 		{"flag validation wrapped", fmt.Errorf("wrap: %w", errFlagValidation), 2},
 		{"persistent sink", errPersistentNotImplemented, 2},
 		{"persistent sink wrapped", fmt.Errorf("wrap: %w", errPersistentNotImplemented), 2},
+		{"block not found", errBlockNotFound, 2},
+		{"block not found wrapped", fmt.Errorf("%w: bogus", errBlockNotFound), 2},
 		{"pipeline error", errors.New("adapter: stat: file not found"), 1},
 		{"unrelated", errors.New("kaboom"), 1},
 	}
@@ -215,6 +231,239 @@ func TestExitCodeFor_RoutesFlagErrorsTo2(t *testing.T) {
 	}
 }
 
+// --- issue #14: --block + --expected-content-hash + roster ----------------
+
+// stubNarrator captures the NarrateRequest runNarrate hands the pipeline
+// and returns a canned NarrateResult / error. Pulled in via the
+// newPipeline seam so tests verify the CLI wiring without spawning
+// Kokoro.
+type stubNarrator struct {
+	mu      sync.Mutex
+	gotReq  pipeline.NarrateRequest
+	gotRef  plan.SourceRef
+	gotOpts string // optional capture field for future use
+	result  pipeline.NarrateResult
+	err     error
+}
+
+func (s *stubNarrator) Narrate(_ context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotRef = ref
+	s.gotReq = req
+	return s.result, s.err
+}
+
+// withStubPipeline swaps newPipeline for a factory that returns the
+// supplied stub, returning a cleanup that restores production wiring.
+func withStubPipeline(stub *stubNarrator) func() {
+	orig := newPipeline
+	newPipeline = func(_ string, _ flagSet) narrator { return stub }
+	return func() { newPipeline = orig }
+}
+
+// TestRunNarrate_Block_ValidID_LevelOverride covers (a): valid
+// --block + --level=3 → exit 0, NarrateRequest.BlockID set,
+// LevelOverrides has the requested L3, no roster printed.
+func TestRunNarrate_Block_ValidID_LevelOverride(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 250},
+			BlockSummaries: []pipeline.BlockSummary{
+				{ID: "b002", Class: plan.ClassCode, Level: plan.L3, Status: plan.StatusVoiced, StartLine: 3, EndLine: 5},
+			},
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 3, Sink: "ephemeral", Gender: "female", Block: "b002"},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error: %v", err)
+	}
+	if stub.gotReq.BlockID != "b002" {
+		t.Errorf("NarrateRequest.BlockID: got %q want %q", stub.gotReq.BlockID, "b002")
+	}
+	if got := stub.gotReq.LevelOverrides["b002"]; got != plan.L3 {
+		t.Errorf("LevelOverrides[b002]: got %v want L3", got)
+	}
+	if !strings.Contains(stdout.String(), "blocks_played=1") {
+		t.Errorf("stdout summary missing or wrong: %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "# ") && strings.Contains(stderr.String(), "blocks — escalate") {
+		t.Errorf("roster should NOT print when --block is set; got stderr=%q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "warning: content_hash mismatch") {
+		t.Errorf("unexpected hash-mismatch warning when --expected-content-hash unset: %q", stderr.String())
+	}
+}
+
+// TestRunNarrate_Block_UnknownID_ExitCode2 covers (b): unknown
+// --block → runNarrate returns errBlockNotFound (exit 2 via
+// exitCodeFor), wrapped error message contains the requested id.
+func TestRunNarrate_Block_UnknownID_ExitCode2(t *testing.T) {
+	stub := &stubNarrator{
+		err: fmt.Errorf("%w: bogus", pipeline.ErrBlockNotFound),
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "bogus"},
+		stdout, stderr,
+	)
+	if err == nil {
+		t.Fatal("runNarrate accepted unknown --block id")
+	}
+	if !errors.Is(err, errBlockNotFound) {
+		t.Errorf("error should wrap errBlockNotFound; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error message should mention block id %q; got %q", "bogus", err.Error())
+	}
+	if got := exitCodeFor(err); got != 2 {
+		t.Errorf("exit code for unknown --block: got %d want 2", got)
+	}
+}
+
+// TestRunNarrate_Block_LevelDowngrade covers (c): --level=1 is the
+// absolute target level for the block — downgrade L3→L1 supported
+// symmetrically. The brief calls this out as a hard rule.
+func TestRunNarrate_Block_LevelDowngrade(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 100},
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "b001"},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error: %v", err)
+	}
+	if got := stub.gotReq.LevelOverrides["b001"]; got != plan.L1 {
+		t.Errorf("LevelOverrides[b001] downgrade: got %v want L1", got)
+	}
+}
+
+// TestRunNarrate_Block_HashMismatchWarning covers (d): non-nil
+// BlockHashMismatch on the result envelope → stderr warning, exit 0.
+func TestRunNarrate_Block_HashMismatchWarning(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 100},
+			BlockHashMismatch: &pipeline.BlockHashMismatch{
+				BlockID:  "b001",
+				Expected: "bad",
+				Got:      "actual-hash",
+			},
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Block: "b001", ExpectedContentHash: "bad"},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error on hash mismatch (should be warning): %v", err)
+	}
+	if !strings.Contains(stderr.String(), "warning: content_hash mismatch (expected bad, got actual-hash)") {
+		t.Errorf("stderr missing hash-mismatch warning; got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "block content has changed") {
+		t.Errorf("stderr missing block-changed explanation; got %q", stderr.String())
+	}
+	if stub.gotReq.ExpectedContentHash != "bad" {
+		t.Errorf("NarrateRequest.ExpectedContentHash: got %q want %q", stub.gotReq.ExpectedContentHash, "bad")
+	}
+}
+
+// TestRunNarrate_Block_PersistentSinkRegression covers (e): existing
+// --sink=persistent fast-error fires BEFORE --block reasoning. The
+// stub MUST NOT be called — validation order is load-bearing per the
+// locked plan (persistent-sink AC scoped to #16).
+func TestRunNarrate_Block_PersistentSinkRegression(t *testing.T) {
+	calls := 0
+	stub := &stubNarrator{}
+	// Wrap the stub so we can detect a call without exposing an int field.
+	origNew := newPipeline
+	newPipeline = func(_ string, _ flagSet) narrator {
+		calls++
+		return stub
+	}
+	defer func() { newPipeline = origNew }()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Block: "b001"},
+		stdout, stderr,
+	)
+	if err == nil {
+		t.Fatal("runNarrate accepted --sink=persistent even with --block")
+	}
+	if !errors.Is(err, errPersistentNotImplemented) {
+		t.Errorf("error: got %v, want errPersistentNotImplemented", err)
+	}
+	if calls != 0 {
+		t.Errorf("newPipeline must not be invoked when --sink=persistent fast-errors; got %d calls", calls)
+	}
+}
+
+// TestRunNarrate_WholeDoc_RosterPrintedToStderr covers the
+// roster-print invariant: every ephemeral whole-doc run (no --block)
+// emits the per-block roster to stderr.
+func TestRunNarrate_WholeDoc_RosterPrintedToStderr(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt: sink.SinkReceipt{BlocksPlayed: 2, TotalDurationMs: 500},
+			BlockSummaries: []pipeline.BlockSummary{
+				{ID: "b001", Class: plan.ClassHeading, Level: plan.L1, Status: plan.StatusVoiced, StartLine: 1, EndLine: 1},
+				{ID: "b002", Class: plan.ClassCode, Level: plan.L1, Status: plan.StatusVoiced, StartLine: 3, EndLine: 5},
+			},
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/multi.md", Level: 1, Sink: "ephemeral", Gender: "female"},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error: %v", err)
+	}
+	se := stderr.String()
+	if !strings.Contains(se, "# 2 blocks — escalate one with: narrate --file /tmp/multi.md --block <id> --level {2|3}") {
+		t.Errorf("roster header missing or wrong; stderr=%q", se)
+	}
+	if !strings.Contains(se, "b001\theading\t1\tvoiced\t1\n") {
+		t.Errorf("roster row for b001 missing or wrong; stderr=%q", se)
+	}
+	if !strings.Contains(se, "b002\tcode\t1\tvoiced\t3-5\n") {
+		t.Errorf("roster row for b002 missing or wrong; stderr=%q", se)
+	}
+}
+
 func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 	t.Parallel()
 	// Regression for B1 — the prior code called deps.exit(2) THEN
@@ -224,8 +473,8 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 	cases := []struct {
 		name    string
 		runErr  error
-		wantHit int  // 0 means exit not called (success path)
-		want    int  // exit code if called
+		wantHit int // 0 means exit not called (success path)
+		want    int // exit code if called
 	}{
 		{"flag error routes to 2", errFlagValidation, 1, 2},
 		{"persistent-sink routes to 2", errPersistentNotImplemented, 1, 2},
@@ -241,7 +490,7 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 				stdout: io.Discard,
 				stderr: io.Discard,
 				exit:   func(c int) { hits++; lastCode = c },
-				run: func(_ context.Context, _ flagSet, _ io.Writer) error {
+				run: func(_ context.Context, _ flagSet, _, _ io.Writer) error {
 					return tc.runErr
 				},
 			}
