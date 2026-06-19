@@ -25,6 +25,7 @@ Hub-and-spoke around the **narration plan** — one JSON-on-wire schema serving 
 - **Plan stays engine-neutral and pre-render.** Audio offsets live in `Timeline`, keyed by `block_id`, written by the renderer. Block-level sync only — no word timings (would contradict gist mode).
 - **Schema versioning:** additive-compatible within a major `schema_version`. Consumers ignore unknown fields.
 - **Lint:** `golangci-lint`. **Commits:** Conventional Commits (via `conventional-commits` skill). **Tests:** unit + table-driven + golden `plan.json` fixtures; no golden audio (audio validated by ear during `/verify`).
+- **Commands:** drive all repeatable dev actions through `Makefile` targets. `make help` lists them. Use `make test` / `make test-manual` / `make bench` / `make run` / `make sanity` rather than retyping `go test ./...` etc. Add new repeatable workflows as Makefile targets so they stay consistent across sessions.
 
 ## Domain rules
 
