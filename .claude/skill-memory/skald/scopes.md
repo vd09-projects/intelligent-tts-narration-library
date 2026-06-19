@@ -61,3 +61,12 @@ scopes:
       VoicingDirective.Emphasis from freeform strings to typed enum aliases
       with IsValid() — consistency with existing six enums in plan/enums.go).
       Issue-numbered naming continues the convention.
+  - slug: intelligence-mcpsampling-issue-13
+    title: intelligence/mcpsampling adapter — zero-cost L2/L3 via MCP client LLM (issue #13)
+    created: 2026-06-20
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #13
+      (intelligence/mcpsampling/ — first concrete IntelligenceAdapter,
+      riding MCP sampling/createMessage on the connected client LLM).
+      Becomes the precedent #15 (intelligence/anthropic) follows. Issue-
+      numbered naming continues the convention.
