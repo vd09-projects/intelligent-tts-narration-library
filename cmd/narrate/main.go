@@ -229,13 +229,13 @@ func (a flagSet) validate() error {
 	}
 	// Decision v1.9.0 (issue #16): --block X with --sink=persistent is
 	// rejected. The block-level patch into an existing persistent outDir
-	// is a separate follow-up; allowing the combination today would let
+	// is tracked as issue #28; allowing the combination today would let
 	// pipeline.Narrate return a single-block RenderResult that the
 	// persistent sink would faithfully concatenate into a one-block
 	// audio.wav, silently overwriting the multi-block output. Honesty rule:
 	// refuse, don't corrupt.
 	if a.Block != "" && a.Sink == "persistent" {
-		return fmt.Errorf("--block and --sink=persistent are not yet supported together (block-level patch into a persistent outDir is a follow-up)")
+		return fmt.Errorf("--block and --sink=persistent are not yet supported together (see issue #28 for block-level patch into a persistent outDir)")
 	}
 	return nil
 }
