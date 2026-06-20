@@ -8,6 +8,60 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-player-source-pane-uses-sibling-source-md
+    title: "Player source pane consumes sibling source.md (not reconstruction from raw_excerpt)"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, source-map, honesty-rule, ux, issue-18]
+    path: convention/2026-06-21-player-source-pane-uses-sibling-source-md.md
+    summary: "Player loads source.md alongside plan.json+manifest.json+audio.wav so cursor-tracked highlights project onto exact start_line/end_line. If source.md absent, banner + per-block raw_excerpt fallback (advisory line numbers). Honesty rule extended to UI — never silently fabricate a source view. Rejected: reconstruct from raw_excerpt (raw_excerpt is normalized; concatenation drifts from start_line/end_line)."
+
+  - id: 2026-06-21-player-dual-data-loading-fixture-and-picker
+    title: "Player dual data loading — bundled fixture AND runtime directory picker"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, fixture, file-system-access, ux, issue-18]
+    path: convention/2026-06-21-player-dual-data-loading-fixture-and-picker.md
+    summary: "useFixture fetches /fixtures/sample/ on mount (zero-friction first-run demo); useDirectoryLoader + window.showDirectoryPicker (File System Access API) with <input webkitdirectory> Safari/Firefox fallback supplies the bring-your-own-output path. Two ACs from #18 collapsed into two code paths that share one {plan,manifest,audioUrl,source} shape. Rejected: picker-only (hostile first run) and fixture-only (player reads as hard-coded slideshow)."
+
+  - id: 2026-06-21-player-synthetic-hand-authored-fixture
+    title: "Player fixture is synthetic, committed, hand-authored (not real Kokoro output)"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, fixture, kokoro, demo, issue-18]
+    path: convention/2026-06-21-player-synthetic-hand-authored-fixture.md
+    summary: "Hand-authored plan.json + manifest.json mirroring docs/samples/sample.md, covering every Class enum (heading/prose/code/table/list/unknown) and every Status enum (voiced/degraded/refused). audio.wav = 24 kHz mono PCM-16 ~2s silent via make_silent_wav.py. Fixture proves UI loads + renders all branches; not demo audio quality. Rejected: real Kokoro fixture (gates fresh-checkout pnpm install && pnpm dev on Python venv + downloaded weights)."
+
+  - id: 2026-06-21-player-raf-audio-sync-transition-only-rerender
+    title: "Player audio sync via requestAnimationFrame; React state writes only on block transition"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, audio-sync, react, performance, block-level-sync, issue-18]
+    path: convention/2026-06-21-player-raf-audio-sync-transition-only-rerender.md
+    summary: "usePlayback runs a rAF loop sampling audio.currentTime, binary-searches manifest.blocks via findActiveBlock, dispatches SET_ACTIVE_BLOCK only when block id differs from ref-tracked previous. Audio drives time, React drives presentation. React renders only at block transitions, not 60 Hz. Rejected: timeupdate event (250 ms granularity misses sub-500 ms blocks), setInterval (jittery, always re-renders, runs in bg tabs)."
+
+  - id: 2026-06-21-player-escalate-ux-inline-card-not-modal
+    title: "Player escalate UX is an inline expanded command card (not modal, not toast)"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, escalate, ux, accessibility, issue-18]
+    path: convention/2026-06-21-player-escalate-ux-inline-card-not-modal.md
+    summary: "Per-block 'Escalate L3' button expands an inline card directly under the row containing the literal `narrate --block <id> --level 3 --file <source.uri>` command + Copy + Dismiss. Card stays open until dismissed or another block escalated. Only on non-refused blocks. No focus trap, no modal context, normal DOM tab order. Rejected: modal dialog (interrupts playback flow), toast (disappears before user can copy)."
+
+  - id: 2026-06-21-player-dev-actions-via-makefile-targets
+    title: "Player dev actions drive through Makefile targets, not raw pnpm commands"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [player, makefile, dev-workflow, issue-18]
+    path: convention/2026-06-21-player-dev-actions-via-makefile-targets.md
+    summary: "Five new root Makefile targets: player-dev, player-build, player-test, player-fixture-silent, player-fixture-kokoro. Updates make help. Honors CLAUDE.md mandate 'drive all repeatable dev actions through Makefile targets' — one muscle-memory pattern across Go + TS halves of the project. Rejected: raw pnpm commands in README (splits dev workflow into two patterns, forgetting cd player/ is a regular paper cut)."
+
   - id: 2026-06-20-anthropic-cache-single-phase
     title: "Anthropic cache is single-phase (no last-known-actual-model lookup)"
     date: 2026-06-20
