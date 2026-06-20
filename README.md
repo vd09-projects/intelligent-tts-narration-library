@@ -98,7 +98,7 @@ The server logs to stderr and runs until stdin EOF or Ctrl-C (both clean shutdow
 | Field | Required | Default | Choices | Meaning |
 |---|---|---|---|---|
 | `source` | one of source/text | — | path | File path to the markdown document. |
-| `text` | one of source/text | — | string | Inline markdown text. **Not implemented in this release** — see follow-up ticket #17 (mcptext in-memory adapter). Calling with `text` set returns a tool error. |
+| `text` | one of source/text | — | string | Inline markdown text. Routed through the in-memory `adapter/mcptext` (ticket #17); the composition root assembles the URI as `mcp://inline/<sha256-hex-of-text>` and the adapter cross-checks the hash on read. |
 | `level` | no | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. |
 | `sink` | no | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` returns a tool error in phase one. |
 | `gender` | no | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. |
@@ -121,7 +121,7 @@ The server logs to stderr and runs until stdin EOF or Ctrl-C (both clean shutdow
 
 The `speak` handler returns errors via `CallToolResult.IsError = true`. The error text uses one of these prefixes so callers can self-correct:
 
-- `caller-error: invalid_argument: …` — bad request (missing/conflicting args, unknown enum, file not found, permission denied, text arg supplied, `sink=persistent`).
+- `caller-error: invalid_argument: …` — bad request (missing/conflicting args, unknown enum, file not found, permission denied, `sink=persistent`).
 - `internal_error: pipeline failure: …` — renderer/sink failure unrelated to the request shape.
 - `cancelled: …` — context cancelled by the client.
 
@@ -173,7 +173,6 @@ This runs `runSpeak` against `docs/samples/sample.md` in-process (bypassing the 
 
 ### Known limitations
 
-- `text` arg is not implemented (deferred to ticket #17 — mcptext in-memory adapter).
 - `sink=persistent` is not implemented (phase two).
 - No intelligence adapter wired in this release — the planner uses the deterministic + degraded path; prose under ~120 words is read verbatim, larger prose is refused honestly.
 

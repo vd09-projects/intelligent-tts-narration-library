@@ -7,16 +7,16 @@ import (
 	"testing"
 )
 
-// TestInvariant_AdapterImportsOnlyPlan asserts that adapter/ and
-// adapter/file (the only concrete adapter shipped phase one) import
-// no internal project packages other than plan/.
+// TestInvariant_AdapterImportsOnlyPlan asserts that adapter/ and the
+// concrete adapters shipped phase one (file, mcptext) import no internal
+// project packages other than plan/ + adapter/ itself.
 //
 // Mirrors plan/deps_test.go: shells `go list -deps <pkg>` and scans
 // for module-path prefixes that are not the package itself or plan.
 // Skipped when `go` is not on PATH.
 //
-// When more concrete adapters land (mcptext, ocr), add their import
-// paths to packagesToCheck.
+// When the next concrete adapter lands (ocr), add its import path to
+// packagesToCheck.
 func TestInvariant_AdapterImportsOnlyPlan(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -29,6 +29,7 @@ func TestInvariant_AdapterImportsOnlyPlan(t *testing.T) {
 	packagesToCheck := []string{
 		modulePath + "/adapter",
 		modulePath + "/adapter/file",
+		modulePath + "/adapter/mcptext",
 	}
 
 	allowedInternal := map[string]bool{

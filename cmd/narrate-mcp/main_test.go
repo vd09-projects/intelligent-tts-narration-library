@@ -13,6 +13,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -21,6 +23,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
+	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
+	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/mcptext"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
@@ -77,9 +82,13 @@ func TestSpeakArgs_Validate(t *testing.T) {
 			wantErr: errBothSourceAndText,
 		},
 		{
-			name:    "text only triggers fast-error",
-			args:    speakArgs{Text: "hi", Level: 1, Sink: "ephemeral", Gender: "female"},
-			wantErr: errTextNotImplemented,
+			// Decision v6 (#17): text arg is now a valid path; mcptext
+			// adapter resolves it. validate() must accept it.
+			// Intelligence must be set explicitly because this test
+			// case bypasses applyDefaults().
+			name:   "text only is valid post-#17",
+			args:   speakArgs{Text: "hi", Level: 1, Sink: "ephemeral", Gender: "female", Intelligence: "none"},
+			wantOK: true,
 		},
 		{
 			name:    "sink=persistent triggers fast-error",
@@ -233,15 +242,18 @@ func TestSpeakHandler_HappyPath(t *testing.T) {
 
 func TestSpeakHandler_PropagatesError(t *testing.T) {
 	t.Parallel()
+	// errTextNotImplemented was removed by #17 (Decision v6). Use
+	// errPersistentNotImplemented as the propagation smoke — same wire
+	// shape (caller-error sentinel), still in the package.
 	deps := runDeps{
 		run: func(_ context.Context, _ speakArgs) (speakResponse, error) {
-			return speakResponse{}, errTextNotImplemented
+			return speakResponse{}, errPersistentNotImplemented
 		},
 	}
 	h := speakHandler(deps)
-	_, _, err := h(context.Background(), nil, speakArgs{Text: "hi"})
-	if !errors.Is(err, errTextNotImplemented) {
-		t.Fatalf("want errors.Is errTextNotImplemented, got %v", err)
+	_, _, err := h(context.Background(), nil, speakArgs{Source: "doc.md", Sink: "persistent"})
+	if !errors.Is(err, errPersistentNotImplemented) {
+		t.Fatalf("want errors.Is errPersistentNotImplemented, got %v", err)
 	}
 }
 
@@ -282,12 +294,14 @@ func (e *fakePathError) Unwrap() error { return e.Err }
 
 // stubNarrator captures the arguments runSpeak passed through the wired
 // pipeline so tests can assert the composition wiring without spawning
-// Kokoro. Used via the newPipeline seam introduced in Decision v5.
+// Kokoro. Used via the newPipeline seam introduced in Decision v5 and
+// widened in Decision v6 (#17) to also surface the wired InputAdapter.
 type stubNarrator struct {
 	gotRef    plan.SourceRef
 	gotReq    pipeline.NarrateRequest
 	gotOutDir string
 	gotIntel  intelligence.IntelligenceAdapter
+	gotInput  adapter.InputAdapter
 	receipt   sink.SinkReceipt
 	err       error
 	// outDirSnapshot captures whether outDir existed at Narrate time so
@@ -315,13 +329,16 @@ func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipe
 
 // withStubPipeline installs a stub narrator via the newPipeline seam,
 // returning the stub for inspection and a cleanup func that restores the
-// production factory. Captures outDir + args by reference so the test
-// can assert how composition flowed.
+// production factory. Captures outDir + args + adapter + intel so the
+// test can assert how composition flowed. Per Decision v6 (#17) the
+// hook now takes an adapter.InputAdapter — the stub records it so
+// text-arg-vs-source tests can confirm the right concrete type was wired.
 func withStubPipeline(t *testing.T, stub *stubNarrator) func() {
 	t.Helper()
 	orig := newPipeline
-	newPipeline = func(outDir string, _ speakArgs, intel intelligence.IntelligenceAdapter) narrator {
+	newPipeline = func(outDir string, _ speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) narrator {
 		stub.gotOutDir = outDir
+		stub.gotInput = input
 		stub.gotIntel = intel
 		return stub
 	}
@@ -716,3 +733,127 @@ type wrapped struct {
 
 func (w *wrapped) Error() string { return w.prefix + w.inner.Error() }
 func (w *wrapped) Unwrap() error { return w.inner }
+
+// ── Issue #17 (Decision v6): text-arg via adapter/mcptext ──────────
+
+// TestRunSpeak_TextArg_WiresMcptextAdapter — Text != "" routes through
+// the mcptext adapter. The stub captures the wired InputAdapter via the
+// newPipeline seam; we assert the concrete type and the SourceRef Kind.
+func TestRunSpeak_TextArg_WiresMcptextAdapter(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	stub := &stubNarrator{receipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 10}}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	const text = "hi"
+	if _, err := runSpeak(context.Background(), speakArgs{Text: text}); err != nil {
+		t.Fatalf("runSpeak: %v", err)
+	}
+	if _, ok := stub.gotInput.(*mcptext.Adapter); !ok {
+		t.Errorf("InputAdapter: want *mcptext.Adapter, got %T", stub.gotInput)
+	}
+	if stub.gotRef.Kind != plan.SourceKindMCPText {
+		t.Errorf("SourceRef.Kind: want mcp_text, got %v", stub.gotRef.Kind)
+	}
+	if !strings.HasPrefix(stub.gotRef.URI, "mcp://inline/") {
+		t.Errorf("SourceRef.URI: want mcp://inline/* prefix, got %q", stub.gotRef.URI)
+	}
+}
+
+// TestRunSpeak_TextArg_HashURIMatches — the URI's hex suffix must equal
+// sha256(args.Text). Pins the composition-root contract that the
+// adapter cross-checks (Decision v3 of the #17 plan); if these drift,
+// the adapter rejects every well-formed call.
+func TestRunSpeak_TextArg_HashURIMatches(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	stub := &stubNarrator{receipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 10}}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	const text = "## title\n\nbody paragraph.\n"
+	if _, err := runSpeak(context.Background(), speakArgs{Text: text}); err != nil {
+		t.Fatalf("runSpeak: %v", err)
+	}
+	sum := sha256.Sum256([]byte(text))
+	wantURI := "mcp://inline/" + hex.EncodeToString(sum[:])
+	if stub.gotRef.URI != wantURI {
+		t.Errorf("SourceRef.URI: got %q want %q", stub.gotRef.URI, wantURI)
+	}
+}
+
+// TestRunSpeak_SourceArg_WiresFileAdapter — the existing source path
+// must still wire the file adapter post-#17. Guards against the seam
+// widening regressing the default branch.
+func TestRunSpeak_SourceArg_WiresFileAdapter(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	stub := &stubNarrator{receipt: sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 10}}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "sample-*.md")
+	if err != nil {
+		t.Fatalf("create temp source: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	if _, err := runSpeak(context.Background(), speakArgs{Source: tmpFile.Name()}); err != nil {
+		t.Fatalf("runSpeak: %v", err)
+	}
+	if _, ok := stub.gotInput.(*file.Adapter); !ok {
+		t.Errorf("InputAdapter: want *file.Adapter, got %T", stub.gotInput)
+	}
+	if stub.gotRef.Kind != plan.SourceKindFile {
+		t.Errorf("SourceRef.Kind: want file, got %v", stub.gotRef.Kind)
+	}
+}
+
+// TestInputAdapterAndRef — direct unit test on the helper. Covers all
+// three branches: text, source, neither (defensive — validate() catches
+// it upstream, but the helper must surface a sensible error if reached
+// directly).
+func TestInputAdapterAndRef(t *testing.T) {
+	t.Parallel()
+
+	t.Run("text branch", func(t *testing.T) {
+		t.Parallel()
+		input, ref, err := inputAdapterAndRef(speakArgs{Text: "hi"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := input.(*mcptext.Adapter); !ok {
+			t.Errorf("InputAdapter: want *mcptext.Adapter, got %T", input)
+		}
+		if ref.Kind != plan.SourceKindMCPText {
+			t.Errorf("Kind: want mcp_text, got %v", ref.Kind)
+		}
+		if !strings.HasPrefix(ref.URI, "mcp://inline/") {
+			t.Errorf("URI: want mcp://inline/* prefix, got %q", ref.URI)
+		}
+	})
+
+	t.Run("source branch", func(t *testing.T) {
+		t.Parallel()
+		input, ref, err := inputAdapterAndRef(speakArgs{Source: "doc.md"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := input.(*file.Adapter); !ok {
+			t.Errorf("InputAdapter: want *file.Adapter, got %T", input)
+		}
+		if ref.Kind != plan.SourceKindFile {
+			t.Errorf("Kind: want file, got %v", ref.Kind)
+		}
+		// URI is absolute — filepath.Abs("doc.md") joins cwd.
+		if !filepath.IsAbs(ref.URI) {
+			t.Errorf("URI: want absolute path, got %q", ref.URI)
+		}
+	})
+
+	t.Run("neither branch defensive", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := inputAdapterAndRef(speakArgs{})
+		if !errors.Is(err, errMissingSource) {
+			t.Errorf("want errors.Is errMissingSource, got %v", err)
+		}
+	})
+}

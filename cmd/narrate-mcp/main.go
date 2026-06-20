@@ -31,17 +31,28 @@
 //	  README config snippet targets Claude Desktop's
 //	  claude_desktop_config.json as canonical, with the `mcp` CLI as a
 //	  secondary smoke path.
-//	Decision (v4) — convention: accepted. `errTextNotImplemented` is a
-//	  known transient sentinel. Ticket #17 (mcptext in-memory adapter)
-//	  replaces this path with a real implementation. Until then, the `text`
-//	  arg path stays in the schema (for forward-compat) but the handler
-//	  fast-errors so the contract is honest.
+//	Decision (v4) — convention: superseded by Decision (v6) below.
+//	  Originally: `errTextNotImplemented` was a transient sentinel so the
+//	  `text` arg stayed in the schema for forward-compat while the handler
+//	  fast-errored. Issue #17 lands the mcptext adapter and removes the
+//	  sentinel; the `text` arg path now resolves end-to-end.
 //	Decision (v5) — convention: accepted. Composition seam — `newPipeline`
 //	  is a package-level factory hook (var) so tests can substitute a
 //	  narrator stub and verify that level/voice/locale wiring threads
 //	  through runSpeak without spawning Kokoro. The seam is a deliberate
 //	  testability concession; the production var still builds the real
-//	  pipeline.Pipeline. Resolves build-review B2.
+//	  pipeline.Pipeline. Resolves build-review B2. Issue #17 widens the
+//	  hook to also take the chosen adapter.InputAdapter so the text-arg
+//	  path can substitute a mcptext.Adapter without forking the seam.
+//	Decision (v6) — convention: accepted. The `text` arg is implemented
+//	  via adapter/mcptext (ticket #17). The composition root constructs
+//	  the URI as `mcp://inline/<sha256-hex-of-text>`; the adapter
+//	  cross-checks the URI hash against sha256(text) on Read (Decision v3
+//	  of the #17 plan). Per Decision v5 of the #17 plan the offset-map
+//	  line-walking logic is duplicated between adapter/file and
+//	  adapter/mcptext rather than lifted — a shared adapterutil package
+//	  is deferred until a third adapter arrives. Supersedes Decision v4
+//	  above.
 package main
 
 import (
@@ -57,7 +68,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
+	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/mcptext"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
@@ -79,10 +92,12 @@ var genderToVoice = map[string]string{
 // Local sentinels. Caller-error sentinels carry the wire-prefix in their
 // message so the classifier path and direct-validation path produce
 // identical text; tests assert with errors.Is.
+//
+// Note: errTextNotImplemented was removed by ticket #17 (Decision v6) —
+// the `text` arg now resolves end-to-end via adapter/mcptext.
 var (
 	errMissingSource            = errors.New("caller-error: invalid_argument: must supply either source or text")
 	errBothSourceAndText        = errors.New("caller-error: invalid_argument: cannot supply both source and text")
-	errTextNotImplemented       = errors.New("caller-error: invalid_argument: text arg not implemented in issue #12 (see mcptext adapter ticket #17); use source")
 	errPersistentNotImplemented = errors.New("caller-error: invalid_argument: persistent sink not implemented in phase one; use ephemeral")
 	errUnknownIntelligence      = errors.New("caller-error: invalid_argument: intelligence must be none or mcpsampling")
 )
@@ -94,7 +109,7 @@ var (
 // jsonschema struct tags drive the SDK's auto-generated input schema.
 type speakArgs struct {
 	Source       string `json:"source,omitempty"       jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
-	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (not implemented in this release; use source)"`
+	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
 	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
 	Sink         string `json:"sink,omitempty"         jsonschema:"output sink: ephemeral | persistent (persistent not implemented). default ephemeral"`
 	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
@@ -120,18 +135,19 @@ func (a *speakArgs) applyDefaults() {
 }
 
 // validate enforces enum + range checks the SDK's schema validator does
-// not (defaults applied first by applyDefaults). The XOR / text-arg /
-// persistent-sink checks all return sentinel errors so the classifier and
-// tests can match them with errors.Is.
+// not (defaults applied first by applyDefaults). The XOR / persistent-sink
+// checks return sentinel errors so the classifier and tests can match
+// them with errors.Is.
+//
+// Per Decision v6 (#17): the text-arg fast-error is gone — text and
+// source both pass validation; runSpeak routes them to different
+// adapters.
 func (a speakArgs) validate() error {
 	if a.Source == "" && a.Text == "" {
 		return errMissingSource
 	}
 	if a.Source != "" && a.Text != "" {
 		return errBothSourceAndText
-	}
-	if a.Text != "" {
-		return errTextNotImplemented
 	}
 	if a.Level < 1 || a.Level > 3 {
 		return fmt.Errorf("caller-error: invalid_argument: level must be 1, 2, or 3 (got %d)", a.Level)
@@ -196,13 +212,19 @@ type narrator interface {
 // Per Decision v5 (build-review B2 fix): the seam lets unit tests verify
 // the level/voice/locale wiring without spawning Kokoro.
 //
-// Phase 5 of #13 adds the intel arg: the intelligence adapter the caller
+// Phase 5 of #13 added the intel arg: the intelligence adapter the caller
 // selected via args.Intelligence. nil = current deterministic+degraded
 // behavior. Constructed by runSpeak after applyDefaults+validate so the
 // factory stays a pure composition step.
-var newPipeline = func(outDir string, args speakArgs, intel intelligence.IntelligenceAdapter) narrator {
+//
+// Issue #17 (Decision v6) adds the input arg: the concrete input adapter
+// runSpeak chose for this call (file.New() for source path, mcptext.New
+// for text path). Threading it through the seam lets unit tests assert
+// which adapter was wired, and keeps the production composition single-
+// sourced inside this hook.
+var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) narrator {
 	return pipeline.New(
-		file.New(),
+		input,
 		intel,
 		sherpa.New(sherpa.EngineConfig{}),
 		ephemeral.New(),
@@ -233,9 +255,9 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 		return speakResponse{}, err
 	}
 
-	absPath, err := filepath.Abs(args.Source)
+	input, ref, err := inputAdapterAndRef(args)
 	if err != nil {
-		return speakResponse{}, fmt.Errorf("caller-error: invalid_argument: resolve source: %w", err)
+		return speakResponse{}, err
 	}
 
 	// Per-call temp dir. Ephemeral sink plays then we wipe; afplay
@@ -249,12 +271,9 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 	}()
 
 	intel := buildIntelligence(args)
-	pl := newPipeline(outDir, args, intel)
+	pl := newPipeline(outDir, args, input, intel)
 
-	receipt, err := pl.Narrate(ctx, plan.SourceRef{
-		Kind: plan.SourceKindFile,
-		URI:  absPath,
-	}, pipeline.NarrateRequest{
+	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
 		Voice: genderToVoice[args.Gender],
 	})
 	if err != nil {
@@ -264,6 +283,38 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 	return speakResponse{
 		Receipt: receiptFromSink(receipt.SinkReceipt, outDir),
 	}, nil
+}
+
+// inputAdapterAndRef picks the InputAdapter + SourceRef for one call.
+//
+// Per Decision v6 (#17): args.Text != "" routes through adapter/mcptext
+// with the canonical URI "mcp://inline/<sha256-hex-of-text>"; the adapter
+// cross-checks the URI hash against sha256(args.Text) on Read (Decision
+// v3 of the #17 plan). args.Source != "" keeps the existing adapter/file
+// path with an absolute path URI. The XOR + missing checks happened in
+// validate(), so exactly one branch fires here; the trailing error is
+// defensive — the validate contract should make it unreachable.
+func inputAdapterAndRef(args speakArgs) (adapter.InputAdapter, plan.SourceRef, error) {
+	switch {
+	case args.Text != "":
+		return mcptext.New(args.Text), plan.SourceRef{
+			Kind: plan.SourceKindMCPText,
+			URI:  mcptext.URIFor(args.Text),
+		}, nil
+	case args.Source != "":
+		absPath, err := filepath.Abs(args.Source)
+		if err != nil {
+			return nil, plan.SourceRef{}, fmt.Errorf("caller-error: invalid_argument: resolve source: %w", err)
+		}
+		return file.New(), plan.SourceRef{
+			Kind: plan.SourceKindFile,
+			URI:  absPath,
+		}, nil
+	default:
+		// validate() already rejected this. Defensive — if validate
+		// changes, surface a clear error rather than a nil panic.
+		return nil, plan.SourceRef{}, errMissingSource
+	}
 }
 
 // buildIntelligence selects an IntelligenceAdapter per args.Intelligence.
