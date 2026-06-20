@@ -71,8 +71,8 @@ func (c *inMemoryCache) Get(key CacheKey) (string, bool) {
 
 func (c *inMemoryCache) Put(key CacheKey, value string) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.m[key] = value
-	c.mu.Unlock()
 }
 
 // cacheLookupState carries the content hash and level computed during
