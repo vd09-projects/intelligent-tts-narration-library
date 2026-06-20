@@ -8,6 +8,16 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-persistent-block-patch-manifest-index-derived-ranges
+    title: "--block patch into a persistent outDir: manifest is the INDEX, byte ranges are DERIVED"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [sink/persistent, cmd, narrate, block-rerender, persistent-sink, manifest, route-a, honesty-rule, crash-consistency, issue-28]
+    path: convention/2026-06-21-persistent-block-patch-manifest-index-derived-ranges.md
+    supersedes: 2026-06-20-block-with-persistent-sink-rejected-at-flag-time
+    summary: "PatchBlock (package func, CheckStale precedent) patches one block into an existing persistent outDir. Route A: manifest.json is the authoritative block INDEX; per-block byte ranges in audio.wav are DERIVED from manifest timing + AudioFormat via the same silenceBytes() math the writer used — never stored (rejected Route B stored offsets as a drift-corruption class). F1 (container-vs-manifest length input-guard, refuses on mismatch) and F2 (stage-all-tmp + rename audio.wav LAST write ordering) are INDEPENDENT guarantees, not a detect-and-recover pair; output crash-consistency is carried by re-run-rewrites-everything (closes the zero-delta hole). plan.json + manifest.json both stay multi-block and agree on the patched block's classification. --expected-content-hash stays OPTIONAL (the manifest ContentHash gate already refuses cross-document patches). No manifest schema change (ManifestSchemaVersion=1). Supersedes v1.9.0 (block-with-persistent-rejected-at-flag-time)."
+
   - id: 2026-06-21-oauth-bearer-subscription-token-as-api-credential
     title: "Repurpose claude setup-token OAuth token as a raw-API credential via opt-in Bearer auth"
     date: 2026-06-21
@@ -164,7 +174,8 @@ decisions:
   - id: 2026-06-20-block-with-persistent-sink-rejected-at-flag-time
     title: "--block X with --sink=persistent rejected at flag-validation"
     date: 2026-06-20
-    status: accepted
+    status: superseded
+    superseded_by: 2026-06-21-persistent-block-patch-manifest-index-derived-ranges
     category: convention
     tags: [cmd, narrate, persistent-sink, block-rerender, flag-validation, honesty-rule, issue-16]
     path: convention/2026-06-20-block-with-persistent-sink-rejected-at-flag-time.md
