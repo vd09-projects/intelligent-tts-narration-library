@@ -8,6 +8,96 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-anthropic-cache-single-phase
+    title: "Anthropic cache is single-phase (no last-known-actual-model lookup)"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, anthropic, cache, model-id, simplification, issue-15]
+    path: convention/2026-06-20-anthropic-cache-single-phase.md
+    summary: "Anthropic adapter chooses a.model at construction so the pre-call cache key is fully knowable — collapses mcpsampling's two-phase lookup to single-phase. Key uses configured a.model on Get + Put. Cache hit Model field uses configured model; first-call Model echoes resolved actual model from API response (intentional divergence). Stale-on-alias-update bounded by per-call cache lifetime."
+
+  - id: 2026-06-20-anthropic-with-max-tokens-map-shape
+    title: "WithMaxTokens uses a map shape (partial-override) on the anthropic adapter"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [intelligence, anthropic, options, max-tokens, issue-15]
+    path: convention/2026-06-20-anthropic-with-max-tokens-map-shape.md
+    summary: "WithMaxTokens(map[plan.Level]int) — callers tune only the levels they care about; unspecified keep defaults. Diverges from mcpsampling's positional (l1, l2, l3 int64) shape on purpose: anthropic is constructed once and tuning one level is the realistic case."
+
+  - id: 2026-06-20-anthropic-new-returns-error-on-empty-key
+    title: "anthropic.New returns error on empty API key"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [intelligence, anthropic, constructor, error-handling, issue-15]
+    path: convention/2026-06-20-anthropic-new-returns-error-on-empty-key.md
+    summary: "anthropic.New(opts ...Option) (*Adapter, error) — empty apiKey surfaces at construction, not as a 401 deep in Voice(). cmd/narrate's chooseIntelligence panics on non-nil error because validate() already enforces the env var; failing here would be a programmer bug."
+
+  - id: 2026-06-20-anthropic-cache-forward-declared-phase-2
+    title: "Anthropic Cache forward-declared in Phase 2, narrowed in Phase 4"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, anthropic, cache, interface, phased-build, issue-15]
+    path: convention/2026-06-20-anthropic-cache-forward-declared-phase-2.md
+    summary: "Phase 2 scaffold needs a Cache type for WithCache(c Cache); Phase 4 has the real interface. Forward-declare as wide interface in Phase 2's anthropic.go; Phase 4 removes the declaration when cache.go lands. Always exactly one Cache definition at any point in history."
+
+  - id: 2026-06-20-intelligence-anthropic-missing-env-is-flag-error
+    title: "--intelligence anthropic with missing env is a flag-validation error"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [cmd, narrate, intelligence, anthropic, flag-validation, exit-codes, issue-15]
+    path: convention/2026-06-20-intelligence-anthropic-missing-env-is-flag-error.md
+    summary: "validate() checks ANTHROPIC_API_KEY when --intelligence=anthropic. Empty → error naming both the flag and the env var, wrapped in errFlagValidation, exit 2. Mirrors --block × --sink=persistent precedent. Rejected: silent fallback to none (hides misconfig), runtime error at first API call (mixes user-config with system failure)."
+
+  - id: 2026-06-20-anthropic-retry-policy-429-only
+    title: "Anthropic retry policy — 429 only, max 2 retries, 30s cap"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, anthropic, retry, rate-limit, http, issue-15]
+    path: convention/2026-06-20-anthropic-retry-policy-429-only.md
+    summary: "doWithRetry: max 2 retries (3 attempts), 429-only (no 5xx), Retry-After parsed (int seconds → HTTP-date → exponential 1s/2s), 30s cap per sleep, ctx.Done propagation via injected sleeper. Sustained rate-limit surfaces as Go error after ~3s of trying. Mis-configured backend with multi-minute Retry-After bounded at 30s."
+
+  - id: 2026-06-20-anthropic-http-test-seam-roundtripfunc
+    title: "Anthropic HTTP test seam — roundTripFunc via WithHTTPClient"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [intelligence, anthropic, testing, http, stdlib, issue-15]
+    path: convention/2026-06-20-anthropic-http-test-seam-roundtripfunc.md
+    summary: "Tests inject *http.Client{Transport: roundTripFunc(...)} via WithHTTPClient(*http.Client). Stays close to stdlib — no project-specific Transport interface. Sleeper test seam (WithSleeper) follows the same pattern. Rejected: custom Transport iface (adds surface for what http.RoundTripper already names), httptest.Server (heavier than needed)."
+
+  - id: 2026-06-20-no-anthropic-sdk
+    title: "No Anthropic SDK — plain net/http + encoding/json"
+    date: 2026-06-20
+    status: accepted
+    category: library-choice
+    tags: [intelligence, anthropic, http, stdlib, dependencies, issue-15]
+    path: library-choice/2026-06-20-no-anthropic-sdk.md
+    summary: "intelligence/anthropic uses plain net/http + encoding/json against POST /v1/messages. Zero new go.mod deps. ~80 LOC of request/response structs. Full control over retry / Retry-After / context.Cancel flow. Rejected the official SDK because it pulls batch / files / streaming / MCP-client surface we don't use. Revisit if the project starts using batch or streaming."
+
+  - id: 2026-06-20-cache-machinery-duplicate-not-lift
+    title: "Cache machinery duplicate-not-lift between mcpsampling and anthropic"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, anthropic, mcpsampling, cache, code-reuse, issue-15]
+    path: convention/2026-06-20-cache-machinery-duplicate-not-lift.md
+    summary: "Each adapter owns its own Cache + CacheKey + helpers (~80 LOC duplicated). mcpsampling's two-phase clientID-scoped key shape and anthropic's single-phase shape don't share enough to justify a lift today. Generalize when a 3rd adapter materializes — 'two consumers before lift' principle."
+
+  - id: 2026-06-20-refusal-parser-duplicate-not-lift
+    title: "Refusal-parser duplicate-not-lift between mcpsampling and anthropic"
+    date: 2026-06-20
+    status: experimental
+    category: convention
+    tags: [intelligence, anthropic, mcpsampling, refusal, code-reuse, issue-15]
+    path: convention/2026-06-20-refusal-parser-duplicate-not-lift.md
+    summary: "anthropic/refusal.go is a 10-line copy of mcpsampling's refuseSentinel + parseRefusal. Lifting would also require lifting the system-prompt contract test — too much surface area for the opening commit. Future drift caught by grep + deps_test. Generalize when a 3rd adapter materializes."
+
   - id: 2026-06-20-block-with-persistent-sink-rejected-at-flag-time
     title: "--block X with --sink=persistent rejected at flag-validation"
     date: 2026-06-20
