@@ -70,24 +70,6 @@ const (
 	defaultMaxTokensL3 = 600
 )
 
-// Cache is the pluggable interface the adapter uses to skip the HTTP
-// call on repeats. Keyed by (content_hash, level, model) per CLAUDE.md's
-// caching rule — escalation must not re-bill. The concrete
-// implementation, key type, and helpers land in Phase 4 (cache.go); this
-// type is forward-declared as an interface here so the Adapter struct
-// and WithCache option compile in Phase 2 without depending on
-// not-yet-written code.
-//
-// With cache == nil (the New default), Voice() will skip the wrapper
-// entirely once Phase 4 wires it.
-type Cache interface {
-	// Get / Put will accept a CacheKey value type once Phase 4 introduces
-	// it. Defined as any here to keep the interface satisfiable by the
-	// not-yet-defined concrete implementation. Phase 4 narrows this.
-	Get(key any) (string, bool)
-	Put(key any, value string)
-}
-
 // Adapter implements intelligence.IntelligenceAdapter against the
 // Anthropic Messages API. Construct with New(opts...). Voice() is a stub
 // in Phase 2; the real flow lands in Phase 3 (api.go + refusal.go).
@@ -176,6 +158,21 @@ func (a *Adapter) Voice(ctx context.Context, req intelligence.IntelligenceReques
 
 	system, user := intelligencetmpl.RenderPrompt(tpl, req)
 
+	// Cache lookup (Phase 4) — single-phase: the model is adapter-fixed
+	// at construction, so the key is fully knowable pre-call. With
+	// a.cache == nil this is a free no-op (state is still populated so
+	// cachePut after a successful call can reuse the hash).
+	hit, ok, cacheState := a.cacheGet(req)
+	if ok {
+		// Cache-hit Model uses fullModelString(a.model) — the actual
+		// model id is folded into the key, so a hit by definition matched
+		// the configured model.
+		return intelligence.IntelligenceResult{
+			Text:  hit,
+			Model: fullModelString(a.model),
+		}, nil
+	}
+
 	body, err := json.Marshal(messagesRequest{
 		Model:       a.model,
 		MaxTokens:   a.maxTokens[req.Level],
@@ -228,16 +225,18 @@ func (a *Adapter) Voice(ctx context.Context, req intelligence.IntelligenceReques
 	}
 
 	if note, refused := parseRefusal(text); refused {
-		// Refusals are NOT cached (Phase 4 will skip Put on this branch).
+		// Refusals are NOT cached — Put is skipped on this branch.
 		return intelligence.IntelligenceResult{
 			Refused:     true,
 			RefusalNote: note,
 		}, nil
 	}
 
+	a.cachePut(cacheState, text)
+
 	return intelligence.IntelligenceResult{
 		Text:  text,
-		Model: "anthropic@" + parsed.Model,
+		Model: fullModelString(parsed.Model),
 	}, nil
 }
 
