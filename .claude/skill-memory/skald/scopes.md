@@ -79,3 +79,27 @@ scopes:
       per-block re-render. Plan locked by prior mimir run; sindri builds
       to spec in 3 phases — pipeline plumbing, cmd flag + roster, README).
       Issue-numbered naming continues the convention.
+  - slug: intelligence-anthropic-issue-15
+    title: intelligence/anthropic direct-API adapter (issue #15)
+    created: 2026-06-20
+    reasoning: |
+      Build + review + iterate + harvest cycle for GitHub issue #15
+      (intelligence/anthropic — second concrete IntelligenceAdapter, direct
+      Anthropic API path for CLI users using ANTHROPIC_API_KEY env var).
+      Plan pre-supplied + pre-approved by user in orchestration prompt;
+      sindri builds in 7 phases — lift prompt templates, scaffold, Voice(),
+      cache, retry, CLI wire, deps_test. Issue-numbered naming continues
+      the convention.
+  - slug: player-react-issue-18
+    title: React reference player (player/) — issue #18
+    created: 2026-06-20
+    reasoning: |
+      Build + review + iterate + harvest cycle for GitHub issue #18
+      (player/ — Vite + React + TypeScript reference UI consuming a
+      sink/persistent output dir; demonstrates block-level sync, honest
+      refusal display, per-block escalate command surface). Plan pre-supplied
+      + pre-approved by user in orchestration prompt; sindri builds via the
+      11-step ordered scaffold (Vite init → TS types → pure helpers →
+      loaders → playback hook → fixture → components → Makefile → smoke
+      test → README → manual verify). Issue-numbered naming continues the
+      convention.
