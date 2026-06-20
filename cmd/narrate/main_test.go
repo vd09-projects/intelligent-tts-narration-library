@@ -42,7 +42,7 @@ func TestRoot_FlagParsing_AllFlags(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	want := flagSet{File: "/tmp/x.md", Level: 2, Sink: "ephemeral", Gender: "male"}
+	want := flagSet{File: "/tmp/x.md", Level: 2, Sink: "ephemeral", Gender: "male", Intelligence: "none"}
 	if got != want {
 		t.Errorf("flag set: got %+v want %+v", got, want)
 	}
@@ -75,6 +75,9 @@ func TestRoot_FlagDefaults(t *testing.T) {
 	}
 	if got.ExpectedContentHash != "" {
 		t.Errorf("default --expected-content-hash: got %q want empty", got.ExpectedContentHash)
+	}
+	if got.Intelligence != "none" {
+		t.Errorf("default --intelligence: got %q want none", got.Intelligence)
 	}
 }
 
@@ -177,6 +180,73 @@ func TestFlagSet_Validate_InvalidSink(t *testing.T) {
 	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "whatever", Gender: "female"}
 	if err := a.validate(); err == nil {
 		t.Error("validate accepted unknown --sink")
+	}
+}
+
+func TestFlagSet_Validate_InvalidIntelligence(t *testing.T) {
+	t.Parallel()
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Intelligence: "openai"}
+	err := a.validate()
+	if err == nil {
+		t.Fatal("validate accepted unknown --intelligence value")
+	}
+	if !strings.Contains(err.Error(), "--intelligence") {
+		t.Errorf("error should mention --intelligence: %v", err)
+	}
+}
+
+// TestFlagSet_Validate_AnthropicWithoutEnvVar — per Decision v6,
+// --intelligence=anthropic with an empty ANTHROPIC_API_KEY is a
+// flag-validation error (exit 2), not a silent fallback or runtime
+// error. The message must name both the flag and the env var so the
+// caller can act on it.
+func TestFlagSet_Validate_AnthropicWithoutEnvVar(t *testing.T) {
+	// Sequential — sets/clears process env.
+	t.Setenv(anthropicAPIKeyEnv, "")
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Intelligence: "anthropic"}
+	err := a.validate()
+	if err == nil {
+		t.Fatal("validate accepted --intelligence=anthropic without env var")
+	}
+	if !strings.Contains(err.Error(), "--intelligence") {
+		t.Errorf("error should mention --intelligence: %v", err)
+	}
+	if !strings.Contains(err.Error(), anthropicAPIKeyEnv) {
+		t.Errorf("error should mention %s: %v", anthropicAPIKeyEnv, err)
+	}
+}
+
+// TestFlagSet_Validate_AnthropicWithEnvVar — the same flagSet validates
+// fine when ANTHROPIC_API_KEY is non-empty.
+func TestFlagSet_Validate_AnthropicWithEnvVar(t *testing.T) {
+	// Sequential — sets process env.
+	t.Setenv(anthropicAPIKeyEnv, "sk-test-key")
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Intelligence: "anthropic"}
+	if err := a.validate(); err != nil {
+		t.Errorf("validate rejected --intelligence=anthropic with env set: %v", err)
+	}
+}
+
+// TestChooseIntelligence_None — returns nil for the default and absent
+// --intelligence (zero-value alias).
+func TestChooseIntelligence_None(t *testing.T) {
+	t.Parallel()
+	if got := chooseIntelligence(flagSet{Intelligence: "none"}); got != nil {
+		t.Errorf("--intelligence=none: got %T want nil", got)
+	}
+	if got := chooseIntelligence(flagSet{}); got != nil {
+		t.Errorf("zero-value Intelligence: got %T want nil", got)
+	}
+}
+
+// TestChooseIntelligence_Anthropic — constructs a non-nil adapter when
+// the env var is set. We do not exercise the adapter further here; the
+// anthropic package owns its own tests.
+func TestChooseIntelligence_Anthropic(t *testing.T) {
+	t.Setenv(anthropicAPIKeyEnv, "sk-test-key")
+	got := chooseIntelligence(flagSet{Intelligence: "anthropic"})
+	if got == nil {
+		t.Fatal("chooseIntelligence returned nil for --intelligence=anthropic with env set")
 	}
 }
 
