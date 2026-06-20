@@ -20,6 +20,17 @@
 // prompt issue might refuse once and succeed on retry; caching the
 // refusal would poison subsequent attempts.
 //
+// Dual auth (issue #32): the default authenticates with the x-api-key
+// header, the form an Anthropic Console key (sk-ant-api03-) expects.
+// A `claude setup-token` subscription OAuth token (sk-ant-oat01-) is
+// rejected on x-api-key but accepted on Authorization: Bearer together
+// with anthropic-beta: oauth-2025-04-20. Bearer is opt-in via
+// WithBearerAuth and is auto-detected on the sk-ant-oat01 token prefix
+// (an explicit option always wins over auto-detect). x-api-key stays the
+// default and is never removed. Repurposing a subscription token as a
+// raw-API credential is a Terms-of-Service gray area — see the caveat on
+// WithBearerAuth before opting in.
+//
 // Composition: this package never imports planner/, never imports cmd/,
 // never imports pipeline/. It depends only on plan/, the parent
 // intelligence/ package, internal/intelligencetmpl, and the Go standard
@@ -35,6 +46,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
@@ -95,6 +107,12 @@ type Adapter struct {
 	temperature     float64
 	promptTemplates map[plan.Class]intelligencetmpl.PromptTemplate
 	cache           Cache
+	// authMode selects the credential header (issue #32). Zero value
+	// authAPIKey = the default x-api-key path. authModeSet records
+	// whether an explicit auth option (WithBearerAuth) was applied so
+	// New's prefix auto-detect can defer to an explicit choice.
+	authMode    authMode
+	authModeSet bool
 	// sleeper is the test seam for doWithRetry. Production wiring uses
 	// defaultSleeper (time.After + ctx select). Tests inject an instant-
 	// returning sleeper via WithSleeper so the suite does not actually
@@ -126,6 +144,12 @@ var _ intelligence.IntelligenceAdapter = (*Adapter)(nil)
 //
 // The default httpClient is http.DefaultClient. Tests inject a custom
 // transport via WithHTTPClient — see anthropic_test.go in Phase 3.
+//
+// Auth mode (issue #32): the default is the x-api-key header. If no
+// explicit auth option (WithBearerAuth) was applied and the key carries
+// the sk-ant-oat01 subscription-token prefix, New auto-detects Bearer
+// auth. An explicit WithBearerAuth always wins over auto-detect — the
+// auto-detect runs only when the caller left the auth mode unset.
 func New(opts ...Option) (*Adapter, error) {
 	a := &Adapter{
 		model:       defaultModel,
@@ -154,6 +178,12 @@ func New(opts ...Option) (*Adapter, error) {
 	if a.httpClient == nil {
 		// Guard against WithHTTPClient(nil) — would panic on first Do().
 		a.httpClient = http.DefaultClient
+	}
+	// Auth-mode auto-detect (issue #32). Only when the caller did not set
+	// an explicit auth mode: a subscription-token prefix routes to Bearer.
+	// An explicit WithBearerAuth (authModeSet) always wins.
+	if !a.authModeSet && strings.HasPrefix(a.apiKey, oatTokenPrefix) {
+		a.authMode = authBearer
 	}
 	return a, nil
 }
@@ -287,7 +317,18 @@ func (a *Adapter) doWithRetry(ctx context.Context, body []byte) (int, []byte, er
 		if err != nil {
 			return 0, nil, fmt.Errorf("anthropic: build request: %w", err)
 		}
-		req.Header.Set("x-api-key", a.apiKey)
+		// Credential header selection (issue #32). Bearer carries the
+		// token in Authorization plus the oauth beta header and omits
+		// x-api-key; the default carries x-api-key and omits both. Set
+		// (not Add) so a rebuilt request on retry never accumulates
+		// duplicate auth headers.
+		switch a.authMode {
+		case authBearer:
+			req.Header.Set("Authorization", "Bearer "+a.apiKey)
+			req.Header.Set("anthropic-beta", anthropicBetaOAuth)
+		case authAPIKey:
+			req.Header.Set("x-api-key", a.apiKey)
+		}
 		req.Header.Set("anthropic-version", anthropicVersion)
 		req.Header.Set("content-type", "application/json")
 

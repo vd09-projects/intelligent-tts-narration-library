@@ -107,6 +107,29 @@ func WithSleeper(s func(context.Context, time.Duration) error) Option {
 	}
 }
 
+// WithBearerAuth switches the adapter from the default x-api-key header
+// to Authorization: Bearer auth, adding the anthropic-beta:
+// oauth-2025-04-20 header (issue #32). This is the form a `claude
+// setup-token` subscription OAuth token (prefix sk-ant-oat01-) needs —
+// such a token is rejected with a 401 on x-api-key but accepted on
+// Bearer. The same prefix is auto-detected at New time, so this option
+// is only needed to force Bearer for a non-prefixed key; an explicit
+// WithBearerAuth always wins over the prefix auto-detect.
+//
+// ToS caveat: repurposing a `claude setup-token` OAuth token as a raw
+// Anthropic API credential is a gray area against Anthropic's usage
+// terms (ref anthropics/claude-code#1785). The server may revoke or flag
+// such a token without notice, and the anthropic-beta value may change
+// upstream. This is precisely why x-api-key is the default and Bearer is
+// strictly opt-in. Use only with a token you are entitled to use this
+// way, and expect possible breakage.
+func WithBearerAuth() Option {
+	return func(a *Adapter) {
+		a.authMode = authBearer
+		a.authModeSet = true
+	}
+}
+
 // WithCache injects a Cache implementation. Defaults to nil — when nil,
 // Voice() (Phase 4) skips the cache wrapper entirely. Production wiring
 // in cmd/narrate (Phase 6) passes NewInMemoryCache() with per-call

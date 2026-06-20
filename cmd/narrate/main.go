@@ -150,6 +150,13 @@ var newPipeline = func(outDir string, args flagSet) narrator {
 //
 // Per issue #15: cmd/narrate-mcp is untouched (mcpsampling already
 // gives MCP clients intelligence for free).
+//
+// Per issue #32: ANTHROPIC_API_KEY accepts either an Anthropic Console
+// key (sk-ant-api03-) or a `claude setup-token` subscription OAuth token
+// (sk-ant-oat01-). cmd stays thin — the adapter auto-detects the
+// sk-ant-oat01 prefix and switches to Authorization: Bearer auth itself
+// (see anthropic.New and WithBearerAuth, including the ToS caveat). No
+// extra flag or option is passed here.
 func chooseIntelligence(args flagSet) intelligence.IntelligenceAdapter {
 	if args.Intelligence == "anthropic" {
 		a, err := anthropic.New(
@@ -286,6 +293,10 @@ func (a flagSet) validate() error {
 	//   rather than a silent fallback to "none" or a runtime error. Same
 	//   precedent as --block × --sink=persistent: caller-correctable input
 	//   that should not silently morph into something else.
+	//   Per issue #32, ANTHROPIC_API_KEY may hold either a Console key
+	//   (sk-ant-api03-) or a `claude setup-token` subscription OAuth token
+	//   (sk-ant-oat01-); both are valid — the adapter auto-detects the
+	//   oat prefix and uses Bearer auth for it.
 	switch a.Intelligence {
 	case "", "none", "anthropic":
 		// "" is the zero-value alias for "none" — keeps unit tests that

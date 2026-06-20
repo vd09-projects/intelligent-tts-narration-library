@@ -94,6 +94,119 @@ func TestVoice_Success(t *testing.T) {
 	}
 }
 
+// TestVoice_BearerAuth — constructing with WithBearerAuth() sends the
+// credential on Authorization: Bearer plus anthropic-beta and OMITS
+// x-api-key (issue #32). The negative assertion on x-api-key guards the
+// header-branch regression risk called out in the plan.
+func TestVoice_BearerAuth(t *testing.T) {
+	t.Parallel()
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization: got %q want %q", got, "Bearer test-key")
+		}
+		if got := r.Header.Get("anthropic-beta"); got != anthropicBetaOAuth {
+			t.Errorf("anthropic-beta: got %q want %q", got, anthropicBetaOAuth)
+		}
+		if got := r.Header.Get("x-api-key"); got != "" {
+			t.Errorf("x-api-key must be absent on Bearer path: got %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got != anthropicVersion {
+			t.Errorf("anthropic-version header: got %q want %q", got, anthropicVersion)
+		}
+		return jsonResp(200, `{"model":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`), nil
+	})
+
+	got, err := newAdapter(t, rt, WithBearerAuth()).Voice(context.Background(), proseReq("hello", plan.L2))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Refused {
+		t.Fatalf("unexpected Refused=true: note=%q", got.RefusalNote)
+	}
+	if got.Text != "ok" {
+		t.Errorf("Text: got %q want %q", got.Text, "ok")
+	}
+}
+
+// TestAuthModeSelection — table-driven over (apiKey, explicit option)
+// combinations asserting which credential header the request carries.
+// Covers: default api03 → x-api-key (with Authorization/beta absent);
+// oat-prefixed key with no option → Bearer auto-detect (with x-api-key
+// absent); explicit WithBearerAuth on an api03 key → Bearer wins over
+// the lack of prefix. Each case carries the matching negative assertion.
+func TestAuthModeSelection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		apiKey     string
+		opts       []Option
+		wantBearer bool // true → expect Bearer headers; false → expect x-api-key
+	}{
+		{
+			name:       "api03 console key defaults to x-api-key",
+			apiKey:     "sk-ant-api03-consolekey",
+			wantBearer: false,
+		},
+		{
+			name:       "oat token auto-detects bearer",
+			apiKey:     "sk-ant-oat01-subscriptiontoken",
+			wantBearer: true,
+		},
+		{
+			name:       "explicit WithBearerAuth wins on a non-oat key",
+			apiKey:     "sk-ant-api03-consolekey",
+			opts:       []Option{WithBearerAuth()},
+			wantBearer: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				auth := r.Header.Get("Authorization")
+				beta := r.Header.Get("anthropic-beta")
+				apiKey := r.Header.Get("x-api-key")
+				if tc.wantBearer {
+					if auth != "Bearer "+tc.apiKey {
+						t.Errorf("Authorization: got %q want %q", auth, "Bearer "+tc.apiKey)
+					}
+					if beta != anthropicBetaOAuth {
+						t.Errorf("anthropic-beta: got %q want %q", beta, anthropicBetaOAuth)
+					}
+					if apiKey != "" {
+						t.Errorf("x-api-key must be absent on Bearer path: got %q", apiKey)
+					}
+				} else {
+					if apiKey != tc.apiKey {
+						t.Errorf("x-api-key: got %q want %q", apiKey, tc.apiKey)
+					}
+					if auth != "" {
+						t.Errorf("Authorization must be absent on default path: got %q", auth)
+					}
+					if beta != "" {
+						t.Errorf("anthropic-beta must be absent on default path: got %q", beta)
+					}
+				}
+				return jsonResp(200, `{"model":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`), nil
+			})
+
+			opts := append([]Option{
+				WithAPIKey(tc.apiKey),
+				WithHTTPClient(&http.Client{Transport: rt}),
+			}, tc.opts...)
+			a, err := New(opts...)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := a.Voice(context.Background(), proseReq("hello", plan.L2)); err != nil {
+				t.Fatalf("Voice: %v", err)
+			}
+		})
+	}
+}
+
 // TestVoice_RefusalViaSentinel — 2xx whose text begins with the refuse
 // sentinel returns Refused=true (data, not error) and strips the
 // sentinel from RefusalNote.
