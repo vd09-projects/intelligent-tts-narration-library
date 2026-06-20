@@ -145,10 +145,7 @@ func (s *Sink) Consume(ctx context.Context, p plan.NarrationPlan, res render.Ren
 		// and this block's planned start. Negative gaps (overlapping blocks)
 		// clamp to zero inside silenceBytes — overlap is a planner bug, not
 		// a corrupting condition the sink should propagate.
-		leading := blk.StartMs - cursorMs
-		if leading < 0 {
-			leading = 0
-		}
+		leading := max(blk.StartMs-cursorMs, 0)
 
 		if blk.AudioRef == "" {
 			// Empty AudioRef = no on-disk WAV for this block (all-pause or
