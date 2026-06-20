@@ -1,7 +1,9 @@
 package anthropic
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/intelligencetmpl"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
@@ -86,6 +88,22 @@ func WithPromptTemplates(m map[plan.Class]intelligencetmpl.PromptTemplate) Optio
 			dst[k] = v
 		}
 		a.promptTemplates = dst
+	}
+}
+
+// WithSleeper injects the sleep function doWithRetry uses between 429
+// retries. The default (defaultSleeper in anthropic.go) does
+// time.After + ctx select. Tests pass an instant-returning closure so
+// the suite does not actually wait seconds. A nil sleeper is ignored
+// (the default stays in place). Per Decision v5: the sleeper is the
+// retry test seam — the retry semantics (cap, exponential, header
+// parsing) live in doWithRetry where they can be unit-tested via
+// captured durations.
+func WithSleeper(s func(context.Context, time.Duration) error) Option {
+	return func(a *Adapter) {
+		if s != nil {
+			a.sleeper = s
+		}
 	}
 }
 

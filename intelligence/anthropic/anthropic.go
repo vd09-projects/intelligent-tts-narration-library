@@ -34,6 +34,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/intelligencetmpl"
@@ -70,6 +72,18 @@ const (
 	defaultMaxTokensL3 = 600
 )
 
+// Retry policy constants (Phase 5, Decision v5). Max 2 retries (3 total
+// attempts), trigger only on 429, exponential 1s/2s when Retry-After is
+// absent, cap each sleep at 30s. No 5xx retry — the Anthropic API treats
+// 5xx as "your retry is welcome but I make no promises" so silent retry
+// would double the test matrix without a clear win.
+const (
+	retryMaxAttempts   = 3
+	retrySleepCap      = 30 * time.Second
+	retryBackoffFirst  = 1 * time.Second
+	retryBackoffSecond = 2 * time.Second
+)
+
 // Adapter implements intelligence.IntelligenceAdapter against the
 // Anthropic Messages API. Construct with New(opts...). Voice() is a stub
 // in Phase 2; the real flow lands in Phase 3 (api.go + refusal.go).
@@ -81,6 +95,22 @@ type Adapter struct {
 	temperature     float64
 	promptTemplates map[plan.Class]intelligencetmpl.PromptTemplate
 	cache           Cache
+	// sleeper is the test seam for doWithRetry. Production wiring uses
+	// defaultSleeper (time.After + ctx select). Tests inject an instant-
+	// returning sleeper via WithSleeper so the suite does not actually
+	// wait seconds between 429 retries.
+	sleeper func(context.Context, time.Duration) error
+}
+
+// defaultSleeper waits d, propagating ctx.Done so cancel does not strand
+// a goroutine in time.After. Used by New when WithSleeper is absent.
+func defaultSleeper(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Compile-time assertion: *Adapter satisfies intelligence.IntelligenceAdapter.
@@ -110,6 +140,7 @@ func New(opts ...Option) (*Adapter, error) {
 		// so the two adapters cannot drift on prompt wording, honesty
 		// preamble, or refusal sentinel. WithPromptTemplates overrides.
 		promptTemplates: intelligencetmpl.DefaultPromptTemplates,
+		sleeper:         defaultSleeper,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -189,29 +220,13 @@ func (a *Adapter) Voice(ctx context.Context, req intelligence.IntelligenceReques
 		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiEndpoint, bytes.NewReader(body))
+	statusCode, respBody, err := a.doWithRetry(ctx, body)
 	if err != nil {
-		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: build request: %w", err)
-	}
-	httpReq.Header.Set("x-api-key", a.apiKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
-	httpReq.Header.Set("content-type", "application/json")
-
-	resp, err := a.httpClient.Do(httpReq)
-	if err != nil {
-		// %w preserves context.Canceled / context.DeadlineExceeded for
-		// downstream classifiers, matching mcpsampling's behavior.
-		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: http do: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: read response: %w", err)
+		return intelligence.IntelligenceResult{}, err
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: http %d: %s", resp.StatusCode, errBodyExcerpt(respBody))
+	if statusCode < 200 || statusCode >= 300 {
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: http %d: %s", statusCode, errBodyExcerpt(respBody))
 	}
 
 	var parsed messagesResponse
@@ -248,4 +263,98 @@ func errBodyExcerpt(b []byte) string {
 		return string(b)
 	}
 	return string(b[:errBodyExcerptMax]) + "...(truncated)"
+}
+
+// doWithRetry posts body to apiEndpoint up to retryMaxAttempts times,
+// retrying only on 429. Returns the final attempt's status code + body
+// + nil on a delivered response; returns a Go error on transport
+// failure or context cancellation.
+//
+// Per Decision v5: max 2 retries (3 total attempts), trigger only on
+// 429, parse Retry-After (integer seconds first, then HTTP-date), cap
+// each sleep at retrySleepCap, exponential fallback (1s, 2s) when no
+// header. No 5xx retry. ctx.Done propagates during the sleep — the
+// sleeper closure does the select; on cancel we return ctx.Err()
+// without making another HTTP call.
+//
+// Bodies are consumed by Do, so the request is rebuilt from a fresh
+// bytes.NewReader on every attempt.
+func (a *Adapter) doWithRetry(ctx context.Context, body []byte) (int, []byte, error) {
+	var lastStatus int
+	var lastBody []byte
+	for attempt := 0; attempt < retryMaxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiEndpoint, bytes.NewReader(body))
+		if err != nil {
+			return 0, nil, fmt.Errorf("anthropic: build request: %w", err)
+		}
+		req.Header.Set("x-api-key", a.apiKey)
+		req.Header.Set("anthropic-version", anthropicVersion)
+		req.Header.Set("content-type", "application/json")
+
+		resp, err := a.httpClient.Do(req)
+		if err != nil {
+			// Transport error — no retry, no second guess. %w preserves
+			// context.Canceled / context.DeadlineExceeded for downstream
+			// classifiers.
+			return 0, nil, fmt.Errorf("anthropic: http do: %w", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return 0, nil, fmt.Errorf("anthropic: read response: %w", readErr)
+		}
+		lastStatus, lastBody = resp.StatusCode, respBody
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return lastStatus, lastBody, nil
+		}
+		if attempt == retryMaxAttempts-1 {
+			// 429 on the final attempt — surface the latest body to
+			// callers as the error context.
+			return lastStatus, lastBody, nil
+		}
+
+		dur := retryDelay(resp.Header.Get("Retry-After"), attempt)
+		if err := a.sleeper(ctx, dur); err != nil {
+			return 0, nil, err
+		}
+	}
+	// Unreachable: the loop returns on every iteration.
+	return lastStatus, lastBody, nil
+}
+
+// retryDelay parses Retry-After and returns the bounded sleep duration
+// for this attempt. Empty / unparseable header → exponential fallback
+// keyed on attempt index (0 → 1s, 1 → 2s). Caps at retrySleepCap.
+func retryDelay(retryAfter string, attempt int) time.Duration {
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(retryAfter); err == nil && secs >= 0 {
+			return clampDuration(time.Duration(secs) * time.Second)
+		}
+		if t, err := http.ParseTime(retryAfter); err == nil {
+			delta := time.Until(t)
+			if delta < 0 {
+				delta = 0
+			}
+			return clampDuration(delta)
+		}
+	}
+	// Exponential fallback. Only two retries are possible
+	// (retryMaxAttempts == 3) so this lookup covers all reachable values.
+	switch attempt {
+	case 0:
+		return retryBackoffFirst
+	default:
+		return retryBackoffSecond
+	}
+}
+
+func clampDuration(d time.Duration) time.Duration {
+	if d > retrySleepCap {
+		return retrySleepCap
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
 }
