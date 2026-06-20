@@ -138,9 +138,9 @@ func TestClassifyPipelineErr(t *testing.T) {
 	rendererBoom := errors.New("kokoro subprocess crashed")
 
 	cases := []struct {
-		name      string
-		in        error
-		wantNil   bool
+		name       string
+		in         error
+		wantNil    bool
 		wantPrefix string
 	}{
 		{
@@ -300,7 +300,7 @@ type stubNarrator struct {
 	mu     sync.Mutex
 }
 
-func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (sink.SinkReceipt, error) {
+func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gotRef = ref
@@ -310,7 +310,7 @@ func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipe
 		_, statErr := os.Stat(s.gotOutDir)
 		s.outDirExistedAtNarrate = statErr == nil
 	}
-	return s.receipt, s.err
+	return pipeline.NarrateResult{SinkReceipt: s.receipt}, s.err
 }
 
 // withStubPipeline installs a stub narrator via the newPipeline seam,
@@ -643,8 +643,8 @@ type samplingClientCtxProbe struct{}
 func TestClassifyPipelineErr_McpsamplingSentinels(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		in        error
+		name       string
+		in         error
 		wantPrefix string
 	}{
 		{

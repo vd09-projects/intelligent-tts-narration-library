@@ -70,3 +70,12 @@ scopes:
       riding MCP sampling/createMessage on the connected client LLM).
       Becomes the precedent #15 (intelligence/anthropic) follows. Issue-
       numbered naming continues the convention.
+  - slug: cmd-narrate-block-rerender-14
+    title: cmd/narrate --block + --expected-content-hash per-block re-render (issue #14)
+    created: 2026-06-20
+    reasoning: |
+      Build + review + iterate + harvest cycle for GitHub issue #14
+      (cmd/narrate --block <id> --level {2|3} + --expected-content-hash
+      per-block re-render. Plan locked by prior mimir run; sindri builds
+      to spec in 3 phases — pipeline plumbing, cmd flag + roster, README).
+      Issue-numbered naming continues the convention.

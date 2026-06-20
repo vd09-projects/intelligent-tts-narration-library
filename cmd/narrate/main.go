@@ -6,9 +6,11 @@
 //
 // Exit codes:
 //
-//	0 — success (including plans containing refused blocks — refusal is data).
+//	0 — success (including plans containing refused blocks — refusal is data;
+//	    AND including --expected-content-hash mismatch warnings).
 //	1 — adapter / planner / renderer / sink error.
-//	2 — flag / argument error (cobra) OR --sink=persistent (not implemented).
+//	2 — flag / argument error (cobra), --sink=persistent (not implemented),
+//	    or --block id not found in the plan.
 //
 // Decisions baked in:
 //
@@ -59,29 +61,73 @@ const persistentNotImplementedMsg = "persistent sink not implemented in vertical
 // errPersistentNotImplemented routes --sink=persistent to the same exit-2
 // path. Both sentinels are package-level so tests can errors.Is against
 // them without reaching into runNarrate's internals.
+//
+// errBlockNotFound is a thin CLI-side sentinel runNarrate wraps the
+// pipeline.ErrBlockNotFound with, so exitCodeFor routes "unknown
+// --block id" to exit code 2 (caller-correctable input) rather than 1
+// (pipeline failure). Per issue #14.
 var (
-	errFlagValidation         = errors.New("flag error")
+	errFlagValidation           = errors.New("flag error")
 	errPersistentNotImplemented = errors.New(persistentNotImplementedMsg)
+	errBlockNotFound            = errors.New("block not found")
 )
 
 // flagSet — parsed flag values, populated by cobra. Pulled out so tests
 // can drive the command without os.Exit.
+//
+// Block + ExpectedContentHash are the issue-#14 single-block re-render
+// knobs. Empty Block preserves the whole-document flow; non-empty Block
+// routes through the pipeline.NarrateRequest.BlockID branch.
 type flagSet struct {
-	File   string
-	Level  int
-	Sink   string
-	Gender string
+	File                string
+	Level               int
+	Sink                string
+	Gender              string
+	Block               string
+	ExpectedContentHash string
+}
+
+// narrator — the minimal pipeline surface runNarrate needs. Pulled out
+// as an interface so the newPipeline seam (and tests) can substitute a
+// stub without spawning Kokoro. Production wires *pipeline.Pipeline
+// (which satisfies this via its Narrate method). Matches cmd/narrate-mcp's
+// Decision v5 seam pattern.
+type narrator interface {
+	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error)
+}
+
+// newPipeline — package-level factory hook. Production builds the real
+// pipeline.Pipeline; tests swap this var to inject a stub narrator. The
+// returned narrator owns its own OutDir; runNarrate creates the temp
+// dir and passes it through so callers can swap the factory without
+// re-implementing cleanup.
+var newPipeline = func(outDir string, args flagSet) narrator {
+	return pipeline.New(
+		file.New(),
+		nil, // no intelligence adapter — phase one deterministic + degraded path.
+		sherpa.New(sherpa.EngineConfig{}),
+		ephemeral.New(),
+		pipeline.PipelineDefaults{
+			Level:  plan.Level(args.Level),
+			OutDir: outDir,
+			Locale: "en",
+		},
+	)
 }
 
 // runDeps — exit-fn + IO seams injected by tests. Production uses
 // os.Exit + os.Stdout + os.Stderr.
+//
+// stderr is threaded into the run-fn (as of issue #14) so runNarrate
+// can print the block roster + hash-mismatch warning without reaching
+// for the package-level os.Stderr.
 type runDeps struct {
 	stdout io.Writer
 	stderr io.Writer
 	exit   func(int)
 	// run executes the wired pipeline. Default is runNarrate; tests
 	// stub it to verify wiring without spawning subprocesses.
-	run func(ctx context.Context, args flagSet, stdout io.Writer) error
+	run func(ctx context.Context, args flagSet, stdout, stderr io.Writer) error
 }
 
 // newRootCmd builds the cobra command tree. Exposed for tests.
@@ -98,7 +144,7 @@ func newRootCmd(deps runDeps) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return deps.run(c.Context(), args, deps.stdout)
+			return deps.run(c.Context(), args, deps.stdout, deps.stderr)
 		},
 	}
 
@@ -106,6 +152,8 @@ func newRootCmd(deps runDeps) *cobra.Command {
 	cmd.Flags().IntVar(&args.Level, "level", 1, "leveling depth: 1 (gist) | 2 (summary) | 3 (detail)")
 	cmd.Flags().StringVar(&args.Sink, "sink", "ephemeral", "output sink: ephemeral | persistent (persistent not implemented in vertical slice)")
 	cmd.Flags().StringVar(&args.Gender, "gender", "female", "voice gender: female | male")
+	cmd.Flags().StringVar(&args.Block, "block", "", "re-render a single block by id (from the roster); --level is the target level for that block")
+	cmd.Flags().StringVar(&args.ExpectedContentHash, "expected-content-hash", "", "warn on stderr if the document content_hash differs from this value (only meaningful with --block)")
 
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
@@ -125,11 +173,24 @@ func (a flagSet) validate() error {
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		return fmt.Errorf("--gender must be female or male (got %q)", a.Gender)
 	}
+	// F3 (#14 review): --expected-content-hash is only meaningful with
+	// --block — without --block the pipeline takes the whole-doc path and
+	// never compares hashes, so a non-empty value would be a silent no-op.
+	// Reject it at flag-time so the caller knows their guard is ineffective.
+	if a.ExpectedContentHash != "" && a.Block == "" {
+		return fmt.Errorf("--expected-content-hash is only meaningful with --block")
+	}
 	return nil
 }
 
 // runNarrate is the production wiring — composition root proper.
-func runNarrate(ctx context.Context, args flagSet, stdout io.Writer) error {
+//
+// Validation order (load-bearing, per issue #14):
+//  1. flag validate() (--level, --sink, --gender)
+//  2. --sink=persistent fast-error — fires BEFORE any --block reasoning
+//     so the persistent-sink AC stays scoped to issue #16.
+//  3. then everything else.
+func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) error {
 	if err := args.validate(); err != nil {
 		return fmt.Errorf("%w: %w", errFlagValidation, err)
 	}
@@ -161,33 +222,95 @@ func runNarrate(ctx context.Context, args flagSet, stdout io.Writer) error {
 		_ = os.RemoveAll(outDir)
 	}()
 
-	pl := pipeline.New(
-		file.New(),
-		nil, // no intelligence adapter — phase one deterministic + degraded path.
-		sherpa.New(sherpa.EngineConfig{}),
-		ephemeral.New(),
-		pipeline.PipelineDefaults{
-			Level:  plan.Level(args.Level),
-			OutDir: outDir,
-			Locale: "en",
-		},
-	)
+	// Build the pipeline. F2 fix: on a --block invocation, the document
+	// default level must stay at L1 so the planner does NOT re-plan every
+	// untargeted block at the block's escalation level (which would waste
+	// planner work AND make the returned BlockSummaries roster misrepresent
+	// the document's default-level shape). Pass a copy of args with Level
+	// forced back to 1 into the factory; the original args.Level only
+	// drives LevelOverrides[args.Block] below.
+	factoryArgs := args
+	if args.Block != "" {
+		factoryArgs.Level = 1
+	}
+	pl := newPipeline(outDir, factoryArgs)
 
-	receipt, err := pl.Narrate(ctx, plan.SourceRef{
+	req := pipeline.NarrateRequest{
+		Voice:               genderToVoice[args.Gender],
+		BlockID:             args.Block,
+		ExpectedContentHash: args.ExpectedContentHash,
+	}
+	if args.Block != "" {
+		// --level on a --block invocation is the absolute target level for
+		// that one block (supports downgrade L3→L1 symmetrically). Funnel
+		// it through LevelOverrides so the planner re-classifies that block
+		// at the requested level without disturbing the document default.
+		req.LevelOverrides = map[string]plan.Level{
+			args.Block: plan.Level(args.Level),
+		}
+	}
+
+	result, err := pl.Narrate(ctx, plan.SourceRef{
 		Kind: plan.SourceKindFile,
 		URI:  absPath,
-	}, pipeline.NarrateRequest{
-		Voice: genderToVoice[args.Gender],
-	})
+	}, req)
 	if err != nil {
+		if errors.Is(err, pipeline.ErrBlockNotFound) {
+			return fmt.Errorf("%w: %s", errBlockNotFound, args.Block)
+		}
 		return err
 	}
 
-	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s\n",
-		receipt.BlocksPlayed, receipt.TotalDurationMs, outDir); err != nil {
+	if result.BlockHashMismatch != nil {
+		// Non-fatal: the re-render still ran. The block content has
+		// changed since the caller obtained the id, so the audio they
+		// just heard may not match their stale roster.
+		_, _ = fmt.Fprintf(stderr,
+			"warning: content_hash mismatch (expected %s, got %s) — block content has changed since you got that id\n",
+			result.BlockHashMismatch.Expected,
+			result.BlockHashMismatch.Got,
+		)
+	}
+
+	// Summary on stdout — machine-readable key=value line.
+	// content_hash is exposed so callers can capture it and pass it back via
+	// --expected-content-hash on a later --block re-render (F1 from #14
+	// review). Trailing keys are additive — older parsers must tolerate
+	// unknown trailing key=value pairs.
+	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s content_hash=%s\n",
+		result.BlocksPlayed, result.TotalDurationMs, outDir, result.DocumentContentHash); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
+
+	// Block roster on stderr after every ephemeral whole-doc run (skip
+	// when --block is set — the caller already knows which block they
+	// targeted). Roster goes to stderr so it never mixes with the
+	// machine-readable stdout summary; format is tab-separated so a
+	// shell pipeline can `cut -f1` to grab ids.
+	//
+	// TODO(#16): when the persistent sink lands, this gate must
+	// expand to print on persistent runs too — the roster is just as
+	// useful there. Today persistent fast-errors before we get here.
+	if args.Block == "" && args.Sink == "ephemeral" {
+		printRoster(stderr, args.File, result.BlockSummaries)
+	}
 	return nil
+}
+
+// printRoster writes the block roster to w. One header line + one row
+// per block; columns are tab-separated. lines is "start-end" when the
+// span is multi-line, "start" when start==end (or when end is zero).
+func printRoster(w io.Writer, file string, summaries []pipeline.BlockSummary) {
+	_, _ = fmt.Fprintf(w, "# %d blocks — escalate one with: narrate --file %s --block <id> --level {2|3}\n",
+		len(summaries), file)
+	for _, s := range summaries {
+		lines := fmt.Sprintf("%d", s.StartLine)
+		if s.EndLine > 0 && s.EndLine != s.StartLine {
+			lines = fmt.Sprintf("%d-%d", s.StartLine, s.EndLine)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
+			s.ID, s.Class, int(s.Level), s.Status, lines)
+	}
 }
 
 func main() {
@@ -209,7 +332,7 @@ func main() {
 //
 //	0 — success path: cmd.ExecuteContext returned nil.
 //	1 — adapter / planner / renderer / sink error.
-//	2 — flag / validation error OR --sink=persistent.
+//	2 — flag / validation error, --sink=persistent, or unknown --block id.
 func runMain(deps runDeps) {
 	cmd := newRootCmd(deps)
 	cmd.SetOut(deps.stdout)
@@ -226,10 +349,13 @@ func runMain(deps runDeps) {
 }
 
 // exitCodeFor classifies a top-level error into the slice's exit code
-// taxonomy. Flag validation and --sink=persistent both route to 2; any
-// other error routes to 1. Pulled out for testability.
+// taxonomy. Flag validation, --sink=persistent, and unknown --block id
+// all route to 2 (caller-correctable input); any other error routes to
+// 1 (pipeline / system failure). Pulled out for testability.
 func exitCodeFor(err error) int {
-	if errors.Is(err, errFlagValidation) || errors.Is(err, errPersistentNotImplemented) {
+	if errors.Is(err, errFlagValidation) ||
+		errors.Is(err, errPersistentNotImplemented) ||
+		errors.Is(err, errBlockNotFound) {
 		return 2
 	}
 	return 1

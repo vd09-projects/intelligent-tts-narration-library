@@ -8,6 +8,15 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-pipeline-block-rerender-uses-document-hash
+    title: "Pipeline block re-render uses document-level content_hash"
+    date: 2026-06-20
+    status: accepted
+    category: architecture
+    tags: [pipeline, block-rerender, content-hash, staleness, plan-schema, phase-one, issue-14]
+    path: architecture/2026-06-20-pipeline-block-rerender-uses-document-hash.md
+    summary: "--expected-content-hash compares against plan.Source.ContentHash (the document hash), NOT a new per-block hash. Planner is deterministic so a document-hash match implies block-hash match. Avoids a new plan-schema field. Surfaced via NarrateResult.BlockHashMismatch (warning) and NarrateResult.DocumentContentHash (exposed on stdout as content_hash=<hex>)."
+
   - id: 2026-06-20-mcpsampling-cache-key-includes-full-model-id
     title: "mcpsampling cache key includes the full chosen-model id"
     date: 2026-06-20
