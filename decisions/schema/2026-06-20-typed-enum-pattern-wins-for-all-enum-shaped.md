@@ -86,3 +86,14 @@ Reviewer surfaced coverage gap during #13 plan review: the Decision did not name
 - Tags include `issue-13`.
 
 No change to the substantive Decision: `Severity` remains 2-valued (Option A). Reasoning preserved verbatim above.
+
+## Amendment 2026-06-20 (post-#23 — sweep actually completed)
+
+Issue #23 surfaced that the original "all nine enum-shaped string fields" framing was off by one: `Provenance.VoicedBy` (in `plan/plan.go`, value comment `// "planner" | "intelligence" | "verbatim"`) was a **tenth** enum-shaped field that the #10 sweep missed — it lived in `plan.go` rather than alongside the three fields flagged together, so it slipped the original review's net. #23 applied the identical pattern:
+
+- New `type VoicedBy string` in `plan/enums.go` with `VoicedByPlanner`/`VoicedByIntelligence`/`VoicedByVerbatim` + `IsValid()`.
+- `Provenance.VoicedBy` field type `string -> VoicedBy`; inline value-listing comment dropped.
+- `TestVoicedBy_IsValid` + a `provenance_voiced_by` probe added to `TestForwardCompat_UnknownEnumValuesRoundTrip` (10 sub-cases now).
+- One non-obvious Go-source site updated: `planner/degrade.go provenanceWith(voicedBy string)` -> `voicedBy plan.VoicedBy` (the untyped-constant rule covered every struct-literal site, but this function-parameter boundary needed the explicit type). This concretely demonstrates the "Go-source-level compatibility note" the prior Consequences section predicted.
+
+**The enum-typing sweep is now genuinely complete: all TEN enum-shaped string fields in `plan/` use the typed-alias + `IsValid()` pattern with zero remaining bare-string-with-comment fields.** Wire format unchanged, additive-compat preserved, no `SchemaVersion` bump, no fixture edits. Closes the Tech Debt Sentinel F1 follow-up from #10. Tags extended with `issue-23`, `voicedby`. Implemented on branch `refactor/plan-typed-enum-voicedby-23`.

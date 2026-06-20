@@ -131,3 +131,28 @@ scopes:
       follow-on patch-path feature on the same package, so an explicit
       block-patch qualifier rather than reusing the issue-16 scope.
       Issue-numbered naming continues the convention.
+  - slug: lint-remove-unused-34
+    title: chore(lint) remove dead unused symbols flagged by golangci-lint on main (issue #34)
+    created: 2026-06-20
+    reasoning: |
+      Build + review + close cycle for GitHub issue #34 (chore(lint): remove
+      two pre-existing `unused` golangci-lint findings on clean main — the
+      gotOpts test-scaffolding field in cmd/narrate/main_test.go and the
+      never-wired errorResponse type in intelligence/anthropic/api.go). Vibe-
+      sized 2-symbol lint cleanup; no mimir plan artifact (single scoped
+      ticket, went straight to sindri build). Descriptive-qualifier slug
+      (lint-remove-unused) + issue number, continuing the issue-numbered
+      naming convention. Unblocked once #32 merged (PR #33).
+  - slug: plan-typed-enum-voicedby-23
+    title: typed enum for Provenance.VoicedBy (issue #23)
+    created: 2026-06-20
+    reasoning: |
+      Plan + build + review + close cycle for GitHub issue #23
+      (refactor(plan): typed enum for Provenance.VoicedBy — follow-up to #10).
+      Finishes the plan/ enum-typing sweep: Provenance.VoicedBy is the last
+      bare-string enum-shaped field; lift to typed alias + IsValid() per the
+      accepted decision 2026-06-20-typed-enum-pattern-wins-for-all-enum-shaped.
+      Single scoped vibe ticket with no open architectural decision, so planned
+      via sindri plan mode (mimir skipped). Descriptive-qualifier slug
+      (plan-typed-enum-voicedby) + issue number, continuing the issue-numbered
+      naming convention.
