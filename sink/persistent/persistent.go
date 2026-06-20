@@ -216,7 +216,7 @@ func (s *Sink) Consume(ctx context.Context, p plan.NarrationPlan, res render.Ren
 // best-effort. The original audio.wav (if any) stays untouched.
 func writeAudio(path string, format plan.AudioFormat, segments []wavSegment) (retErr error) {
 	dir := filepathDir(path)
-	tmp, err := os.CreateTemp(dir, ".persistent-audio-*.wav")
+	tmp, err := openTempFile(dir, ".persistent-audio-*.wav")
 	if err != nil {
 		return fmt.Errorf("create tmp audio in %s: %w", dir, err)
 	}

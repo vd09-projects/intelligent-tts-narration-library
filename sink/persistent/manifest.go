@@ -116,7 +116,7 @@ func readManifest(path string) (Manifest, error) {
 // best-effort and the original path stays unchanged.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) (retErr error) {
 	dir := filepathDir(path)
-	tmp, err := os.CreateTemp(dir, ".persistent-*.tmp")
+	tmp, err := openTempFile(dir, ".persistent-*.tmp")
 	if err != nil {
 		return fmt.Errorf("persistent: create tmp in %s: %w", dir, err)
 	}
