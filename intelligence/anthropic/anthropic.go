@@ -27,14 +27,24 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/intelligencetmpl"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 )
+
+// errBodyExcerptMax bounds the bytes of upstream error body we splice
+// into Go-error strings. Long bodies (HTML 502 pages, etc.) bloat logs
+// without adding signal; 512 bytes is enough to carry the canonical
+// {error: {type, message}} JSON and a tail of context.
+const errBodyExcerptMax = 512
 
 // defaultModel is the production default. Direct-API path, Anthropic's
 // smallest current-generation model — cheapest per-token and adequate for
@@ -137,11 +147,106 @@ func New(opts ...Option) (*Adapter, error) {
 
 // Voice implements intelligence.IntelligenceAdapter.
 //
-// Phase 2 stub: returns an error so callers wiring the adapter today
-// fail loudly rather than silently. The real HTTP flow lands in Phase 3
-// (api.go + refusal.go).
+// Flow:
+//  1. Pick the per-class prompt template from a.promptTemplates. No
+//     template for req.Class → Refused (honest no-template path).
+//  2. Render system + user prompts via intelligencetmpl.RenderPrompt.
+//  3. Build the messagesRequest, JSON-marshal it.
+//  4. POST to apiEndpoint with the Anthropic auth + version headers.
+//  5. Non-2xx response → Go error with status + a truncated body
+//     excerpt (caller / pipeline classifier sorts retry-vs-fail).
+//  6. Decode the body; decode failure → Go error.
+//  7. Extract the first text block; no text block → Go error.
+//  8. Run parseRefusal on the text; refusal → Refused result (data,
+//     not error).
+//  9. Otherwise return the text and Model "anthropic@<resp.Model>".
+//
+// Honesty contract (CLAUDE.md, restated): refusals are data; HTTP /
+// auth / decode failures are errors. Phase 5 will wrap the HTTP call
+// in doWithRetry for bounded 429 retry; Phase 4 will wrap in cache
+// lookup/put. The shape established here is the spine for both.
 func (a *Adapter) Voice(ctx context.Context, req intelligence.IntelligenceRequest) (intelligence.IntelligenceResult, error) {
-	_ = ctx
-	_ = req
-	return intelligence.IntelligenceResult{}, errors.New("anthropic: Voice() not yet implemented")
+	tpl, ok := a.promptTemplates[req.Class]
+	if !ok {
+		return intelligence.IntelligenceResult{
+			Refused:     true,
+			RefusalNote: fmt.Sprintf("no prompt template for class %q", string(req.Class)),
+		}, nil
+	}
+
+	system, user := intelligencetmpl.RenderPrompt(tpl, req)
+
+	body, err := json.Marshal(messagesRequest{
+		Model:       a.model,
+		MaxTokens:   a.maxTokens[req.Level],
+		Temperature: a.temperature,
+		System:      system,
+		Messages: []messageInput{
+			{Role: "user", Content: user},
+		},
+	})
+	if err != nil {
+		// Marshal of plain string-bearing structs fails only under
+		// internal package corruption; surface as an error rather than
+		// pretending the call happened.
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: build request: %w", err)
+	}
+	httpReq.Header.Set("x-api-key", a.apiKey)
+	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	httpReq.Header.Set("content-type", "application/json")
+
+	resp, err := a.httpClient.Do(httpReq)
+	if err != nil {
+		// %w preserves context.Canceled / context.DeadlineExceeded for
+		// downstream classifiers, matching mcpsampling's behavior.
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: http do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: http %d: %s", resp.StatusCode, errBodyExcerpt(respBody))
+	}
+
+	var parsed messagesResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return intelligence.IntelligenceResult{}, fmt.Errorf("anthropic: decode response: %w", err)
+	}
+
+	text, ok := firstTextBlock(parsed.Content)
+	if !ok {
+		return intelligence.IntelligenceResult{}, errors.New("anthropic: no text content in response")
+	}
+
+	if note, refused := parseRefusal(text); refused {
+		// Refusals are NOT cached (Phase 4 will skip Put on this branch).
+		return intelligence.IntelligenceResult{
+			Refused:     true,
+			RefusalNote: note,
+		}, nil
+	}
+
+	return intelligence.IntelligenceResult{
+		Text:  text,
+		Model: "anthropic@" + parsed.Model,
+	}, nil
+}
+
+// errBodyExcerpt returns up to errBodyExcerptMax bytes of body for
+// inclusion in error messages. Truncated bodies get a trailing
+// "...(truncated)" marker so log readers know there was more.
+func errBodyExcerpt(b []byte) string {
+	if len(b) <= errBodyExcerptMax {
+		return string(b)
+	}
+	return string(b[:errBodyExcerptMax]) + "...(truncated)"
 }
