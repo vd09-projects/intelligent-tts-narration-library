@@ -380,7 +380,7 @@ func (s *stubNarrator) Narrate(_ context.Context, ref plan.SourceRef, req pipeli
 // supplied stub, returning a cleanup that restores production wiring.
 func withStubPipeline(stub *stubNarrator) func() {
 	orig := newPipeline
-	newPipeline = func(_ string, _ flagSet) narrator { return stub }
+	newPipeline = func(_ string, _ flagSet) pipeline.Narrator { return stub }
 	return func() { newPipeline = orig }
 }
 
@@ -405,7 +405,7 @@ func TestRunNarrate_Block_ValidID_LevelOverride(t *testing.T) {
 	// into PipelineDefaults.Level (the planner default stays at L1).
 	var gotFactoryArgs flagSet
 	origNew := newPipeline
-	newPipeline = func(outDir string, args flagSet) narrator {
+	newPipeline = func(outDir string, args flagSet) pipeline.Narrator {
 		gotFactoryArgs = args
 		return stub
 	}
@@ -648,7 +648,7 @@ func TestRunNarrate_Block_HashMismatchWarning(t *testing.T) {
 func TestRunNarrate_BlockWithPersistent_RoutesToPatchPipeline(t *testing.T) {
 	wholeDocCalls := 0
 	origNew := newPipeline
-	newPipeline = func(_ string, _ flagSet) narrator {
+	newPipeline = func(_ string, _ flagSet) pipeline.Narrator {
 		wholeDocCalls++
 		return &stubNarrator{}
 	}
@@ -656,7 +656,7 @@ func TestRunNarrate_BlockWithPersistent_RoutesToPatchPipeline(t *testing.T) {
 
 	patchCalls := 0
 	origPatch := newPipelineWithSink
-	newPipelineWithSink = func(_ string, _ flagSet, s sink.OutputSink) narrator {
+	newPipelineWithSink = func(_ string, _ flagSet, s sink.OutputSink) pipeline.Narrator {
 		patchCalls++
 		// Drive the capturing sink minimally so runNarrate proceeds to
 		// PatchBlock (which will refuse — outDir is empty — exit 2).

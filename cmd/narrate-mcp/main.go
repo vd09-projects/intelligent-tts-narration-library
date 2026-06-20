@@ -199,13 +199,11 @@ type runDeps struct {
 	run    func(ctx context.Context, args speakArgs) (speakResponse, error)
 }
 
-// narrator — the minimal surface runSpeak needs from a wired pipeline.
-// Pulled out as an interface so tests can substitute the pipeline without
-// spawning Kokoro. Production wires pipeline.Pipeline (which satisfies
-// this interface via its Narrate method). Per Decision v5.
-type narrator interface {
-	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error)
-}
+// The minimal surface runSpeak needs from a wired pipeline is
+// pipeline.Narrator (issue #27 — formerly a private narrator interface
+// duplicated here and in cmd/narrate, per Decision v5). The newPipeline seam
+// returns it so tests can substitute the pipeline without spawning Kokoro;
+// production wires *pipeline.Pipeline.
 
 // newPipeline — package-level factory hook. Production builds the real
 // pipeline.Pipeline; tests swap this var to inject a stub narrator.
@@ -222,7 +220,7 @@ type narrator interface {
 // for text path). Threading it through the seam lets unit tests assert
 // which adapter was wired, and keeps the production composition single-
 // sourced inside this hook.
-var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) narrator {
+var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
 	return pipeline.New(
 		input,
 		intel,

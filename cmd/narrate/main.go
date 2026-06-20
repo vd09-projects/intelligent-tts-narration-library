@@ -108,14 +108,10 @@ type flagSet struct {
 	Intelligence string
 }
 
-// narrator — the minimal pipeline surface runNarrate needs. Pulled out
-// as an interface so the newPipeline seam (and tests) can substitute a
-// stub without spawning Kokoro. Production wires *pipeline.Pipeline
-// (which satisfies this via its Narrate method). Matches cmd/narrate-mcp's
-// Decision v5 seam pattern.
-type narrator interface {
-	Narrate(ctx context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error)
-}
+// The minimal pipeline surface runNarrate needs is pipeline.Narrator
+// (issue #27 — formerly a private narrator interface duplicated here and in
+// cmd/narrate-mcp). The newPipeline seam returns it so tests can substitute a
+// stub without spawning Kokoro; production wires *pipeline.Pipeline.
 
 // newPipeline — package-level factory hook. Production builds the real
 // pipeline.Pipeline; tests swap this var to inject a stub narrator. The
@@ -129,7 +125,7 @@ type narrator interface {
 //     into args.Out). The engine voice id is resolved at composition time
 //     via genderToVoice[args.Gender]; validate() already pins args.Gender
 //     to {female, male} so the lookup is total.
-var newPipeline = func(outDir string, args flagSet) narrator {
+var newPipeline = func(outDir string, args flagSet) pipeline.Narrator {
 	return newPipelineWithSink(outDir, args, chooseSink(args))
 }
 
@@ -138,7 +134,7 @@ var newPipeline = func(outDir string, args flagSet) narrator {
 // chooseSink returns on --block × --sink=persistent) and read the captured
 // sub-plan + sub-result back after Narrate runs. Tests that stub newPipeline
 // keep working; tests that exercise the patch path can stub this seam.
-var newPipelineWithSink = func(outDir string, args flagSet, s sink.OutputSink) narrator {
+var newPipelineWithSink = func(outDir string, args flagSet, s sink.OutputSink) pipeline.Narrator {
 	return pipeline.New(
 		file.New(),
 		chooseIntelligence(args),
@@ -415,7 +411,7 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 	// On every other path the sink is built inside newPipeline as before.
 	patchEligible := args.Block != "" && args.Sink == "persistent"
 	var capturer *capturingSink
-	var pl narrator
+	var pl pipeline.Narrator
 	if patchEligible {
 		capturer = &capturingSink{}
 		pl = newPipelineWithSink(outDir, factoryArgs, capturer)

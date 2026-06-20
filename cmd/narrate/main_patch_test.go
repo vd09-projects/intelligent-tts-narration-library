@@ -112,7 +112,7 @@ func seedPersistentOutDir(t *testing.T) (outDir string, p plan.NarrationPlan) {
 func withPatchPipeline(t *testing.T, p plan.NarrationPlan, blockID string, freshPCM []byte, contentHash string) func() {
 	t.Helper()
 	orig := newPipelineWithSink
-	newPipelineWithSink = func(_ string, _ flagSet, s sink.OutputSink) narrator {
+	newPipelineWithSink = func(_ string, _ flagSet, s sink.OutputSink) pipeline.Narrator {
 		return &patchStub{t: t, sink: s, plan: p, blockID: blockID, freshPCM: freshPCM, docHash: contentHash}
 	}
 	return func() { newPipelineWithSink = orig }
