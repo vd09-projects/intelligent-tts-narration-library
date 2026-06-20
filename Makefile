@@ -1,7 +1,9 @@
-.PHONY: help build build-mcp test test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp sanity clean
+.PHONY: help build build-mcp test test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
+PLAYER_FIXTURE_DIR ?= player/public/fixtures/sample
+PLAYER_FIXTURE_DURATION ?= 2.0
 
 help:
 	@echo "Targets:"
@@ -20,6 +22,13 @@ help:
 	@echo "  run-mcp                — start the MCP stdio server (Ctrl-C to stop)"
 	@echo "  sanity                 — go build + check scripts/kokoro present"
 	@echo "  clean                  — go clean -testcache"
+	@echo ""
+	@echo "Reference player (player/):"
+	@echo "  player-dev             — cd player && pnpm install && pnpm dev"
+	@echo "  player-build           — cd player && pnpm install && pnpm build"
+	@echo "  player-test            — cd player && pnpm install && pnpm test"
+	@echo "  player-fixture-silent  — regenerate $(PLAYER_FIXTURE_DIR)/audio.wav as silent 24kHz mono PCM-16"
+	@echo "  player-fixture-kokoro  — narrate \$$SAMPLE via persistent sink → $(PLAYER_FIXTURE_DIR)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -70,3 +79,23 @@ sanity:
 
 clean:
 	go clean -testcache
+
+# ----- Reference player (player/) ------------------------------------------
+
+player-dev:
+	cd player && pnpm install && pnpm dev
+
+player-build:
+	cd player && pnpm install && pnpm build
+
+player-test:
+	cd player && pnpm install && pnpm test
+
+player-fixture-silent:
+	@mkdir -p $(PLAYER_FIXTURE_DIR)
+	python3 player/public/fixtures/make_silent_wav.py $(PLAYER_FIXTURE_DURATION) $(PLAYER_FIXTURE_DIR)/audio.wav
+
+player-fixture-kokoro:
+	@mkdir -p $(PLAYER_FIXTURE_DIR)
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(PLAYER_FIXTURE_DIR)
+	@echo "Refreshed $(PLAYER_FIXTURE_DIR) from $(SAMPLE)"

@@ -1,0 +1,263 @@
+{
+  "schema_version": "1",
+  "plan_id": "01HZZZFIXTUREPLAYERREF18A",
+  "created_at": "2026-06-20T16:30:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "docs/samples/sample.md",
+    "content_hash": "sha256:fixture-sample-md-deterministic-hash",
+    "adapter": "file"
+  },
+  "defaults": { "level": 1, "voice": "af_bella", "locale": "en" },
+  "blocks": [
+    {
+      "id": "b1",
+      "order": 1,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "# What this library does and why"
+      },
+      "segments": [
+        { "id": "s1", "kind": "speech", "text": "Heading. What this library does and why." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b2",
+      "order": 2,
+      "class": "prose",
+      "level": 1,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 3,
+        "end_line": 3,
+        "raw_excerpt": "This document is the canonical demo input for the vertical-slice CLI..."
+      },
+      "segments": [
+        {
+          "id": "s2",
+          "kind": "speech",
+          "text": "This document is the canonical demo input for the vertical-slice CLI. The narrator reads each block by class — headings as headings, prose as prose, code as code, lists item by item, tables row by row — and refuses to fabricate when no intelligence adapter is wired. The honest refusal you will hear later in this document is a feature, not a bug."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "verbatim",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    },
+    {
+      "id": "b3",
+      "order": 3,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 5,
+        "end_line": 5,
+        "raw_excerpt": "## The premise"
+      },
+      "segments": [
+        { "id": "s3", "kind": "speech", "text": "Subheading. The premise." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b4",
+      "order": 4,
+      "class": "prose",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 7,
+        "end_line": 7,
+        "raw_excerpt": "Most text-to-speech systems either spell every character out loud..."
+      },
+      "refusal": {
+        "reason": "no_intelligence_available",
+        "message": "Prose block over 120 words; no intelligence adapter wired, so no gist could be produced. Run with --intelligence to voice this block.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 7,
+          "end_line": 7
+        }
+      },
+      "provenance": { "voiced_by": "planner", "deterministic": true, "level_asked": 1 }
+    },
+    {
+      "id": "b5",
+      "order": 5,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 15,
+        "end_line": 15,
+        "raw_excerpt": "## Example code"
+      },
+      "segments": [
+        { "id": "s5", "kind": "speech", "text": "Subheading. Example code." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b6",
+      "order": 6,
+      "class": "code",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 17,
+        "end_line": 26,
+        "raw_excerpt": "```go\npl := pipeline.New(...)```"
+      },
+      "segments": [
+        {
+          "id": "s6",
+          "kind": "speech",
+          "text": "Go code block, ten lines. Declares pl as pipeline.New with file adapter, no intelligence, sherpa renderer, ephemeral sink, and default level L1. Then calls pl.Narrate with voice af_bella."
+        }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b7",
+      "order": 7,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 28,
+        "end_line": 28,
+        "raw_excerpt": "## Defaults at a glance"
+      },
+      "segments": [
+        { "id": "s7", "kind": "speech", "text": "Subheading. Defaults at a glance." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b8",
+      "order": 8,
+      "class": "table",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 30,
+        "end_line": 35,
+        "raw_excerpt": "| Knob | Default | Notes |..."
+      },
+      "segments": [
+        {
+          "id": "s8",
+          "kind": "speech",
+          "text": "Table with four rows. Knob Level, default L1 gist, re-requestable per block. Knob Voice, default af_bella, Kokoro female, switch to am_michael via --gender male. Knob Sink, default ephemeral, plays via afplay, persistent sink is phase two. Knob Locale, default en, multilingual is deferred."
+        }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b9",
+      "order": 9,
+      "class": "heading",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 37,
+        "end_line": 37,
+        "raw_excerpt": "## What you should notice"
+      },
+      "segments": [
+        { "id": "s9", "kind": "speech", "text": "Subheading. What you should notice." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b10",
+      "order": 10,
+      "class": "list",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 39,
+        "end_line": 42,
+        "raw_excerpt": "- The headings each become their own short utterance..."
+      },
+      "segments": [
+        {
+          "id": "s10",
+          "kind": "speech",
+          "text": "Bulleted list with four items. One: headings each become their own short utterance, distinct from the prose around them. Two: the code block above is read by structure, not character by character. Three: the table reads row by row, with the header announced once. Four: the bare image below is refused honestly — you will hear a brief notice naming the source line, not a fabricated description."
+        }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b11",
+      "order": 11,
+      "class": "unknown",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 44,
+        "end_line": 44,
+        "raw_excerpt": "![chart](nonexistent-chart.png)"
+      },
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "Bare image on line 44 of docs/samples/sample.md has no alt text and no caption; the planner cannot describe it without an intelligence adapter with vision support. Wire one to voice this block.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 44,
+          "end_line": 44
+        }
+      },
+      "provenance": { "voiced_by": "planner", "deterministic": true }
+    },
+    {
+      "id": "b12",
+      "order": 12,
+      "class": "prose",
+      "level": 1,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 46,
+        "end_line": 46,
+        "raw_excerpt": "The block immediately above is a bare Markdown image..."
+      },
+      "segments": [
+        {
+          "id": "s12",
+          "kind": "speech",
+          "text": "The block immediately above is a bare Markdown image with no surrounding caption or alt text. The planner has no way to see what the image depicts. The refusal you just heard is the honesty rule at work. If a future intelligence adapter is wired in with vision support, that adapter could describe the image and turn the refusal into a voiced block. Until then, silence-with-explanation beats invention."
+        }
+      ],
+      "provenance": { "voiced_by": "verbatim", "deterministic": true, "level_asked": 1 }
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "no_intelligence_adapter",
+      "severity": "info",
+      "message": "No intelligence adapter wired; prose blocks read verbatim where short enough or refused where over threshold."
+    }
+  ]
+}
