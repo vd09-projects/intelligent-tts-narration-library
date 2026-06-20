@@ -1,4 +1,4 @@
-package mcpsampling
+package intelligencetmpl
 
 import (
 	"strings"
@@ -68,7 +68,7 @@ func TestRenderPrompt_SystemContainsRefusalContract(t *testing.T) {
 	}
 	for c, tpl := range DefaultPromptTemplates {
 		req.Class = c
-		sys, _ := renderPrompt(tpl, req)
+		sys, _ := RenderPrompt(tpl, req)
 		if !strings.Contains(sys, "__REFUSE__") {
 			t.Errorf("class %q: rendered system prompt missing __REFUSE__ token:\n%s", string(c), sys)
 		}
@@ -115,7 +115,7 @@ func TestRenderPrompt_PerClass(t *testing.T) {
 				Level:     tc.level,
 				Locale:    "en",
 			}
-			_, user := renderPrompt(tpl, req)
+			_, user := RenderPrompt(tpl, req)
 			if !strings.Contains(user, "BLOCKTEXT_MARKER_42") {
 				t.Errorf("user prompt missing block text:\n%s", user)
 			}
@@ -144,7 +144,7 @@ func TestRenderPrompt_NoFacts(t *testing.T) {
 		Level:     plan.L1,
 		Locale:    "en",
 	}
-	_, user := renderPrompt(tpl, req)
+	_, user := RenderPrompt(tpl, req)
 	if !strings.Contains(user, "Facts: (none)") {
 		t.Errorf("missing '(none)' fallback for empty Facts:\n%s", user)
 	}
@@ -156,7 +156,7 @@ func TestRenderPrompt_NoFacts(t *testing.T) {
 func TestRenderPrompt_FallbackWhenUserTemplateMissing(t *testing.T) {
 	t.Parallel()
 	tpl := PromptTemplate{
-		System: "sys " + honestySystemPreamble,
+		System: "sys " + HonestySystemPreamble,
 		UserL1: "ONLY_L1 {{.BlockText}}",
 	}
 	req := intelligence.IntelligenceRequest{
@@ -165,7 +165,7 @@ func TestRenderPrompt_FallbackWhenUserTemplateMissing(t *testing.T) {
 		Level:     plan.L3,
 		Locale:    "en",
 	}
-	_, user := renderPrompt(tpl, req)
+	_, user := RenderPrompt(tpl, req)
 	if !strings.Contains(user, "ONLY_L1 blk") {
 		t.Errorf("expected fallback to UserL1; got:\n%s", user)
 	}

@@ -37,6 +37,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
+	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
+	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/anthropic"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
@@ -44,6 +46,12 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
+
+// anthropicAPIKeyEnv is the environment variable the anthropic adapter
+// reads its API key from. Named here so validate() and chooseIntelligence
+// agree, and so tests can document the binding without grepping for the
+// string literal.
+const anthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
 
 // genderToVoice — phase-one mapping per CLAUDE.md domain rules + sindri
 // patterns A15 amendment. Female default per problem statement.
@@ -89,6 +97,11 @@ type flagSet struct {
 	// --sink=persistent; rejected when --sink=ephemeral (the ephemeral sink
 	// owns its own temp-dir lifecycle). Per issue #16.
 	Out string
+	// Intelligence is the optional adapter that enriches prose past the
+	// deterministic / verbatim threshold. "none" (the default) keeps the
+	// existing nil-adapter degraded-or-refused path; "anthropic" wires
+	// the direct-API adapter from intelligence/anthropic. Per issue #15.
+	Intelligence string
 }
 
 // narrator — the minimal pipeline surface runNarrate needs. Pulled out
@@ -115,7 +128,7 @@ type narrator interface {
 var newPipeline = func(outDir string, args flagSet) narrator {
 	return pipeline.New(
 		file.New(),
-		nil, // no intelligence adapter — phase one deterministic + degraded path.
+		chooseIntelligence(args),
 		sherpa.New(sherpa.EngineConfig{}),
 		chooseSink(args),
 		pipeline.PipelineDefaults{
@@ -124,6 +137,34 @@ var newPipeline = func(outDir string, args flagSet) narrator {
 			Locale: "en",
 		},
 	)
+}
+
+// chooseIntelligence picks the intelligence.IntelligenceAdapter per
+// args.Intelligence. "none" → nil (preserves the existing degraded /
+// refused path for prose past the verbatim threshold). "anthropic" →
+// intelligence/anthropic adapter constructed from the ANTHROPIC_API_KEY
+// env var. Validate() rejects "anthropic" with an empty env, so by the
+// time chooseIntelligence runs the env is present; the construction
+// error is wrapped in a panic for visibility — the only path that would
+// trigger it is an inconsistent validate(), which is a programmer bug.
+//
+// Per issue #15: cmd/narrate-mcp is untouched (mcpsampling already
+// gives MCP clients intelligence for free).
+func chooseIntelligence(args flagSet) intelligence.IntelligenceAdapter {
+	if args.Intelligence == "anthropic" {
+		a, err := anthropic.New(
+			anthropic.WithAPIKey(os.Getenv(anthropicAPIKeyEnv)),
+			anthropic.WithCache(anthropic.NewInMemoryCache()),
+		)
+		if err != nil {
+			// Validate() guarantees the env var is set before this point —
+			// a non-nil error here means validate() drifted from its
+			// contract, which is a composition-root bug.
+			panic(fmt.Sprintf("anthropic adapter construction failed after validation: %v", err))
+		}
+		return a
+	}
+	return nil
 }
 
 // chooseSink picks the OutputSink implementation per args.Sink. Pulled out
@@ -190,6 +231,7 @@ func newRootCmd(deps runDeps) *cobra.Command {
 	cmd.Flags().StringVar(&args.Block, "block", "", "re-render a single block by id (from the roster); --level is the target level for that block")
 	cmd.Flags().StringVar(&args.ExpectedContentHash, "expected-content-hash", "", "warn on stderr if the document content_hash differs from this value (only meaningful with --block)")
 	cmd.Flags().StringVar(&args.Out, "out", "", "output directory (required when --sink=persistent; rejected with --sink=ephemeral)")
+	cmd.Flags().StringVar(&args.Intelligence, "intelligence", "none", "intelligence adapter: none | anthropic (anthropic requires "+anthropicAPIKeyEnv+")")
 
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
@@ -236,6 +278,24 @@ func (a flagSet) validate() error {
 	// refuse, don't corrupt.
 	if a.Block != "" && a.Sink == "persistent" {
 		return fmt.Errorf("--block and --sink=persistent are not yet supported together (see issue #28 for block-level patch into a persistent outDir)")
+	}
+	// Issue #15 — wire --intelligence:
+	//   "none" (the default) keeps the existing nil-adapter degraded path.
+	//   "anthropic" requires ANTHROPIC_API_KEY. Per Decision v6, a missing
+	//   env var with the user opting in is a flag-validation error (exit 2)
+	//   rather than a silent fallback to "none" or a runtime error. Same
+	//   precedent as --block × --sink=persistent: caller-correctable input
+	//   that should not silently morph into something else.
+	switch a.Intelligence {
+	case "", "none", "anthropic":
+		// "" is the zero-value alias for "none" — keeps unit tests that
+		// construct flagSet directly without setting every flag working,
+		// and matches the user-visible "no intelligence adapter" intent.
+	default:
+		return fmt.Errorf("--intelligence must be none or anthropic (got %q)", a.Intelligence)
+	}
+	if a.Intelligence == "anthropic" && os.Getenv(anthropicAPIKeyEnv) == "" {
+		return fmt.Errorf("--intelligence=anthropic requires %s to be set", anthropicAPIKeyEnv)
 	}
 	return nil
 }
