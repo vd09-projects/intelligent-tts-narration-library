@@ -156,3 +156,14 @@ scopes:
       via sindri plan mode (mimir skipped). Descriptive-qualifier slug
       (plan-typed-enum-voicedby) + issue number, continuing the issue-numbered
       naming convention.
+  - slug: sink-ephemeral-polish-11
+    title: sink/ephemeral polish — review-findings v1 suggestions (issue #11)
+    created: 2026-06-21
+    reasoning: |
+      Plan + build + review + close cycle for GitHub issue #11 (polish bucket
+      rolling up the 9 non-blocking suggestions from sink-ephemeral-issue-6's
+      review-findings v1 APPROVE; parent #6). Distinct from sink-ephemeral-issue-6
+      (the parent build scope) — this is the follow-up polish ticket, so it gets
+      its own scope. Descriptive-qualifier slug (sink-ephemeral-polish) + issue
+      number, continuing the issue-numbered naming convention. Priority low,
+      rune:vibe; mimir planned (multi-AC bucket benefits from per-phase grouping).

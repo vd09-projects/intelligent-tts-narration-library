@@ -3,6 +3,7 @@ package ephemeral
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -219,63 +220,139 @@ func TestSink_Consume_TableDriven(t *testing.T) {
 	}
 }
 
-// TestSink_ZeroValueUsable — Sink{} must work with defaults.
-func TestSink_ZeroValueUsable(t *testing.T) {
-	withStubPlay(t, func(_ context.Context, binary, _ string, timeout time.Duration) error {
-		if binary != defaultAfplayPath {
-			t.Errorf("binary: got %q, want default %q", binary, defaultAfplayPath)
-		}
-		if timeout != defaultPerBlockTimeout {
-			t.Errorf("timeout: got %v, want default %v", timeout, defaultPerBlockTimeout)
-		}
+// TestSink_Construction — the two construction axes (zero-value defaults and
+// functional-option overrides) resolve the binary + per-block timeout the seam
+// receives. Folds the former TestSink_ZeroValueUsable + TestSink_OptionsOverride
+// into one table so the construction seam is asserted in a single place.
+func TestSink_Construction(t *testing.T) {
+	cases := []struct {
+		name        string
+		newSink     func() *Sink // nil → zero-value Sink{}
+		wantBinary  string
+		wantTimeout time.Duration
+	}{
+		{
+			name:        "zero value uses defaults",
+			newSink:     nil,
+			wantBinary:  defaultAfplayPath,
+			wantTimeout: DefaultPerBlockTimeout,
+		},
+		{
+			name: "options override defaults",
+			newSink: func() *Sink {
+				return New(
+					WithAfplayPath("/opt/homebrew/bin/afplay"),
+					WithPerBlockTimeout(5*time.Second),
+				)
+			},
+			wantBinary:  "/opt/homebrew/bin/afplay",
+			wantTimeout: 5 * time.Second,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withStubPlay(t, func(_ context.Context, binary, _ string, timeout time.Duration) error {
+				if binary != tc.wantBinary {
+					t.Errorf("binary: got %q, want %q", binary, tc.wantBinary)
+				}
+				if timeout != tc.wantTimeout {
+					t.Errorf("timeout: got %v, want %v", timeout, tc.wantTimeout)
+				}
+				return nil
+			})
+
+			var s *Sink
+			if tc.newSink != nil {
+				s = tc.newSink()
+			} else {
+				s = &Sink{} // zero value
+			}
+
+			res := render.RenderResult{
+				Audio: render.AudioStream{Dir: "/tmp/audio"},
+				Timeline: plan.Timeline{
+					Blocks: []plan.BlockTiming{
+						{BlockID: "b001", StartMs: 0, EndMs: 500, AudioRef: "a.wav"},
+					},
+				},
+			}
+			rec, err := s.Consume(context.Background(), plan.NarrationPlan{}, res)
+			if err != nil {
+				t.Fatalf("Consume: %v", err)
+			}
+			if rec.BlocksPlayed != 1 || rec.TotalDurationMs != 500 {
+				t.Errorf("receipt: got %+v, want {TotalDurationMs:500, BlocksPlayed:1}", rec)
+			}
+		})
+	}
+}
+
+// TestSink_Consume_EmptyAudioDir — a non-empty AudioRef with no Audio.Dir is a
+// mis-wired pipeline; Consume must fail loud before invoking the play seam.
+func TestSink_Consume_EmptyAudioDir(t *testing.T) {
+	withStubPlay(t, func(context.Context, string, string, time.Duration) error {
+		t.Fatal("play should not be called when Audio.Dir is empty")
 		return nil
 	})
 
-	var s Sink // zero value
 	res := render.RenderResult{
+		Audio: render.AudioStream{Dir: ""}, // missing dir
 		Timeline: plan.Timeline{
 			Blocks: []plan.BlockTiming{
 				{BlockID: "b001", StartMs: 0, EndMs: 500, AudioRef: "a.wav"},
 			},
 		},
 	}
-	rec, err := s.Consume(context.Background(), plan.NarrationPlan{}, res)
-	if err != nil {
-		t.Fatalf("Consume: %v", err)
+	_, err := New().Consume(context.Background(), plan.NarrationPlan{}, res)
+	if err == nil {
+		t.Fatal("want error for empty Audio.Dir with non-empty AudioRef, got nil")
 	}
-	if rec.BlocksPlayed != 1 || rec.TotalDurationMs != 500 {
-		t.Errorf("receipt: got %+v, want {500, 1}", rec)
+	if !contains(err.Error(), "empty Audio.Dir") || !contains(err.Error(), "b001") {
+		t.Errorf("err should name the cause and block id, got %q", err.Error())
 	}
 }
 
-// TestSink_OptionsOverride — functional options propagate.
-func TestSink_OptionsOverride(t *testing.T) {
-	wantBin := "/opt/homebrew/bin/afplay"
-	wantTimeout := 5 * time.Second
-
-	withStubPlay(t, func(_ context.Context, binary, _ string, timeout time.Duration) error {
-		if binary != wantBin {
-			t.Errorf("binary: got %q, want %q", binary, wantBin)
-		}
-		if timeout != wantTimeout {
-			t.Errorf("timeout: got %v, want %v", timeout, wantTimeout)
-		}
-		return nil
-	})
-
-	s := New(
-		WithAfplayPath(wantBin),
-		WithPerBlockTimeout(wantTimeout),
-	)
-	res := render.RenderResult{
-		Timeline: plan.Timeline{
-			Blocks: []plan.BlockTiming{
-				{BlockID: "b001", StartMs: 0, EndMs: 100, AudioRef: "x.wav"},
-			},
-		},
+// TestPlayWithAfplay_CtxCancel_Joins — direct test of playWithAfplay's real
+// cancel branch (not the stub seam). Uses /bin/sleep as a controllable slow
+// "player": canceling the parent ctx mid-run must return an error that both
+// reports the cancellation (errors.Is context.Canceled) AND carries the killed
+// process's own exit error (the errors.Join from AC#5). Skipped where
+// /bin/sleep is absent so non-unix dev boxes do not false-fail.
+func TestPlayWithAfplay_CtxCancel_Joins(t *testing.T) {
+	const sleepBin = "/bin/sleep"
+	if _, err := os.Stat(sleepBin); err != nil {
+		t.Skipf("%s not available (%v); skipping real-cancel test", sleepBin, err)
 	}
-	if _, err := s.Consume(context.Background(), plan.NarrationPlan{}, res); err != nil {
-		t.Fatalf("Consume: %v", err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after the child starts so we exercise the
+	// callCtx.Done() branch rather than a clean exit.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	// binary=/bin/sleep, path="60" → execs `/bin/sleep 60`, blocking well past
+	// the cancel. Generous per-block timeout so the timeout path doesn't fire
+	// first — we want the parent-cancel path.
+	err := playWithAfplay(ctx, sleepBin, "60", 30*time.Second)
+	if err == nil {
+		t.Fatal("want error from cancelled sleep, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want errors.Is(err, context.Canceled), got %v", err)
+	}
+	// The join must surface the process's own death too (e.g. "signal: killed").
+	// errors.Join with a non-nil second arg wraps multiple errors; assert the
+	// joined error is more than the bare context error.
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		t.Fatalf("want a joined (multi) error carrying the wait error, got single error %v", err)
+	}
+	errs := joined.Unwrap()
+	if len(errs) < 2 {
+		t.Fatalf("want joined error to carry both ctx and wait errors, got %d: %v", len(errs), err)
 	}
 }
 

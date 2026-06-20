@@ -22,6 +22,7 @@ package ephemeral
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -32,16 +33,28 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 )
 
-// Defaults (mirroring render/sherpa style — single source of truth here).
-const (
-	defaultAfplayPath      = "afplay"
-	defaultPerBlockTimeout = 60 * time.Second
+// defaultAfplayPath is the binary resolved from PATH when AfplayPath is empty.
+const defaultAfplayPath = "afplay"
 
-	// killGrace is how long playWithAfplay waits for cmd.Wait() to return
-	// after the context is cancelled before fall-back SIGKILL'ing the
-	// process. Mirrors the plan: 200ms.
-	killGrace = 200 * time.Millisecond
-)
+// DefaultPerBlockTimeout caps a single afplay invocation when a Sink is
+// constructed with a zero or negative PerBlockTimeout. Exported so callers
+// tuning their own ephemeral sinks (longer clips, slower devices) can derive
+// from the package default instead of hard-coding 60s.
+const DefaultPerBlockTimeout = 60 * time.Second
+
+// killGrace is how long playWithAfplay waits, after the context is cancelled,
+// for cmd.Wait() to return before issuing a backstop SIGKILL.
+//
+// Why a grace window at all: exec.CommandContext already wires the context to
+// the process — when callCtx is cancelled it sends its OWN SIGKILL and reaps
+// the child asynchronously. killGrace is the time we give that built-in kill
+// to land before we redundantly Kill() the process ourselves. In the common
+// case the child is reaped within the window and the backstop never fires;
+// the explicit Kill() exists only for the pathological case where the
+// built-in kill is slow or the process ignores it. Either way we then drain
+// the wait channel, so the wait goroutine is guaranteed to exit (no leak).
+// 200ms is comfortably longer than afplay's observed teardown.
+const killGrace = 200 * time.Millisecond
 
 // Sink is the concrete sink.OutputSink that plays each block's WAV
 // through afplay. Zero value is usable — fields take effect only when
@@ -93,6 +106,14 @@ type playFunc func(ctx context.Context, binary, path string, timeout time.Durati
 // overwrite this var to inject deterministic behavior (success, error,
 // blocking-until-cancel). The seam is package-level (not a Sink field)
 // to keep the public Sink struct minimal and the zero-value path clean.
+//
+// Concurrency: this seam is NOT safe for parallel use. Consume invokes it
+// sequentially (one block at a time), and because the seam is a package-level
+// var, a test that swaps it races any other goroutine running Consume. Tests
+// that swap play must not run in parallel (see withStubPlay), and callers must
+// not run two Consume calls concurrently across a swap. Production playback is
+// inherently serial — afplay drives the single local audio device — so this
+// constraint costs nothing at runtime.
 var play playFunc = playWithAfplay
 
 // Consume plays each block in res.Timeline.Blocks in plan order through
@@ -110,7 +131,7 @@ func (s *Sink) Consume(ctx context.Context, _ plan.NarrationPlan, res render.Ren
 	}
 	perBlock := s.PerBlockTimeout
 	if perBlock <= 0 {
-		perBlock = defaultPerBlockTimeout
+		perBlock = DefaultPerBlockTimeout
 	}
 
 	var receipt sink.SinkReceipt
@@ -130,6 +151,16 @@ func (s *Sink) Consume(ctx context.Context, _ plan.NarrationPlan, res render.Ren
 			// receipt mirrors plan truth.
 			receipt.TotalDurationMs += planned
 			continue
+		}
+
+		// Defensive guard: a non-empty AudioRef with no Audio.Dir means the
+		// renderer's "Dir holds the per-block WAVs" invariant was violated
+		// upstream (mis-wired pipeline). filepath.Join would silently produce
+		// a relative path and afplay would fail with an opaque error; fail
+		// loud and early instead. This is an error, not a refusal — refusals
+		// are for readable-but-unvoiceable source, not backend mis-wiring.
+		if res.Audio.Dir == "" {
+			return receipt, fmt.Errorf("sink/ephemeral: empty Audio.Dir with AudioRef %q for block %s", blk.AudioRef, blk.BlockID)
 		}
 
 		path := filepath.Join(res.Audio.Dir, blk.AudioRef)
@@ -191,16 +222,23 @@ func playWithAfplay(ctx context.Context, binary, path string, timeout time.Durat
 	case <-callCtx.Done():
 		// Give exec.CommandContext's own SIGKILL a moment to land; if it
 		// hasn't been reaped by killGrace, kill explicitly. Either way,
-		// drain done so the goroutine exits cleanly.
+		// drain done so the goroutine exits cleanly, capturing the wait
+		// error so we can join it onto the ctx error below.
+		var waitErr error
 		select {
-		case <-done:
+		case waitErr = <-done:
 			// Already reaped.
 		case <-time.After(killGrace):
 			if cmd.Process != nil {
 				_ = cmd.Process.Kill()
 			}
-			<-done
+			waitErr = <-done
 		}
-		return callCtx.Err()
+		// Join the cancellation cause with the process's own exit error
+		// (typically "signal: killed") instead of discarding the latter, so
+		// callers can see BOTH why we stopped (ctx) and how the child died.
+		// errors.Join keeps errors.Is(err, context.Canceled / DeadlineExceeded)
+		// matching, and drops waitErr when it is nil (clean reap).
+		return errors.Join(callCtx.Err(), waitErr)
 	}
 }

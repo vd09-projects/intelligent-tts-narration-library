@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-ephemeral-ctx-cancel-joined-error-not-ctx-only
+    title: "Ephemeral sink ctx-cancel surfaces a joined error (ctx cause + process exit), not ctx-only"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [sink/ephemeral, ctx-cancel, errors.Join, error-handling, issue-11]
+    path: convention/2026-06-21-ephemeral-ctx-cancel-joined-error-not-ctx-only.md
+    summary: "playWithAfplay's cancel branch returns errors.Join(callCtx.Err(), waitErr) — the drained cmd.Wait() result (typically 'signal: killed') joined onto the ctx cause — instead of discarding it and returning only callCtx.Err(). Callers see both why playback stopped and how the child died. errors.Join preserves errors.Is(err, context.Canceled/DeadlineExceeded) (existing ctx-cancel test stays green) and drops waitErr when nil (clean reap collapses to bare ctx error). Fixed at the playWithAfplay layer, not Consume (Consume's between-blocks ctx-precedence unchanged). Locked by TestPlayWithAfplay_CtxCancel_Joins (asserts >=2 errors via Unwrap() []error). Rejected: ctx.Err()-only (loses process-death signal); fmt.Errorf %w (single chain can't carry two independent causes)."
+  - id: 2026-06-21-ephemeral-testdata-skip-message-not-wav-fixture
+    title: "sink/ephemeral testdata stays a smoke-test skip message, no committed WAV fixture"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [sink/ephemeral, testdata, golden-audio, smoke-test, build-tags, issue-11]
+    path: convention/2026-06-21-ephemeral-testdata-skip-message-not-wav-fixture.md
+    summary: "Issue #11 AC#7 offered a WAV fixture OR a smoke-test skip message; chose the skip-message branch and keep testdata/.gitkeep. The //go:build manual smoke test t.Skip's with a generate-via-scripts/kokoro hint when testdata/5s.wav is absent, so the manual-tag run stays green on a fresh checkout and no binary lands in the repo. Aligns with CLAUDE.md 'no golden audio (validated by ear during /verify)'. Recorded so a future contributor doesn't 'fix' the missing fixture by committing a binary. Rejected: commit a real/synthetic WAV."
   - id: 2026-06-21-anthropic-non-2xx-raw-body-excerpt-not-decoded
     title: "Anthropic non-2xx errors surface a raw body excerpt, not a decoded error type"
     date: 2026-06-21
