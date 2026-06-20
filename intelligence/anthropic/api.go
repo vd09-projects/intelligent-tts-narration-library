@@ -15,6 +15,34 @@ const apiEndpoint = "https://api.anthropic.com/v1/messages"
 // in one place; bumped deliberately when API behavior changes warrant.
 const anthropicVersion = "2023-06-01"
 
+// anthropicBetaOAuth is the anthropic-beta header value sent only on the
+// Bearer auth path (issue #32). It opts the request into the OAuth flow
+// that accepts a `claude setup-token` subscription token on
+// Authorization: Bearer. Pinned as a named constant so a future upstream
+// bump is a one-line edit. Not sent on the default x-api-key path.
+const anthropicBetaOAuth = "oauth-2025-04-20"
+
+// oatTokenPrefix is the prefix Anthropic assigns to subscription OAuth
+// tokens minted by `claude setup-token`. New auto-detects Bearer auth on
+// this prefix (unless an explicit auth option was set). Distinct from the
+// Console-key prefix sk-ant-api03, so the auto-detect cannot misfire on a
+// Console key.
+const oatTokenPrefix = "sk-ant-oat01"
+
+// authMode selects which header carries the credential on the wire. The
+// zero value (authAPIKey) is the default x-api-key path — a freshly
+// constructed Adapter with no auth option keeps the pre-#32 behavior.
+type authMode int
+
+const (
+	// authAPIKey sends the credential as the x-api-key header (default).
+	authAPIKey authMode = iota
+	// authBearer sends the credential as Authorization: Bearer plus the
+	// anthropic-beta: oauth-2025-04-20 header. Opt-in via WithBearerAuth
+	// or auto-detected on the oatTokenPrefix.
+	authBearer
+)
+
 // messagesRequest is the POST body for /v1/messages. The shape mirrors
 // the public API: model, max_tokens, optional temperature, optional
 // system, and a list of role/content messages. The Anthropic API

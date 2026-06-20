@@ -103,3 +103,17 @@ scopes:
       loaders → playback hook → fixture → components → Makefile → smoke
       test → README → manual verify). Issue-numbered naming continues the
       convention.
+  - slug: intelligence-anthropic-oauth-bearer-32
+    title: opt-in OAuth Bearer auth for subscription tokens (issue #32)
+    created: 2026-06-20
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #32
+      (intelligence/anthropic — add opt-in Authorization: Bearer auth mode so
+      a claude setup-token subscription OAuth token (sk-ant-oat01-) works
+      against POST /v1/messages; x-api-key stays the default, Bearer is
+      opt-in via WithBearerAuth() + auto-detected on the sk-ant-oat01 prefix).
+      Distinct slug from intelligence-anthropic-issue-15 (the base adapter) —
+      this is a follow-on auth feature on the same package, so an explicit
+      oauth-bearer qualifier rather than reusing the issue-15 scope. Plan via
+      mimir task depth + auth-authz overlay. Issue-numbered naming continues
+      the convention.
