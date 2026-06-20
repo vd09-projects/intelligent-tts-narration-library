@@ -117,3 +117,17 @@ scopes:
       oauth-bearer qualifier rather than reusing the issue-15 scope. Plan via
       mimir task depth + auth-authz overlay. Issue-numbered naming continues
       the convention.
+  - slug: sink-persistent-block-patch-28
+    title: sink/persistent --block patch into existing persistent outDir (issue #28)
+    created: 2026-06-21
+    reasoning: |
+      Plan + build + review + iterate + harvest cycle for GitHub issue #28
+      (feat(sink/persistent): --block patch into an existing persistent
+      outDir). Reopens Decision v1.9.0 (block-with-persistent-sink-rejected-
+      at-flag-time) from issue #16: replaces the flag-time blanket refusal
+      with a guarded PatchBlock splice path that re-renders one block and
+      rewrites audio.wav + manifest.json + plan.json atomically. Distinct
+      slug from sink-persistent-issue-16 (the base feature) — this is a
+      follow-on patch-path feature on the same package, so an explicit
+      block-patch qualifier rather than reusing the issue-16 scope.
+      Issue-numbered naming continues the convention.
