@@ -235,3 +235,29 @@ func (e Emphasis) IsValid() bool {
 	}
 	return false
 }
+
+// VoicedBy — how a block's spoken text was produced (Provenance.VoicedBy).
+// Closes the enum-typing sweep across plan/: the last freeform enum-shaped
+// field. Unknown values round-trip (additive-compatible).
+type VoicedBy string
+
+const (
+	// VoicedByPlanner — spoken text produced deterministically by the planner
+	// (structured classes, headings, lists, etc.).
+	VoicedByPlanner VoicedBy = "planner"
+	// VoicedByIntelligence — spoken text produced by the intelligence adapter
+	// (L2/L3 prose gist or summary).
+	VoicedByIntelligence VoicedBy = "intelligence"
+	// VoicedByVerbatim — source text read verbatim (e.g. short prose without an
+	// intelligence adapter, degraded fidelity).
+	VoicedByVerbatim VoicedBy = "verbatim"
+)
+
+// IsValid reports whether v is a recognized VoicedBy value.
+func (v VoicedBy) IsValid() bool {
+	switch v {
+	case VoicedByPlanner, VoicedByIntelligence, VoicedByVerbatim:
+		return true
+	}
+	return false
+}

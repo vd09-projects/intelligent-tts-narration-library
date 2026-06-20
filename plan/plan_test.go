@@ -325,6 +325,30 @@ func TestEmphasis_IsValid(t *testing.T) {
 	}
 }
 
+func TestVoicedBy_IsValid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		v    VoicedBy
+		want bool
+	}{
+		{"planner", VoicedByPlanner, true},
+		{"intelligence", VoicedByIntelligence, true},
+		{"verbatim", VoicedByVerbatim, true},
+		{"robot", "robot", false},
+		{"empty", "", false},
+		{"uppercase", "Planner", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.v.IsValid(); got != tt.want {
+				t.Errorf("VoicedBy(%q).IsValid() = %v, want %v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
+
 // ----------------------------------------------------------------------------
 // SchemaVersion / IsCompatible — table-driven.
 // ----------------------------------------------------------------------------
@@ -723,6 +747,16 @@ func TestForwardCompat_UnknownEnumValuesRoundTrip(t *testing.T) {
 				var v VoicingDirective
 				err := json.Unmarshal(raw, &v)
 				return v, v.Emphasis.IsValid(), err
+			},
+		},
+		{
+			name:          "provenance_voiced_by",
+			raw:           `{"voiced_by":"future_voiced_by_v1_5","deterministic":false}`,
+			expectLiteral: "future_voiced_by_v1_5",
+			decode: func(raw []byte) (any, bool, error) {
+				var pr Provenance
+				err := json.Unmarshal(raw, &pr)
+				return pr, pr.VoicedBy.IsValid(), err
 			},
 		},
 	}

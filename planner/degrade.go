@@ -168,7 +168,7 @@ func degradeStructuredDownshift(rb rawBlock, cls plan.Class, target plan.Level, 
 
 // provenanceWith — fill in the run-time fields the level() result left
 // blank (VoicedBy, Deterministic, LevelAsked).
-func provenanceWith(p plan.Provenance, voicedBy string, deterministic bool, asked plan.Level) plan.Provenance {
+func provenanceWith(p plan.Provenance, voicedBy plan.VoicedBy, deterministic bool, asked plan.Level) plan.Provenance {
 	if p.VoicedBy == "" {
 		p.VoicedBy = voicedBy
 	}
