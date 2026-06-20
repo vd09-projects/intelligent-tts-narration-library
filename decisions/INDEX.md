@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-anthropic-non-2xx-raw-body-excerpt-not-decoded
+    title: "Anthropic non-2xx errors surface a raw body excerpt, not a decoded error type"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [intelligence/anthropic, error-handling, non-2xx, convention, issue-34, dead-code]
+    path: convention/2026-06-21-anthropic-non-2xx-raw-body-excerpt-not-decoded.md
+    summary: "Issue #34 lint cleanup removed the never-wired errorResponse type from intelligence/anthropic/api.go. The adapter's non-2xx error surface is the raw truncated body excerpt (errBodyExcerpt, <=512 bytes via fmt.Errorf in Voice), not a decoded {type, error:{message}} object — the upstream pipeline classifier owns retry-vs-fail, so the adapter only needs a human-readable error string. Behavior locked by TestVoice_Unauthorized401 / TestVoice_BadRequest400. Rejected: decode errorResponse.error.message (would change tested error strings; deferred as a future feature if adapter-local error-type branching is ever needed)."
   - id: 2026-06-21-persistent-block-patch-manifest-index-derived-ranges
     title: "--block patch into a persistent outDir: manifest is the INDEX, byte ranges are DERIVED"
     date: 2026-06-21
