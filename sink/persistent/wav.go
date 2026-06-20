@@ -91,6 +91,13 @@ func (e *formatMismatchError) Error() string {
 		e.Path, e.Field, e.Expected, e.Got)
 }
 
+// Is lets errors.Is(err, ErrFormatMismatch) match any *formatMismatchError, so
+// the composition root can classify format-mismatch refusals (exit 2) without
+// importing the unexported type (issue #28).
+func (e *formatMismatchError) Is(target error) bool {
+	return target == ErrFormatMismatch
+}
+
 // ErrInvalidWAV is the sentinel returned when a file does not parse as a
 // valid RIFF/WAVE container (missing magic, truncated, etc.). Distinct
 // from formatMismatchError so callers can tell "the file is broken" from

@@ -136,20 +136,31 @@ func TestFlagSet_Validate_EphemeralWithOutRejected(t *testing.T) {
 	}
 }
 
-// TestFlagSet_Validate_BlockWithPersistentRejected covers Decision v1.9.0:
-// --block X with --sink=persistent is refused at flag-validation. Allowing
-// the combination today would have the persistent sink quietly overwrite
-// audio.wav with a single-block render (the planner only re-plans one
-// block in --block mode), silently destroying the multi-block output.
-func TestFlagSet_Validate_BlockWithPersistentRejected(t *testing.T) {
+// TestFlagSet_Validate_BlockWithPersistentNowAllowed covers issue #28
+// (superseding Decision v1.9.0): --block X with --sink=persistent is now a
+// valid combination at flag-validation when --out is supplied — it patches one
+// block into the existing persistent outDir. The only flag-time guard is the
+// pre-existing "--out required with --sink=persistent"; the authoritative
+// "nothing to patch" decision lives at runtime in persistent.PatchBlock.
+func TestFlagSet_Validate_BlockWithPersistentNowAllowed(t *testing.T) {
 	t.Parallel()
 	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: "/tmp/persist", Block: "b001"}
+	if err := a.validate(); err != nil {
+		t.Fatalf("validate rejected --block × --sink=persistent with --out (should be allowed now): %v", err)
+	}
+}
+
+// TestFlagSet_Validate_BlockWithPersistentNoOut still refuses the combination
+// when --out is missing — there is no outDir to patch.
+func TestFlagSet_Validate_BlockWithPersistentNoOut(t *testing.T) {
+	t.Parallel()
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Block: "b001"}
 	err := a.validate()
 	if err == nil {
-		t.Fatal("validate accepted --block with --sink=persistent")
+		t.Fatal("validate accepted --block × --sink=persistent without --out")
 	}
-	if !strings.Contains(err.Error(), "--block") || !strings.Contains(err.Error(), "--sink=persistent") {
-		t.Errorf("error should mention both --block and --sink=persistent; got %q", err.Error())
+	if !strings.Contains(err.Error(), "--out is required with --sink=persistent") {
+		t.Errorf("error should mention required --out; got %q", err.Error())
 	}
 }
 
@@ -628,37 +639,46 @@ func TestRunNarrate_Block_HashMismatchWarning(t *testing.T) {
 	}
 }
 
-// TestRunNarrate_BlockWithPersistent_RejectedAtFlagTime covers Decision
-// v1.9.0 (issue #16): --block X with --sink=persistent is refused at
-// flag-validation BEFORE any pipeline wiring. The stub must not be called.
-// Pivoted from the prior persistent-fast-error test (#7-era).
-func TestRunNarrate_BlockWithPersistent_RejectedAtFlagTime(t *testing.T) {
-	calls := 0
-	stub := &stubNarrator{}
+// TestRunNarrate_BlockWithPersistent_RoutesToPatchPipeline covers issue #28
+// (superseding Decision v1.9.0): --block X with --sink=persistent + --out is no
+// longer refused at flag-validation. runNarrate must NOT route the whole-doc
+// newPipeline factory; it builds the patch pipeline via newPipelineWithSink
+// (handed a capturing sink). This test asserts the patch seam is the one
+// invoked and the whole-doc seam is not. The full patch outcome (exit codes)
+// is covered in main_patch_test.go.
+func TestRunNarrate_BlockWithPersistent_RoutesToPatchPipeline(t *testing.T) {
+	wholeDocCalls := 0
 	origNew := newPipeline
 	newPipeline = func(_ string, _ flagSet) narrator {
-		calls++
-		return stub
+		wholeDocCalls++
+		return &stubNarrator{}
 	}
 	defer func() { newPipeline = origNew }()
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	patchCalls := 0
+	origPatch := newPipelineWithSink
+	newPipelineWithSink = func(_ string, _ flagSet, s sink.OutputSink) narrator {
+		patchCalls++
+		// Drive the capturing sink minimally so runNarrate proceeds to
+		// PatchBlock (which will refuse — outDir is empty — exit 2).
+		return &stubNarrator{}
+	}
+	defer func() { newPipelineWithSink = origPatch }()
+
 	err := runNarrate(context.Background(),
-		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: "/tmp/persist", Block: "b001"},
-		stdout, stderr,
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: t.TempDir(), Block: "b001"},
+		&bytes.Buffer{}, &bytes.Buffer{},
 	)
-	if err == nil {
-		t.Fatal("runNarrate accepted --block with --sink=persistent")
+	// The combination is accepted past flag-validation: any error here is NOT
+	// the flag-validation refusal.
+	if errors.Is(err, errFlagValidation) {
+		t.Errorf("--block × --sink=persistent (+ --out) must not be a flag-validation error now; got %v", err)
 	}
-	if !errors.Is(err, errFlagValidation) {
-		t.Errorf("error did not wrap errFlagValidation; got %v", err)
+	if patchCalls != 1 {
+		t.Errorf("patch pipeline seam (newPipelineWithSink) calls: got %d want 1", patchCalls)
 	}
-	if !strings.Contains(err.Error(), "--block") || !strings.Contains(err.Error(), "--sink=persistent") {
-		t.Errorf("error message should mention both flags; got %q", err.Error())
-	}
-	if calls != 0 {
-		t.Errorf("newPipeline must not be invoked when flag-validation rejects; got %d calls", calls)
+	if wholeDocCalls != 0 {
+		t.Errorf("whole-doc newPipeline must NOT be used on the patch path; got %d calls", wholeDocCalls)
 	}
 }
 

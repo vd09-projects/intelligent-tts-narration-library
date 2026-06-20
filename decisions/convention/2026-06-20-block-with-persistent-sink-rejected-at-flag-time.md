@@ -1,11 +1,18 @@
 # --block X with --sink=persistent rejected at flag-validation
 
 - **Date:** 2026-06-20
-- **Status:** accepted
+- **Status:** superseded
+- **Superseded-by:** [--block patch into a persistent outDir: manifest is the INDEX, byte ranges are DERIVED](2026-06-21-persistent-block-patch-manifest-index-derived-ranges.md) (issue #28, 2026-06-21)
 - **Category:** convention
 - **Tags:** [cmd, narrate, persistent-sink, block-rerender, flag-validation, honesty-rule, issue-16]
 - **Owner:** vd
 - **Scope:** issue-16
+
+> **Superseded (2026-06-21, issue #28).** The block-level patch into an existing
+> persistent outDir now ships (`sink/persistent.PatchBlock`). The flag-time
+> refusal this decision recorded was deleted; the combination is allowed when
+> `--out` is supplied, with runtime refusals (stale / container-mismatch /
+> nothing-to-patch) preserving the honesty rule. See the superseding decision.
 
 ## Context
 

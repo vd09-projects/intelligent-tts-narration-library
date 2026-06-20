@@ -19,11 +19,14 @@
 //	Decision (v3) — tradeoff: superseded by issue #16. The persistent sink is
 //	  wired in #16; --sink=persistent now runs the real implementation. --out
 //	  is required when --sink=persistent (validated at flag time).
-//	Decision v1.9.0 (issue #16) — convention: experimental. --block X with
-//	  --sink=persistent is rejected at flag-validation. Block-level patch into
-//	  an existing persistent outDir is a follow-up; refusing the combination
-//	  preserves the honesty rule (don't silently overwrite audio.wav with a
-//	  single-block output).
+//	Decision v1.9.0 (issue #16) — SUPERSEDED by issue #28. --block X with
+//	  --sink=persistent was rejected at flag-validation as a placeholder; the
+//	  block-level patch into an existing persistent outDir now ships
+//	  (sink/persistent.PatchBlock). The combination is allowed when --out is
+//	  supplied; the honesty rule is preserved by patching (every other block
+//	  byte-preserved) instead of overwriting audio.wav with a single-block
+//	  output. The "nothing to patch" / stale / container-mismatch refusals are
+//	  enforced at runtime in PatchBlock (all exit 2).
 package main
 
 import (
@@ -41,6 +44,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/anthropic"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
@@ -126,11 +130,20 @@ type narrator interface {
 //     via genderToVoice[args.Gender]; validate() already pins args.Gender
 //     to {female, male} so the lookup is total.
 var newPipeline = func(outDir string, args flagSet) narrator {
+	return newPipelineWithSink(outDir, args, chooseSink(args))
+}
+
+// newPipelineWithSink builds a pipeline with an explicit sink. Pulled out so
+// the issue-#28 patch path can hold a reference to the capturing sink (which
+// chooseSink returns on --block × --sink=persistent) and read the captured
+// sub-plan + sub-result back after Narrate runs. Tests that stub newPipeline
+// keep working; tests that exercise the patch path can stub this seam.
+var newPipelineWithSink = func(outDir string, args flagSet, s sink.OutputSink) narrator {
 	return pipeline.New(
 		file.New(),
 		chooseIntelligence(args),
 		sherpa.New(sherpa.EngineConfig{}),
-		chooseSink(args),
+		s,
 		pipeline.PipelineDefaults{
 			Level:  plan.Level(args.Level),
 			OutDir: outDir,
@@ -185,6 +198,17 @@ func chooseIntelligence(args flagSet) intelligence.IntelligenceAdapter {
 // genderToVoice would trip the test (and surface this branch).
 func chooseSink(args flagSet) sink.OutputSink {
 	if args.Sink == "persistent" {
+		// Issue #28 — a --block patch into a persistent outDir must NOT route
+		// the persistent sink through the pipeline: the single-block path hands
+		// the sink a one-block sub-plan + sub-result, and persistent.Consume
+		// would faithfully concatenate a ONE-block audio.wav, overwriting every
+		// other block. Instead we capture the re-rendered block (sub-plan +
+		// sub-result) without writing, and runNarrate calls persistent.PatchBlock
+		// to splice it into the existing outDir. The composition root owns the
+		// branch; the sink owns the bytes (planner-task.md "Where it lives").
+		if args.Block != "" {
+			return &capturingSink{}
+		}
 		voice, ok := genderToVoice[args.Gender]
 		if !ok {
 			// Should be unreachable — validate() pins Gender. Sentinel:
@@ -196,6 +220,33 @@ func chooseSink(args flagSet) sink.OutputSink {
 		return persistent.New(args.Out, persistent.WithVoice(voice))
 	}
 	return ephemeral.New()
+}
+
+// capturingSink is a non-writing OutputSink used on the --block ×
+// --sink=persistent patch path (issue #28). The pipeline re-renders the
+// target block and calls Consume with the one-block sub-plan + sub-result;
+// capturingSink records them (and never touches the filesystem) so runNarrate
+// can hand them to persistent.PatchBlock. The returned receipt reports the
+// single re-rendered block so the pipeline's NarrateResult is well-formed; the
+// authoritative patch receipt comes from PatchBlock.
+type capturingSink struct {
+	plan     plan.NarrationPlan
+	result   render.RenderResult
+	captured bool
+}
+
+func (c *capturingSink) Consume(_ context.Context, p plan.NarrationPlan, res render.RenderResult) (sink.SinkReceipt, error) {
+	c.plan = p
+	c.result = res
+	c.captured = true
+	var rec sink.SinkReceipt
+	for _, bt := range res.Timeline.Blocks {
+		rec.TotalDurationMs += int64(bt.EndMs - bt.StartMs)
+		if bt.AudioRef != "" {
+			rec.BlocksPlayed++
+		}
+	}
+	return rec, nil
 }
 
 // runDeps — exit-fn + IO seams injected by tests. Production uses
@@ -276,16 +327,16 @@ func (a flagSet) validate() error {
 	if a.Sink == "ephemeral" && a.Out != "" {
 		return fmt.Errorf("--out is only meaningful with --sink=persistent")
 	}
-	// Decision v1.9.0 (issue #16): --block X with --sink=persistent is
-	// rejected. The block-level patch into an existing persistent outDir
-	// is tracked as issue #28; allowing the combination today would let
-	// pipeline.Narrate return a single-block RenderResult that the
-	// persistent sink would faithfully concatenate into a one-block
-	// audio.wav, silently overwriting the multi-block output. Honesty rule:
-	// refuse, don't corrupt.
-	if a.Block != "" && a.Sink == "persistent" {
-		return fmt.Errorf("--block and --sink=persistent are not yet supported together (see issue #28 for block-level patch into a persistent outDir)")
-	}
+	// Issue #28 — --block X with --sink=persistent is now SUPPORTED: it
+	// patches one block's audio into an existing persistent outDir
+	// (sink/persistent.PatchBlock), every other block byte-preserved. The
+	// Decision v1.9.0 blanket flag-time refusal (and its old error string)
+	// were deleted here, not bypassed. The narrowed flag-time guard is only
+	// "--out must be supplied" — already enforced above by the
+	// --sink=persistent requires --out check. The authoritative
+	// "nothing to patch" decision (dir missing / no manifest) lives at
+	// runtime in persistent.PatchBlock (ErrNothingToPatch), so a present-but-
+	// empty --out refuses with a precise reason rather than a blanket guess.
 	// Issue #15 — wire --intelligence:
 	//   "none" (the default) keeps the existing nil-adapter degraded path.
 	//   "anthropic" requires ANTHROPIC_API_KEY. Per Decision v6, a missing
@@ -357,7 +408,20 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 	if args.Block != "" {
 		factoryArgs.Level = 1
 	}
-	pl := newPipeline(outDir, factoryArgs)
+
+	// Issue #28 — patch path detection. On --block × --sink=persistent we wire
+	// a capturing sink we keep a handle to, so after Narrate re-renders the
+	// block we can splice it into the existing outDir via persistent.PatchBlock.
+	// On every other path the sink is built inside newPipeline as before.
+	patchEligible := args.Block != "" && args.Sink == "persistent"
+	var capturer *capturingSink
+	var pl narrator
+	if patchEligible {
+		capturer = &capturingSink{}
+		pl = newPipelineWithSink(outDir, factoryArgs, capturer)
+	} else {
+		pl = newPipeline(outDir, factoryArgs)
+	}
 
 	req := pipeline.NarrateRequest{
 		Voice:               genderToVoice[args.Gender],
@@ -383,6 +447,30 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 			return fmt.Errorf("%w: %s", errBlockNotFound, args.Block)
 		}
 		return err
+	}
+
+	// Issue #28 — patch commit. Narrate re-rendered the target block into the
+	// capturing sink (no bytes written). Splice it into the existing persistent
+	// outDir: every other block byte-preserved, all three files written
+	// atomically (PatchBlock owns the bytes + the refusal taxonomy). The
+	// patch receipt supersedes the pipeline receipt for the stdout summary.
+	if patchEligible {
+		if !capturer.captured {
+			return fmt.Errorf("internal: patch path produced no captured render result for block %s", args.Block)
+		}
+		rec, perr := persistent.PatchBlock(
+			ctx, args.Out, capturer.plan, capturer.result, args.Block,
+			persistent.WithVoice(genderToVoice[args.Gender]),
+		)
+		if perr != nil {
+			// PatchBlock refusals (ErrNothingToPatch / ErrStalePatch /
+			// ErrContentHashMismatch / ErrUnknownBlock / ErrContainerMismatch /
+			// format mismatch) carry their own sentinels; exitCodeFor maps them
+			// to exit 2. A corrupt manifest / unreadable WAV surfaces as a plain
+			// error → exit 1. Return as-is so the classifier sees the sentinel.
+			return perr
+		}
+		result.SinkReceipt = rec
 	}
 
 	if result.BlockHashMismatch != nil {
@@ -486,9 +574,22 @@ func runMain(deps runDeps) {
 //
 // Per issue #16, --sink=persistent without --out now routes through
 // errFlagValidation (flag-time check) rather than its own sentinel.
+//
+// Per issue #28, the persistent --block patch refusals all route to exit 2
+// (caller-correctable: nothing to patch, stale outDir, cross-document hash,
+// unknown block id, container/manifest mismatch, or re-render format mismatch).
+// A corrupt manifest or structurally unreadable WAV inside PatchBlock surfaces
+// as a plain error and falls through to exit 1 (system/pipeline failure) — it
+// carries none of these sentinels.
 func exitCodeFor(err error) int {
 	if errors.Is(err, errFlagValidation) ||
-		errors.Is(err, errBlockNotFound) {
+		errors.Is(err, errBlockNotFound) ||
+		errors.Is(err, persistent.ErrNothingToPatch) ||
+		errors.Is(err, persistent.ErrStalePatch) ||
+		errors.Is(err, persistent.ErrContentHashMismatch) ||
+		errors.Is(err, persistent.ErrUnknownBlock) ||
+		errors.Is(err, persistent.ErrContainerMismatch) ||
+		errors.Is(err, persistent.ErrFormatMismatch) {
 		return 2
 	}
 	return 1
