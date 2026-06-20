@@ -336,7 +336,7 @@ func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipe
 func withStubPipeline(t *testing.T, stub *stubNarrator) func() {
 	t.Helper()
 	orig := newPipeline
-	newPipeline = func(outDir string, _ speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) narrator {
+	newPipeline = func(outDir string, _ speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
 		stub.gotOutDir = outDir
 		stub.gotInput = input
 		stub.gotIntel = intel

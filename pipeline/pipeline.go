@@ -106,6 +106,24 @@ type NarrateResult struct {
 	BlockHashMismatch *BlockHashMismatch
 }
 
+// Narrator is the minimal narration surface the binaries depend on — one
+// method, matching (*Pipeline).Narrate. Extracted here (issue #27) so the
+// composition roots (cmd/narrate, cmd/narrate-mcp) share a single interface
+// declaration instead of each maintaining a private copy that must track
+// Narrate's signature in lock-step. *Pipeline is the only production
+// implementation; tests inject stubs through their newPipeline seams.
+//
+// Lives in pipeline/ (the composition root) rather than plan/ — plan/ imports
+// nothing from this project (CLAUDE.md invariant), and NarrateRequest /
+// NarrateResult are pipeline-owned types anyway.
+type Narrator interface {
+	Narrate(ctx context.Context, ref plan.SourceRef, req NarrateRequest) (NarrateResult, error)
+}
+
+// Compile-time assertion: *Pipeline satisfies Narrator. Keeps the interface
+// and the concrete method from drifting apart.
+var _ Narrator = (*Pipeline)(nil)
+
 // Pipeline wires the four edges into a single Narrate call.
 //
 // Intelligence may be nil — the planner takes the deterministic + degraded
