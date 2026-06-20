@@ -8,6 +8,24 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-mcptext-uri-sha256-cross-check
+    title: "mcptext URI carries sha256(text); adapter cross-checks on Read"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [adapter, mcptext, uri, sha256, content-hash, composition-root, issue-17]
+    path: convention/2026-06-20-mcptext-uri-sha256-cross-check.md
+    summary: "Composition root assembles URI as mcp://inline/<hex-sha256-of-text>; adapter.Read computes sha256(a.text) and rejects on scheme mismatch or hex-suffix mismatch. Mismatch is a terminal error (wiring bug), not a refusal. Catches the class of composition-root bugs where caller computes the URI from one string and constructs New(other). URIFor helper exported so there is one URI-assembly routine. Supersedes 2026-06-19-text-arg-transient-sentinel."
+
+  - id: 2026-06-20-adapter-offsetmap-duplication-deferred-extraction
+    title: "adapter offset-map line walker duplicated between file + mcptext; shared adapterutil deferred"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [adapter, mcptext, file, offsetmap, duplication, speculative-abstraction, issue-17]
+    path: convention/2026-06-20-adapter-offsetmap-duplication-deferred-extraction.md
+    summary: "buildOffsetMap + estimateLineCount (~30 lines) duplicated byte-for-byte between adapter/file and adapter/mcptext rather than lifted to a shared adapterutil package. Two consumers is too thin a base for speculative abstraction; lift when the third byte-emitting adapter (ocr) lands and informs the helper's signature. Both packages carry source-level docstrings pointing at this decision; mirrored test fixtures guard against drift."
+
   - id: 2026-06-20-pipeline-block-rerender-uses-document-hash
     title: "Pipeline block re-render uses document-level content_hash"
     date: 2026-06-20
@@ -74,11 +92,12 @@ decisions:
   - id: 2026-06-19-text-arg-transient-sentinel
     title: "text arg as transient sentinel — fast-error until ticket #17 lands"
     date: 2026-06-19
-    status: accepted
+    status: superseded
+    superseded_by: 2026-06-20-mcptext-uri-sha256-cross-check
     category: convention
     tags: [cmd/narrate-mcp, mcp, text-arg, transient-sentinel, honesty-rule, phase-one, issue-12]
     path: convention/2026-06-19-text-arg-transient-sentinel.md
-    summary: "text arg stays in the schema for forward-compat; handler fast-errors with errTextNotImplemented until mcptext adapter (#17) lands. Honest contract over silent fallback."
+    summary: "text arg stays in the schema for forward-compat; handler fast-errors with errTextNotImplemented until mcptext adapter (#17) lands. Honest contract over silent fallback. Superseded 2026-06-20 by mcptext adapter landing — sentinel removed, text resolves end-to-end."
 
   - id: 2026-06-19-mcp-tool-family-narrate-namespace
     title: "MCP tool family — narrate.* namespace"

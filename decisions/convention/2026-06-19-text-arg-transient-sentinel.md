@@ -1,7 +1,8 @@
 # `text` arg as transient sentinel — fast-error until ticket #17 lands
 
 - **Date:** 2026-06-19
-- **Status:** accepted
+- **Status:** superseded
+- **Superseded by:** [mcptext URI carries sha256(text); adapter cross-checks on Read](2026-06-20-mcptext-uri-sha256-cross-check.md) (2026-06-20, ticket #17)
 - **Category:** convention
 - **Tags:** [cmd/narrate-mcp, mcp, text-arg, transient-sentinel, honesty-rule, phase-one, issue-12]
 - **Owner:** vd
@@ -29,9 +30,10 @@ When ticket #17 lands, the sentinel is removed and the validate() XOR branch rou
 
 ## Related decisions
 
+- [mcptext URI carries sha256(text); adapter cross-checks on Read](2026-06-20-mcptext-uri-sha256-cross-check.md) — supersedes this decision. The transient sentinel was removed; the `text` arg now resolves end-to-end via `adapter/mcptext`, with the URI hash cross-check replacing the fast-error as the honesty-rule guard for the inline-text path.
 - decisions/convention/2026-06-19-mcp-error-classifier-caller-vs-internal-split.md
 - decisions/tradeoff/2026-06-18-persistent-sink-deferred-fast-error.md
 
 ## Revisit trigger
 
-Ticket #17 (mcptext in-memory adapter) — that ticket removes this sentinel and supersedes this decision.
+Triggered — ticket #17 landed (commit 9cb6e40). Sentinel removed; this decision is now historical context for *why* the schema field stayed in place during the gap between #12 and #17.
