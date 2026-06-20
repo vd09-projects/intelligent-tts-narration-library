@@ -68,10 +68,10 @@ type Block struct {
 
 // Provenance — how this block's spoken text was produced (design doc §2.2).
 type Provenance struct {
-	VoicedBy      string `json:"voiced_by"` // "planner" | "intelligence" | "verbatim"
-	Deterministic bool   `json:"deterministic"`
-	Model         string `json:"model,omitempty"`
-	LevelAsked    Level  `json:"level_asked,omitempty"`
+	VoicedBy      VoicedBy `json:"voiced_by"`
+	Deterministic bool     `json:"deterministic"`
+	Model         string   `json:"model,omitempty"`
+	LevelAsked    Level    `json:"level_asked,omitempty"`
 }
 
 // Segment — what the renderer actually speaks (design doc §2.3).

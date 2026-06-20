@@ -329,9 +329,9 @@ decisions:
     date: 2026-06-20
     status: accepted
     category: schema
-    tags: [plan, enum, severity, sayas, emphasis, ssml, additive-compatible, refactor, issue-10, issue-13]
+    tags: [plan, enum, severity, sayas, emphasis, voicedby, ssml, additive-compatible, refactor, issue-10, issue-13, issue-23]
     path: schema/2026-06-20-typed-enum-pattern-wins-for-all-enum-shaped.md
-    summary: "Adopt typed string alias + IsValid() pattern for Severity, SayAs, Emphasis — the three remaining freeform enum-shaped fields. Severity intentionally 2-valued; pipeline-stopping uses Go error per CLAUDE.md honesty rule. Wire format unchanged, additive-compat preserved. Rejected freeform-with-docs (Option B) and hybrid (Option C). Closes #10; validating use case #13."
+    summary: "Adopt typed string alias + IsValid() pattern for all enum-shaped fields. Severity intentionally 2-valued; pipeline-stopping uses Go error per CLAUDE.md honesty rule. Wire format unchanged, additive-compat preserved. Rejected freeform-with-docs (Option B) and hybrid (Option C). Closes #10; validating use case #13. Amendment (#23): the sweep was actually off by one — Provenance.VoicedBy was a tenth field in plan.go that #10 missed; #23 typed it, so all TEN enum-shaped fields now uniform, zero bare-string-with-comment remaining."
 
   - id: 2026-06-19-runspeak-newpipeline-composition-seam
     title: "runSpeak composition seam — newPipeline factory hook"
