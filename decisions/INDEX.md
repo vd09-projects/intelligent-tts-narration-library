@@ -8,6 +8,15 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-oauth-bearer-subscription-token-as-api-credential
+    title: "Repurpose claude setup-token OAuth token as a raw-API credential via opt-in Bearer auth"
+    date: 2026-06-21
+    status: accepted
+    category: tradeoff
+    tags: [intelligence/anthropic, auth, credentials, oauth, bearer, x-api-key, tos, issue-32]
+    path: tradeoff/2026-06-21-oauth-bearer-subscription-token-as-api-credential.md
+    summary: "Adapter gains an opt-in Authorization: Bearer auth mode (+ anthropic-beta: oauth-2025-04-20) so a claude setup-token subscription OAuth token (sk-ant-oat01-) authenticates against /v1/messages. x-api-key stays the default and is auto-overridden to Bearer on the sk-ant-oat01 prefix; explicit WithBearerAuth wins. Accepted with a documented ToS gray-area caveat (ref anthropics/claude-code#1785) — opt-in default is the mitigation."
+
   - id: 2026-06-21-player-source-pane-uses-sibling-source-md
     title: "Player source pane consumes sibling source.md (not reconstruction from raw_excerpt)"
     date: 2026-06-21
