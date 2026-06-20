@@ -9,16 +9,18 @@ import (
 
 // TestInvariant_OnlyDependsOnPlanAndIntelligence asserts that nothing
 // under intelligence/mcpsampling imports another package from this module
-// except plan/ and the parent intelligence/. The subpackage is a concrete
-// IntelligenceAdapter living under the parent contract package; importing
-// planner/, pipeline/, an edge adapter, or a cmd/ entry point would
-// invert the dependency direction CLAUDE.md mandates.
+// except plan/, the parent intelligence/, and internal/intelligencetmpl/
+// (the shared per-class prompt-template pkg lifted in issue #15 Phase 1).
+// The subpackage is a concrete IntelligenceAdapter living under the
+// parent contract package; importing planner/, pipeline/, an edge
+// adapter, or a cmd/ entry point would invert the dependency direction
+// CLAUDE.md mandates.
 //
 // Mirrors intelligence/deps_test.go scoped to this subpackage. Shells
 // `go list -deps` and scans for module-qualified deps; allowlist =
-// {self, plan/, intelligence/}. External (non-modulePath) deps are
-// unrestricted by design — same convention as the parent test (the MCP
-// SDK is a non-modulePath dep and is allowed).
+// {self, plan/, intelligence/, internal/intelligencetmpl/}. External
+// (non-modulePath) deps are unrestricted by design — same convention as
+// the parent test (the MCP SDK is a non-modulePath dep and is allowed).
 func TestInvariant_OnlyDependsOnPlanAndIntelligence(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -29,6 +31,7 @@ func TestInvariant_OnlyDependsOnPlanAndIntelligence(t *testing.T) {
 	const selfPackage = modulePath + "/intelligence/mcpsampling"
 	const planPackage = modulePath + "/plan"
 	const intelligencePackage = modulePath + "/intelligence"
+	const intelligenceTmplPackage = modulePath + "/internal/intelligencetmpl"
 
 	out, err := exec.Command("go", "list", "-deps", selfPackage).Output()
 	if err != nil {
@@ -39,9 +42,10 @@ func TestInvariant_OnlyDependsOnPlanAndIntelligence(t *testing.T) {
 	}
 
 	allowed := map[string]bool{
-		selfPackage:         true,
-		planPackage:         true,
-		intelligencePackage: true,
+		selfPackage:             true,
+		planPackage:             true,
+		intelligencePackage:     true,
+		intelligenceTmplPackage: true,
 	}
 	var violations []string
 
@@ -61,7 +65,7 @@ func TestInvariant_OnlyDependsOnPlanAndIntelligence(t *testing.T) {
 	}
 
 	if len(violations) > 0 {
-		t.Fatalf("intelligence/mcpsampling may only import plan/ and intelligence/, found %d other internal deps:\n  %s",
+		t.Fatalf("intelligence/mcpsampling may only import plan/, intelligence/, and internal/intelligencetmpl/, found %d other internal deps:\n  %s",
 			len(violations), strings.Join(violations, "\n  "))
 	}
 }
