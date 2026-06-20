@@ -95,7 +95,12 @@ func TestRoot_MissingFile_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestRunNarrate_PersistentSink_ReturnsKnownError(t *testing.T) {
+// TestRunNarrate_PersistentSinkWithoutOut_RejectsAtFlagValidation pivots
+// the prior "persistent fast-error" test (issue #7 era) to the new
+// behavior landed in issue #16: --sink=persistent without --out is a
+// flag-validation error with a specific message. Exit routing is now via
+// errFlagValidation rather than its own sentinel.
+func TestRunNarrate_PersistentSinkWithoutOut_RejectsAtFlagValidation(t *testing.T) {
 	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -103,10 +108,45 @@ func TestRunNarrate_PersistentSink_ReturnsKnownError(t *testing.T) {
 
 	err := runNarrate(context.Background(), args, stdout, stderr)
 	if err == nil {
-		t.Fatal("runNarrate returned nil for --sink=persistent")
+		t.Fatal("runNarrate returned nil for --sink=persistent without --out")
 	}
-	if err.Error() != persistentNotImplementedMsg {
-		t.Errorf("persistent-sink error message: got %q want %q", err.Error(), persistentNotImplementedMsg)
+	if !errors.Is(err, errFlagValidation) {
+		t.Errorf("error should wrap errFlagValidation; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "--out is required with --sink=persistent") {
+		t.Errorf("error message should mention required --out; got %q", err.Error())
+	}
+}
+
+// TestFlagSet_Validate_EphemeralWithOutRejected covers the converse: an
+// ephemeral sink with --out is rejected because the ephemeral sink owns
+// its own temp dir and honoring --out would silently waste it.
+func TestFlagSet_Validate_EphemeralWithOutRejected(t *testing.T) {
+	t.Parallel()
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Out: "/tmp/anywhere"}
+	err := a.validate()
+	if err == nil {
+		t.Fatal("validate accepted --sink=ephemeral with --out")
+	}
+	if !strings.Contains(err.Error(), "--out is only meaningful with --sink=persistent") {
+		t.Errorf("error message wording drift: %q", err.Error())
+	}
+}
+
+// TestFlagSet_Validate_BlockWithPersistentRejected covers Decision v1.9.0:
+// --block X with --sink=persistent is refused at flag-validation. Allowing
+// the combination today would have the persistent sink quietly overwrite
+// audio.wav with a single-block render (the planner only re-plans one
+// block in --block mode), silently destroying the multi-block output.
+func TestFlagSet_Validate_BlockWithPersistentRejected(t *testing.T) {
+	t.Parallel()
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: "/tmp/persist", Block: "b001"}
+	err := a.validate()
+	if err == nil {
+		t.Fatal("validate accepted --block with --sink=persistent")
+	}
+	if !strings.Contains(err.Error(), "--block") || !strings.Contains(err.Error(), "--sink=persistent") {
+		t.Errorf("error should mention both --block and --sink=persistent; got %q", err.Error())
 	}
 }
 
@@ -186,11 +226,12 @@ func TestRunNarrate_FlagErrorWrapsSentinel(t *testing.T) {
 	}
 }
 
-func TestRunNarrate_PersistentSink_WrapsSentinel(t *testing.T) {
+// TestRunNarrate_PersistentSinkWithoutOut_RoutesToFlagValidation pins
+// that the --out missing case routes through errFlagValidation, so
+// main()'s exit fork reaches exit code 2 via that sentinel rather than
+// requiring a dedicated persistent sentinel (which was removed in #16).
+func TestRunNarrate_PersistentSinkWithoutOut_RoutesToFlagValidation(t *testing.T) {
 	t.Parallel()
-	// Confirms persistent-sink path is errors.Is-compatible with
-	// errPersistentNotImplemented so main()'s exit routing (B1 fix)
-	// reaches exit code 2 without relying on string equality.
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	err := runNarrate(context.Background(),
@@ -198,10 +239,13 @@ func TestRunNarrate_PersistentSink_WrapsSentinel(t *testing.T) {
 		stdout, stderr,
 	)
 	if err == nil {
-		t.Fatal("runNarrate accepted --sink=persistent")
+		t.Fatal("runNarrate accepted --sink=persistent without --out")
 	}
-	if !errors.Is(err, errPersistentNotImplemented) {
-		t.Errorf("runNarrate persistent-sink error did not match errPersistentNotImplemented; got %v", err)
+	if !errors.Is(err, errFlagValidation) {
+		t.Errorf("error did not wrap errFlagValidation; got %v", err)
+	}
+	if got := exitCodeFor(err); got != 2 {
+		t.Errorf("exit code: got %d want 2", got)
 	}
 }
 
@@ -214,8 +258,6 @@ func TestExitCodeFor_RoutesFlagErrorsTo2(t *testing.T) {
 	}{
 		{"flag validation", errFlagValidation, 2},
 		{"flag validation wrapped", fmt.Errorf("wrap: %w", errFlagValidation), 2},
-		{"persistent sink", errPersistentNotImplemented, 2},
-		{"persistent sink wrapped", fmt.Errorf("wrap: %w", errPersistentNotImplemented), 2},
 		{"block not found", errBlockNotFound, 2},
 		{"block not found wrapped", fmt.Errorf("%w: bogus", errBlockNotFound), 2},
 		{"pipeline error", errors.New("adapter: stat: file not found"), 1},
@@ -516,14 +558,13 @@ func TestRunNarrate_Block_HashMismatchWarning(t *testing.T) {
 	}
 }
 
-// TestRunNarrate_Block_PersistentSinkRegression covers (e): existing
-// --sink=persistent fast-error fires BEFORE --block reasoning. The
-// stub MUST NOT be called — validation order is load-bearing per the
-// locked plan (persistent-sink AC scoped to #16).
-func TestRunNarrate_Block_PersistentSinkRegression(t *testing.T) {
+// TestRunNarrate_BlockWithPersistent_RejectedAtFlagTime covers Decision
+// v1.9.0 (issue #16): --block X with --sink=persistent is refused at
+// flag-validation BEFORE any pipeline wiring. The stub must not be called.
+// Pivoted from the prior persistent-fast-error test (#7-era).
+func TestRunNarrate_BlockWithPersistent_RejectedAtFlagTime(t *testing.T) {
 	calls := 0
 	stub := &stubNarrator{}
-	// Wrap the stub so we can detect a call without exposing an int field.
 	origNew := newPipeline
 	newPipeline = func(_ string, _ flagSet) narrator {
 		calls++
@@ -534,17 +575,20 @@ func TestRunNarrate_Block_PersistentSinkRegression(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	err := runNarrate(context.Background(),
-		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Block: "b001"},
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: "/tmp/persist", Block: "b001"},
 		stdout, stderr,
 	)
 	if err == nil {
-		t.Fatal("runNarrate accepted --sink=persistent even with --block")
+		t.Fatal("runNarrate accepted --block with --sink=persistent")
 	}
-	if !errors.Is(err, errPersistentNotImplemented) {
-		t.Errorf("error: got %v, want errPersistentNotImplemented", err)
+	if !errors.Is(err, errFlagValidation) {
+		t.Errorf("error did not wrap errFlagValidation; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "--block") || !strings.Contains(err.Error(), "--sink=persistent") {
+		t.Errorf("error message should mention both flags; got %q", err.Error())
 	}
 	if calls != 0 {
-		t.Errorf("newPipeline must not be invoked when --sink=persistent fast-errors; got %d calls", calls)
+		t.Errorf("newPipeline must not be invoked when flag-validation rejects; got %d calls", calls)
 	}
 }
 
@@ -598,7 +642,6 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 		want    int // exit code if called
 	}{
 		{"flag error routes to 2", errFlagValidation, 1, 2},
-		{"persistent-sink routes to 2", errPersistentNotImplemented, 1, 2},
 		{"pipeline error routes to 1", errors.New("adapter: boom"), 1, 1},
 		{"success path does not call exit", nil, 0, 0},
 	}
@@ -634,5 +677,127 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 				t.Errorf("exit code: got %d want %d", lastCode, tc.want)
 			}
 		})
+	}
+}
+
+// --- issue #16: --out + persistent sink wiring ----------------------------
+
+// TestChooseSink_BranchesBySinkType verifies the factory picks the right
+// concrete sink for each --sink value. This is the unit-level check the
+// review T1 build-time TODO asked for: the lookup safety of
+// genderToVoice[args.Gender] inside chooseSink lives downstream of
+// validate() pinning Gender to a finite set, but we exercise the
+// happy paths here.
+func TestChooseSink_BranchesBySinkType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		args     flagSet
+		wantKind string // "ephemeral" or "persistent"
+	}{
+		{
+			name:     "ephemeral picks the ephemeral sink",
+			args:     flagSet{Sink: "ephemeral", Gender: "female"},
+			wantKind: "ephemeral",
+		},
+		{
+			name:     "persistent picks the persistent sink",
+			args:     flagSet{Sink: "persistent", Gender: "female", Out: "/tmp/persist-out"},
+			wantKind: "persistent",
+		},
+		{
+			name:     "persistent + male gender still picks persistent",
+			args:     flagSet{Sink: "persistent", Gender: "male", Out: "/tmp/persist-out"},
+			wantKind: "persistent",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := chooseSink(tc.args)
+			gotKind := sinkKind(got)
+			if gotKind != tc.wantKind {
+				t.Errorf("sink kind: got %q want %q", gotKind, tc.wantKind)
+			}
+		})
+	}
+}
+
+// sinkKind classifies a sink.OutputSink by its concrete package via %T.
+// Avoids importing each sink subpackage just to do a type assertion in a
+// test — the package name is reliable signal because the binary already
+// uses package-internal names (sink/persistent → *persistent.Sink, etc).
+func sinkKind(s sink.OutputSink) string {
+	name := fmt.Sprintf("%T", s)
+	switch {
+	case strings.Contains(name, "persistent"):
+		return "persistent"
+	case strings.Contains(name, "ephemeral"):
+		return "ephemeral"
+	default:
+		return name
+	}
+}
+
+// TestRunNarrate_PersistentSink_OutDirInSummary verifies the stdout
+// machine-readable summary reports the persistent sink's --out value
+// (not the renderer's transient temp dir). Per issue #16 step 5.
+func TestRunNarrate_PersistentSink_OutDirInSummary(t *testing.T) {
+	stub := &stubNarrator{
+		result: pipeline.NarrateResult{
+			SinkReceipt:         sink.SinkReceipt{BlocksPlayed: 1, TotalDurationMs: 250},
+			DocumentContentHash: "feedface",
+			BlockSummaries: []pipeline.BlockSummary{
+				{ID: "b001", Class: plan.ClassHeading, Level: plan.L1, Status: plan.StatusVoiced, StartLine: 1, EndLine: 1},
+			},
+		},
+	}
+	cleanup := withStubPipeline(stub)
+	defer cleanup()
+
+	persistOut := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runNarrate(context.Background(),
+		flagSet{File: "/tmp/x.md", Level: 1, Sink: "persistent", Gender: "female", Out: persistOut},
+		stdout, stderr,
+	)
+	if err != nil {
+		t.Fatalf("runNarrate unexpected error: %v", err)
+	}
+	// out_dir in the summary should be the user-supplied --out, not the
+	// transient renderer temp dir.
+	if !strings.Contains(stdout.String(), "out_dir="+persistOut) {
+		t.Errorf("stdout summary should carry out_dir=%s; got %q", persistOut, stdout.String())
+	}
+	// Roster should also print for persistent (B2 update: the gate drops
+	// the ephemeral-only restriction).
+	if !strings.Contains(stderr.String(), "blocks — escalate") {
+		t.Errorf("roster should print for persistent whole-doc run; got stderr=%q", stderr.String())
+	}
+}
+
+// TestGenderToVoice_ValidationCoverage is the T1 review-v2 follow-through:
+// every --gender value validate() accepts must have an entry in
+// genderToVoice; otherwise chooseSink would silently fall through to an
+// empty voice id on the persistent path.
+func TestGenderToVoice_ValidationCoverage(t *testing.T) {
+	t.Parallel()
+	// Mirror the validate() switch: every value validate() accepts must be
+	// a key in genderToVoice. If validate() grows to accept "neutral", the
+	// map must grow alongside.
+	accepted := []string{"female", "male"}
+	for _, g := range accepted {
+		if _, ok := genderToVoice[g]; !ok {
+			t.Errorf("genderToVoice missing key for accepted --gender value %q", g)
+		}
+	}
+	// And the reverse — the map should not contain values validate() rejects.
+	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral"}
+	for g := range genderToVoice {
+		a.Gender = g
+		if err := a.validate(); err != nil {
+			t.Errorf("validate rejected --gender=%q which is in genderToVoice; err=%v", g, err)
+		}
 	}
 }

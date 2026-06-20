@@ -1,24 +1,29 @@
 // Command narrate — CLI entry point for the vertical-slice demo.
 //
 // Wires the four edges (adapter/file + planner with nil intelligence +
-// render/sherpa + sink/ephemeral) into pipeline.Pipeline and runs one
-// narration over the file at --file.
+// render/sherpa + sink/ephemeral or sink/persistent) into pipeline.Pipeline
+// and runs one narration over the file at --file.
 //
 // Exit codes:
 //
 //	0 — success (including plans containing refused blocks — refusal is data;
 //	    AND including --expected-content-hash mismatch warnings).
 //	1 — adapter / planner / renderer / sink error.
-//	2 — flag / argument error (cobra), --sink=persistent (not implemented),
-//	    or --block id not found in the plan.
+//	2 — flag / argument error (cobra), or --block id not found in the plan.
 //
 // Decisions baked in:
 //
 //	Decision (v2) — convention: accepted. Named flags only, no positional args.
 //	  --file (required), --level {1|2|3} default 1, --sink {ephemeral|persistent}
 //	  default ephemeral, --gender {female|male} default female.
-//	Decision (v3) — tradeoff: accepted. --sink=persistent errors fast with a
-//	  clear message rather than silently falling back to ephemeral.
+//	Decision (v3) — tradeoff: superseded by issue #16. The persistent sink is
+//	  wired in #16; --sink=persistent now runs the real implementation. --out
+//	  is required when --sink=persistent (validated at flag time).
+//	Decision v1.9.0 (issue #16) — convention: experimental. --block X with
+//	  --sink=persistent is rejected at flag-validation. Block-level patch into
+//	  an existing persistent outDir is a follow-up; refusing the combination
+//	  preserves the honesty rule (don't silently overwrite audio.wav with a
+//	  single-block output).
 package main
 
 import (
@@ -35,7 +40,9 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
 // genderToVoice — phase-one mapping per CLAUDE.md domain rules + sindri
@@ -45,31 +52,24 @@ var genderToVoice = map[string]string{
 	"male":   "am_michael",
 }
 
-// persistentNotImplementedMsg is the stable message returned when the
-// caller asks for the persistent sink in the vertical slice. Surfaced via
-// stderr and used by main()'s exit-code routing; promoted to a sentinel
-// (errPersistentNotImplemented) below so `errors.Is` works at the caller.
-// Phase-2 work removes both.
-const persistentNotImplementedMsg = "persistent sink not implemented in vertical slice (issue #7)"
-
 // errFlagValidation — sentinel that runNarrate wraps validation errors
 // with so the exit-code switch can distinguish flag errors from pipeline
 // errors. Cobra flag-package errors come through RunE without this
 // sentinel; we add it for our own validate() path. Keep matching exit-2
 // semantics consistent.
 //
-// errPersistentNotImplemented routes --sink=persistent to the same exit-2
-// path. Both sentinels are package-level so tests can errors.Is against
-// them without reaching into runNarrate's internals.
-//
 // errBlockNotFound is a thin CLI-side sentinel runNarrate wraps the
 // pipeline.ErrBlockNotFound with, so exitCodeFor routes "unknown
 // --block id" to exit code 2 (caller-correctable input) rather than 1
 // (pipeline failure). Per issue #14.
+//
+// The prior errPersistentNotImplemented sentinel + persistentNotImplementedMsg
+// constant were removed in issue #16 when the real persistent sink landed.
+// Tests that pinned the old fast-error path were pivoted to the new flag-
+// validation rejection ("--out is required with --sink=persistent").
 var (
-	errFlagValidation           = errors.New("flag error")
-	errPersistentNotImplemented = errors.New(persistentNotImplementedMsg)
-	errBlockNotFound            = errors.New("block not found")
+	errFlagValidation = errors.New("flag error")
+	errBlockNotFound  = errors.New("block not found")
 )
 
 // flagSet — parsed flag values, populated by cobra. Pulled out so tests
@@ -85,6 +85,10 @@ type flagSet struct {
 	Gender              string
 	Block               string
 	ExpectedContentHash string
+	// Out is the destination directory for --sink=persistent. Required when
+	// --sink=persistent; rejected when --sink=ephemeral (the ephemeral sink
+	// owns its own temp-dir lifecycle). Per issue #16.
+	Out string
 }
 
 // narrator — the minimal pipeline surface runNarrate needs. Pulled out
@@ -101,18 +105,49 @@ type narrator interface {
 // returned narrator owns its own OutDir; runNarrate creates the temp
 // dir and passes it through so callers can swap the factory without
 // re-implementing cleanup.
+//
+// Sink selection branches on args.Sink (issue #16):
+//   - "ephemeral" → sink/ephemeral (afplay; speaker output).
+//   - "persistent" → sink/persistent (audio.wav + plan.json + manifest.json
+//     into args.Out). The engine voice id is resolved at composition time
+//     via genderToVoice[args.Gender]; validate() already pins args.Gender
+//     to {female, male} so the lookup is total.
 var newPipeline = func(outDir string, args flagSet) narrator {
 	return pipeline.New(
 		file.New(),
 		nil, // no intelligence adapter — phase one deterministic + degraded path.
 		sherpa.New(sherpa.EngineConfig{}),
-		ephemeral.New(),
+		chooseSink(args),
 		pipeline.PipelineDefaults{
 			Level:  plan.Level(args.Level),
 			OutDir: outDir,
 			Locale: "en",
 		},
 	)
+}
+
+// chooseSink picks the OutputSink implementation per args.Sink. Pulled out
+// of newPipeline so the wiring is testable without spawning a real
+// pipeline.Pipeline.
+//
+// T1 (review v2): args.Gender is validated upstream to {female, male};
+// genderToVoice has both keys, so the lookup is total. The defensive
+// lookup-with-ok form below is documentation rather than a real check.
+// A future Gender expansion that adds a value without extending
+// genderToVoice would trip the test (and surface this branch).
+func chooseSink(args flagSet) sink.OutputSink {
+	if args.Sink == "persistent" {
+		voice, ok := genderToVoice[args.Gender]
+		if !ok {
+			// Should be unreachable — validate() pins Gender. Sentinel:
+			// pass through with empty voice (manifest.Voice will be empty,
+			// loud rather than silent). Tests assert genderToVoice covers
+			// every Gender value validate() accepts.
+			voice = ""
+		}
+		return persistent.New(args.Out, persistent.WithVoice(voice))
+	}
+	return ephemeral.New()
 }
 
 // runDeps — exit-fn + IO seams injected by tests. Production uses
@@ -150,10 +185,11 @@ func newRootCmd(deps runDeps) *cobra.Command {
 
 	cmd.Flags().StringVar(&args.File, "file", "", "path to the markdown document to narrate (required)")
 	cmd.Flags().IntVar(&args.Level, "level", 1, "leveling depth: 1 (gist) | 2 (summary) | 3 (detail)")
-	cmd.Flags().StringVar(&args.Sink, "sink", "ephemeral", "output sink: ephemeral | persistent (persistent not implemented in vertical slice)")
+	cmd.Flags().StringVar(&args.Sink, "sink", "ephemeral", "output sink: ephemeral | persistent")
 	cmd.Flags().StringVar(&args.Gender, "gender", "female", "voice gender: female | male")
 	cmd.Flags().StringVar(&args.Block, "block", "", "re-render a single block by id (from the roster); --level is the target level for that block")
 	cmd.Flags().StringVar(&args.ExpectedContentHash, "expected-content-hash", "", "warn on stderr if the document content_hash differs from this value (only meaningful with --block)")
+	cmd.Flags().StringVar(&args.Out, "out", "", "output directory (required when --sink=persistent; rejected with --sink=ephemeral)")
 
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
@@ -180,22 +216,44 @@ func (a flagSet) validate() error {
 	if a.ExpectedContentHash != "" && a.Block == "" {
 		return fmt.Errorf("--expected-content-hash is only meaningful with --block")
 	}
+	// Issue #16 — wire --out paired with --sink:
+	//   --sink=persistent requires --out (no sensible default; honesty rule
+	//     means we refuse to guess).
+	//   --sink=ephemeral rejects --out (the ephemeral sink owns its own
+	//     temp-dir lifecycle; honoring --out would silently waste it).
+	if a.Sink == "persistent" && a.Out == "" {
+		return fmt.Errorf("--out is required with --sink=persistent")
+	}
+	if a.Sink == "ephemeral" && a.Out != "" {
+		return fmt.Errorf("--out is only meaningful with --sink=persistent")
+	}
+	// Decision v1.9.0 (issue #16): --block X with --sink=persistent is
+	// rejected. The block-level patch into an existing persistent outDir
+	// is a separate follow-up; allowing the combination today would let
+	// pipeline.Narrate return a single-block RenderResult that the
+	// persistent sink would faithfully concatenate into a one-block
+	// audio.wav, silently overwriting the multi-block output. Honesty rule:
+	// refuse, don't corrupt.
+	if a.Block != "" && a.Sink == "persistent" {
+		return fmt.Errorf("--block and --sink=persistent are not yet supported together (block-level patch into a persistent outDir is a follow-up)")
+	}
 	return nil
 }
 
 // runNarrate is the production wiring — composition root proper.
 //
-// Validation order (load-bearing, per issue #14):
-//  1. flag validate() (--level, --sink, --gender)
-//  2. --sink=persistent fast-error — fires BEFORE any --block reasoning
-//     so the persistent-sink AC stays scoped to issue #16.
-//  3. then everything else.
+// Validation order (load-bearing, per issue #14 + #16):
+//  1. flag validate() (--level, --sink, --gender, --out pairing, --block × sink).
+//  2. Then pipeline wiring + invocation.
+//
+// Per-block WAVs always land in a renderer temp dir (used by ephemeral
+// for afplay, by persistent as the source it reads to build audio.wav).
+// The temp dir is cleaned up on function return regardless of sink — the
+// persistent sink has already copied / concatenated what it needs into
+// args.Out by then.
 func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) error {
 	if err := args.validate(); err != nil {
 		return fmt.Errorf("%w: %w", errFlagValidation, err)
-	}
-	if args.Sink == "persistent" {
-		return errPersistentNotImplemented
 	}
 
 	absPath, err := filepath.Abs(args.File)
@@ -203,22 +261,17 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 		return fmt.Errorf("resolve --file: %w", err)
 	}
 
-	// Renderer writes per-block WAVs to a fresh temp dir; ephemeral sink
-	// reads them and plays via afplay (real or stubbed depending on build
-	// tag). The dir is removed when this function returns — ephemeral
-	// sink owns "play and forget". Persistent sink (phase 2) will own its
-	// own retention policy and won't go through this path.
+	// Renderer writes per-block WAVs to a fresh temp dir. ephemeral reads
+	// + plays via afplay; persistent reads + concatenates into args.Out
+	// (then the temp dir is disposable). The dir is removed when this
+	// function returns either way.
 	outDir, err := os.MkdirTemp("", "narrate-")
 	if err != nil {
 		return fmt.Errorf("create out dir: %w", err)
 	}
 	defer func() {
 		// Best-effort cleanup; a leftover dir is annoying, not fatal, so
-		// we do not propagate the error. The stdout summary printed below
-		// runs before this defer fires (LIFO at function return), so
-		// curious users can copy the out_dir= value before the dir
-		// disappears — though the dir is gone by the time the process
-		// exits.
+		// we do not propagate the error.
 		_ = os.RemoveAll(outDir)
 	}()
 
@@ -277,21 +330,28 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 	// --expected-content-hash on a later --block re-render (F1 from #14
 	// review). Trailing keys are additive — older parsers must tolerate
 	// unknown trailing key=value pairs.
+	//
+	// out_dir reports the persistent sink's --out when in persistent mode,
+	// or the renderer's transient temp dir when in ephemeral mode (the
+	// latter is gone by the time the process exits — useful only for
+	// in-flight inspection).
+	reportedOutDir := outDir
+	if args.Sink == "persistent" {
+		reportedOutDir = args.Out
+	}
 	if _, err := fmt.Fprintf(stdout, "blocks_played=%d total_duration_ms=%d out_dir=%s content_hash=%s\n",
-		result.BlocksPlayed, result.TotalDurationMs, outDir, result.DocumentContentHash); err != nil {
+		result.BlocksPlayed, result.TotalDurationMs, reportedOutDir, result.DocumentContentHash); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 
-	// Block roster on stderr after every ephemeral whole-doc run (skip
-	// when --block is set — the caller already knows which block they
-	// targeted). Roster goes to stderr so it never mixes with the
-	// machine-readable stdout summary; format is tab-separated so a
-	// shell pipeline can `cut -f1` to grab ids.
-	//
-	// TODO(#16): when the persistent sink lands, this gate must
-	// expand to print on persistent runs too — the roster is just as
-	// useful there. Today persistent fast-errors before we get here.
-	if args.Block == "" && args.Sink == "ephemeral" {
+	// Block roster on stderr after every whole-doc run (skip when --block
+	// is set — the caller already knows which block they targeted). Roster
+	// prints on both ephemeral and persistent (#16 — persistent users
+	// benefit just as much from seeing the block index, and the manifest
+	// also carries it). Roster goes to stderr so it never mixes with the
+	// machine-readable stdout summary; format is tab-separated so a shell
+	// pipeline can `cut -f1` to grab ids.
+	if args.Block == "" {
 		printRoster(stderr, args.File, result.BlockSummaries)
 	}
 	return nil
@@ -332,7 +392,7 @@ func main() {
 //
 //	0 — success path: cmd.ExecuteContext returned nil.
 //	1 — adapter / planner / renderer / sink error.
-//	2 — flag / validation error, --sink=persistent, or unknown --block id.
+//	2 — flag / validation error or unknown --block id.
 func runMain(deps runDeps) {
 	cmd := newRootCmd(deps)
 	cmd.SetOut(deps.stdout)
@@ -349,12 +409,14 @@ func runMain(deps runDeps) {
 }
 
 // exitCodeFor classifies a top-level error into the slice's exit code
-// taxonomy. Flag validation, --sink=persistent, and unknown --block id
-// all route to 2 (caller-correctable input); any other error routes to
-// 1 (pipeline / system failure). Pulled out for testability.
+// taxonomy. Flag validation and unknown --block id both route to 2
+// (caller-correctable input); any other error routes to 1 (pipeline /
+// system failure). Pulled out for testability.
+//
+// Per issue #16, --sink=persistent without --out now routes through
+// errFlagValidation (flag-time check) rather than its own sentinel.
 func exitCodeFor(err error) int {
 	if errors.Is(err, errFlagValidation) ||
-		errors.Is(err, errPersistentNotImplemented) ||
 		errors.Is(err, errBlockNotFound) {
 		return 2
 	}
