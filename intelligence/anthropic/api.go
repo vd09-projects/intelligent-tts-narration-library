@@ -83,21 +83,6 @@ type contentBlock struct {
 	Text string `json:"text"`
 }
 
-// errorResponse is the decoded body for a non-2xx /v1/messages reply.
-// Anthropic returns a nested {type, error: {type, message}} object;
-// we capture the message for the wrapped Go error in Voice(). When the
-// body fails to decode against this shape, Voice() falls back to a
-// truncated raw-body excerpt — the goal is a useful error string, not
-// machine-readable error classification (the pipeline upstream owns
-// retry-vs-fail classification via the existing classifier).
-type errorResponse struct {
-	Type  string `json:"type"`
-	Error struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 // firstTextBlock returns the .Text of the first content block whose
 // Type is "text", or ("", false) when no text block is present.
 // Anthropic guarantees ordering, so "first text block" is the

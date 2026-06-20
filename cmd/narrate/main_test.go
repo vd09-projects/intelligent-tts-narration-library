@@ -361,12 +361,11 @@ func TestExitCodeFor_RoutesFlagErrorsTo2(t *testing.T) {
 // newPipeline seam so tests verify the CLI wiring without spawning
 // Kokoro.
 type stubNarrator struct {
-	mu      sync.Mutex
-	gotReq  pipeline.NarrateRequest
-	gotRef  plan.SourceRef
-	gotOpts string // optional capture field for future use
-	result  pipeline.NarrateResult
-	err     error
+	mu     sync.Mutex
+	gotReq pipeline.NarrateRequest
+	gotRef plan.SourceRef
+	result pipeline.NarrateResult
+	err    error
 }
 
 func (s *stubNarrator) Narrate(_ context.Context, ref plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
