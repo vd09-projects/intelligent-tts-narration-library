@@ -8,6 +8,87 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-20-block-with-persistent-sink-rejected-at-flag-time
+    title: "--block X with --sink=persistent rejected at flag-validation"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [cmd, narrate, persistent-sink, block-rerender, flag-validation, honesty-rule, issue-16]
+    path: convention/2026-06-20-block-with-persistent-sink-rejected-at-flag-time.md
+    summary: "Combining --block with --sink=persistent would cause the persistent sink to overwrite a multi-block audio.wav with a single-block render. flagSet.validate() rejects the combination at flag-time, routing through errFlagValidation to exit 2. Error message names both flags + points at the planned follow-up ticket for block-level patch into an existing persistent outDir. Honesty rule preserved: refuse, don't corrupt."
+
+  - id: 2026-06-20-persistent-voice-id-via-withvoice-option
+    title: "Persistent sink voice id flows via WithVoice Option, not plan.Timeline"
+    date: 2026-06-20
+    status: accepted
+    category: architecture
+    tags: [sink, persistent, plan-schema, engine-neutrality, composition-root, voice-id, issue-16]
+    path: architecture/2026-06-20-persistent-voice-id-via-withvoice-option.md
+    summary: "manifest.json carries the engine voice id (e.g. af_bella). plan/ schema stays engine-neutral — no Timeline.Voice field. Composition root passes the voice id via persistent.WithVoice(genderToVoice[args.Gender]) at construction time. Sink stays oblivious to gender → voice mapping. Empty voice id is a valid manifest (sink does not invent). Rejected: contaminate plan.Timeline or render.RenderResult.Format with engine identifiers."
+
+  - id: 2026-06-20-persistent-checkstale-not-on-outputsink-interface
+    title: "Persistent sink's CheckStale is NOT part of the OutputSink interface"
+    date: 2026-06-20
+    status: accepted
+    category: architecture
+    tags: [sink, persistent, interface-design, read-side-query, ephemeral, issue-16]
+    path: architecture/2026-06-20-persistent-checkstale-not-on-outputsink-interface.md
+    summary: "CheckStale lives as a package-scope function in sink/persistent, not on the OutputSink interface. The interface stays narrow ('write the bytes' via Consume). Ephemeral sinks have no manifest.json — adding CheckStale to the interface would force a meaningless stub. Lift to a shared StalenessChecker interface only if a second sink genuinely shares the content-hash + source-URI staleness semantics."
+
+  - id: 2026-06-20-persistent-leading-silence-before-block-zero
+    title: "Persistent sink emits leading silence before block 0 if StartMs > 0"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [sink, persistent, audio-wav, silence, timeline-fidelity, issue-16]
+    path: convention/2026-06-20-persistent-leading-silence-before-block-zero.md
+    summary: "audio.wav's wall-clock at offset t ms equals Timeline.Blocks[i].StartMs for every i, including i=0. If Blocks[0].StartMs > 0, the sink emits StartMs milliseconds of silence as the leading prefix. Unified leading = blk.StartMs - cursorMs calculation with cursor=0 — no special-case code. Downstream consumers (React reference player, scrub bars) align by absolute time without offset bookkeeping."
+
+  - id: 2026-06-20-persistent-atomic-tmp-rename-writes
+    title: "Persistent sink uses atomic tmp+rename writes for all three output files"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [sink, persistent, atomic-write, honesty-rule, partial-state, ctx-cancel, issue-16]
+    path: convention/2026-06-20-persistent-atomic-tmp-rename-writes.md
+    summary: "audio.wav, plan.json, manifest.json each written via tmp file in the same directory + os.Rename. A ctx-cancel/crash/full-disk at any point leaves the previous output (or no output), never a corrupted file. atomicWriteFile() covers JSON; writeAudio() covers WAV. Tests assert no output files land on disk after per-block read failure or ctx-cancel. Honesty rule extended to bytes-on-disk."
+
+  - id: 2026-06-20-persistent-new-takes-outdir-positional
+    title: "Persistent Sink.New takes outDir as a positional argument"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [sink, persistent, api-shape, functional-options, mandatory-arg, issue-16]
+    path: convention/2026-06-20-persistent-new-takes-outdir-positional.md
+    summary: "persistent.New(outDir string, opts ...Option) — outDir mandatory at the constructor, expressed in the type system (omission = compile error). Functional Options (WithVoice, WithExpectedFormat) layer over defaults. Diverges from ephemeral.New(opts...) shape but expresses mandatory-vs-optional honestly. ErrNoOutDir runtime guard backs up the constructor for zero-value &Sink{} use."
+
+  - id: 2026-06-20-persistent-manifest-no-build-timestamps
+    title: "Persistent-sink manifest carries no build timestamp"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [sink, persistent, manifest, idempotency, determinism, issue-16]
+    path: convention/2026-06-20-persistent-manifest-no-build-timestamps.md
+    summary: "Manifest struct contains no built_at / created_at field. Consume produces byte-identical output bytes for identical input bytes — manifest.json + plan.json + audio.wav all stable across re-runs. Idempotent-rewrite AC is trivially provable; tooling can compare byte-equal. Filesystem mtime covers the 'when was this written?' need without env-var seams. TestConsume_IdempotentRewrite pins the property."
+
+  - id: 2026-06-20-persistent-manifest-schema-version-additive
+    title: "Persistent-sink ManifestSchemaVersion starts at 1, additive-compatible"
+    date: 2026-06-20
+    status: accepted
+    category: schema
+    tags: [sink, persistent, manifest, schema-version, additive-compatibility, issue-16]
+    path: schema/2026-06-20-persistent-manifest-schema-version-additive.md
+    summary: "const ManifestSchemaVersion = 1 (int, package-level). Field additions are backward-compatible within the major (json.Unmarshal ignores unknown fields). Renames/removals require a major bump. TestManifest_SchemaVersionIsOne pins the const so accidental bumps trigger review attention. Mirrors plan/ SchemaVersion convention."
+
+  - id: 2026-06-20-persistent-wav-reader-hardcoded-default-format
+    title: "Persistent sink WAV reader hard-coded to render.DefaultFormat()"
+    date: 2026-06-20
+    status: accepted
+    category: convention
+    tags: [sink, persistent, wav, format-validation, kokoro, phase-one, issue-16]
+    path: convention/2026-06-20-persistent-wav-reader-hardcoded-default-format.md
+    summary: "Phase-one persistent sink validates per-block WAVs against render.DefaultFormat() (24 kHz mono PCM s16le). Format mismatches return formatMismatchError naming the divergent field + block source path; container corruption returns ErrInvalidWAV. WithExpectedFormat Option exists for a future engine drop-in. Cross-engine format negotiation is a phase-two concern. Tight constraint catches upstream renderer regressions early."
+
   - id: 2026-06-20-mcptext-uri-sha256-cross-check
     title: "mcptext URI carries sha256(text); adapter cross-checks on Read"
     date: 2026-06-20
