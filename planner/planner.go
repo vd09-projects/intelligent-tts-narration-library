@@ -35,12 +35,12 @@ type Request struct {
 	Overrides map[string]plan.Level
 }
 
-// Now — clock seam for deterministic tests. Overridable per call via a
-// dedicated VoiceOption (planned). Defaults to wall clock.
-var nowFunc = func() time.Time { return time.Now().UTC() }
-
-// newPlanIDFunc — ULID seam for deterministic tests.
-var newPlanIDFunc = plan.NewPlanID
+// Clock + plan-id seams are no longer package globals. They are threaded
+// per-call through VoiceOption (withClock / withPlanID, test-only) and
+// resolved to locals inside Plan(), defaulting to wall-clock + real ULID.
+// Eliminating the globals removes the only shared mutable state in the
+// planner, so parallel tests can install distinct seams without a data
+// race.
 
 // Plan — convert a RawDocument into a NarrationPlan.
 //
@@ -74,14 +74,27 @@ func Plan(
 	if !req.Level.IsValid() {
 		req.Level = plan.L1
 	}
-	lex := compileLexicon(opts...)
+
+	// Parse opts once: surface the compiled lexicon AND the clock/planID
+	// seams from the same parse. Defaults live here so a nil seam func can
+	// never reach the read path below.
+	cfg := resolveVoiceOptions(opts...)
+	lex := compileLexiconCfg(cfg)
+	now := cfg.clock
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	newPlanID := cfg.planID
+	if newPlanID == nil {
+		newPlanID = plan.NewPlanID
+	}
 
 	rawBlocks := segment(doc)
 
 	out := plan.NarrationPlan{
 		SchemaVersion: SchemaVersion,
-		PlanID:        newPlanIDFunc(),
-		CreatedAt:     nowFunc().Format(time.RFC3339),
+		PlanID:        newPlanID(),
+		CreatedAt:     now().Format(time.RFC3339),
 		Source:        doc.Source,
 		Defaults: plan.PlanDefaults{
 			Level:  req.Level,

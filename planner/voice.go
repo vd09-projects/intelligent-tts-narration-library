@@ -10,6 +10,7 @@ package planner
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 // Lexicon — user-facing override map. Keys are verbatim source tokens
@@ -77,6 +78,13 @@ type VoiceOption func(*voiceOptions)
 
 type voiceOptions struct {
 	extra Lexicon
+	// clock / planID — per-call seams for deterministic tests. nil means
+	// "use the wall-clock / real-ULID default", resolved inside Plan().
+	// Carried on the existing VoiceOption channel so the planner stays
+	// pure and stateless — no package-global swap, hence no data race
+	// when parallel tests install distinct seams.
+	clock  func() time.Time
+	planID func() string
 }
 
 // WithLexicon — overlay extra on top of DefaultLexicon. User entries
@@ -93,6 +101,39 @@ func WithLexicon(extra Lexicon) VoiceOption {
 	}
 }
 
+// withClock — test-only seam: override Plan()'s clock with a fixed
+// function. Unexported on purpose — production callers never set it; the
+// wall-clock default lives inside Plan(). Carried per-call so concurrent
+// Plan() runs each observe their own clock with no shared mutable state.
+func withClock(now func() time.Time) VoiceOption {
+	return func(o *voiceOptions) {
+		o.clock = now
+	}
+}
+
+// withPlanID — test-only seam: override Plan()'s plan-id generator.
+// plan.NewPlanID returns a plain string (there is no plan.PlanID type),
+// so the seam is func() string. Unexported; the real-ULID default lives
+// inside Plan(). Carried per-call — no package global, no race.
+func withPlanID(newID func() string) VoiceOption {
+	return func(o *voiceOptions) {
+		o.planID = newID
+	}
+}
+
+// resolveVoiceOptions — parse opts once into a voiceOptions value. Both
+// the compiled lexicon and the clock/planID seams are surfaced from a
+// single parse so Plan() can read them as locals. This is the seam that
+// lets Plan() thread clock/planID per-call instead of through (removed)
+// package globals.
+func resolveVoiceOptions(opts ...VoiceOption) *voiceOptions {
+	cfg := &voiceOptions{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return cfg
+}
+
 // compiledLex — precomputed lexicon: keys sorted by length descending so
 // longest-match wins (e.g. ">=" beats ">").
 type compiledLex struct {
@@ -104,13 +145,17 @@ type compiledLex struct {
 // for longest-match replacement.
 //
 // Empty inputs yield a non-nil compiledLex with an empty key slice — the
-// caller can always invoke voice() without nil-checking.
+// caller can always invoke voice() without nil-checking. Variadic form
+// kept for the many test call sites; Plan() uses compileLexiconCfg with
+// the single parsed config so it surfaces the clock/planID seams too.
 func compileLexicon(opts ...VoiceOption) *compiledLex {
-	cfg := &voiceOptions{}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	return compileLexiconCfg(resolveVoiceOptions(opts...))
+}
 
+// compileLexiconCfg — build the compiled lexicon from an already-parsed
+// voiceOptions. Lets Plan() parse opts exactly once (surfacing
+// clock/planID alongside the lexicon).
+func compileLexiconCfg(cfg *voiceOptions) *compiledLex {
 	merged := make(Lexicon, len(DefaultLexicon)+len(cfg.extra))
 	for k, v := range DefaultLexicon {
 		merged[k] = v
