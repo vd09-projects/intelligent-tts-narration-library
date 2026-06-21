@@ -15,12 +15,31 @@ import (
 // CLAUDE.md's caching rule — escalation must not re-bill.
 //
 // With cache == nil (the New default), Voice() skips the wrapper
-// entirely. Cross-call lifetime (per-server cache) is intentionally
-// out of scope for #13; the production wiring constructs a fresh
-// per-call cache to catch intra-call escalation only.
+// entirely. Two implementations ship:
+//
+//   - ServerCache (server_cache.go) — the production tier: a bounded
+//     LRU plus the SHARED, server-lifetime last-known-model map. Issue
+//     #25 made the cache cross-call so escalation across MCP tool calls
+//     stops re-billing; that lifetime is what requires both the eviction
+//     cap and the shared last-known map.
+//   - inMemoryCache (below) — the unbounded simple tier for tests and
+//     any per-call use. No eviction.
 type Cache interface {
 	Get(key CacheKey) (intelligence.IntelligenceResult, bool)
 	Put(key CacheKey, val intelligence.IntelligenceResult)
+}
+
+// lastKnownStore is the last-known-model half of the two-phase lookup,
+// decoupled from the Cache so the Adapter can source it from whichever
+// owner is wired. Production passes a *ServerCache (which satisfies both
+// Cache and lastKnownStore) so the map is server-lifetime and SHARED
+// across every Adapter built per tool call. Tests / per-call use pass a
+// plain Cache via WithCache, and the Adapter falls back to a per-call
+// cacheLookupState. The shared path is the one that makes cross-call
+// hits work (issue #25); the per-call path is the legacy/test tier.
+type lastKnownStore interface {
+	lastKnown(clientID string) (string, bool)
+	setLastKnown(clientID, actualModel string)
 }
 
 // CacheKey is the cache identity per CLAUDE.md.
@@ -38,17 +57,20 @@ type CacheKey struct {
 	Model       string
 }
 
-// inMemoryCache is a sync.Map-backed Cache. No eviction; long-lived
-// callers should bound lifetime externally (the cmd/narrate-mcp wiring
-// in Phase 5 uses a per-call cache, so the in-memory growth is bounded
-// by one MCP tool call). Implements Cache.
+// inMemoryCache is the unbounded simple tier: a sync.Map-backed Cache
+// with NO eviction. It is intended for tests and any deliberately
+// per-call use where the cache is discarded when the caller returns, so
+// its growth is naturally bounded by that short lifetime. It is NOT the
+// production tier — server-lifetime caching uses ServerCache, which adds
+// the LRU eviction cap a long-lived unbounded map would otherwise leak.
+// Implements Cache.
 type inMemoryCache struct {
 	m sync.Map // map[CacheKey]intelligence.IntelligenceResult
 }
 
-// NewInMemoryCache returns a fresh sync.Map-backed Cache. Suitable for
-// per-call lifetime; cross-call use requires an external eviction policy
-// (out of scope for #13).
+// NewInMemoryCache returns a fresh unbounded sync.Map-backed Cache. Use
+// it for tests or genuinely per-call lifetime; for server-lifetime
+// caching use NewServerCache, which bounds growth via LRU eviction.
 func NewInMemoryCache() Cache {
 	return &inMemoryCache{}
 }
@@ -66,22 +88,30 @@ func (c *inMemoryCache) Put(key CacheKey, val intelligence.IntelligenceResult) {
 	c.m.Store(key, val)
 }
 
-// cacheLookupState holds the per-Adapter "last known model" map used by
-// the two-phase lookup. The map records, per clientID, the most-recent
+// cacheLookupState holds the per-Adapter "last known model" map for the
+// two-phase lookup. The map records, per clientID, the most-recent
 // actualModel observed from a CreateMessage reply, so the cache key
 // before the call can be assembled.
 //
-// Unboundedness note: this map is theoretically unbounded — one entry
-// per distinct clientID seen. In practice the adapter is constructed
-// per-call by cmd/narrate-mcp (Phase 5) with a single clientID, so the
-// map holds exactly one entry for the lifetime of that call. If a
-// future production path reuses an Adapter across many clientIDs,
-// bounding the map becomes a follow-up (eviction policy ticket, same
-// scope as cross-call cache eviction).
+// This is the per-call / test tier of the last-known store, paired with
+// inMemoryCache. The PRODUCTION last-known store is ServerCache's shared
+// map (server_cache.go): issue #25 proved a per-call last-known map
+// defeats cross-call caching entirely — a fresh Adapter per tool call
+// starts empty, so cacheGet misses without ever consulting the shared
+// LRU. cacheLookupState therefore stays ONLY for callers that pass a
+// plain Cache via WithCache (tests, intra-call use).
+//
+// Boundedness: one entry per distinct clientID. cmd/narrate-mcp wires a
+// single clientID, so even at server lifetime the matching ServerCache
+// map holds effectively one entry — bounded by construction, no
+// eviction needed. Multi-clientID reuse is the Revisit trigger.
 type cacheLookupState struct {
 	mu             sync.RWMutex
 	lastKnownByCID map[string]string // clientID -> actualModel
 }
+
+// Compile-time assertion: *cacheLookupState satisfies lastKnownStore.
+var _ lastKnownStore = (*cacheLookupState)(nil)
 
 func newCacheLookupState() *cacheLookupState {
 	return &cacheLookupState{lastKnownByCID: make(map[string]string)}
@@ -138,10 +168,10 @@ func (a *Adapter) cacheGet(req intelligence.IntelligenceRequest) (intelligence.I
 	if a.cache == nil {
 		return intelligence.IntelligenceResult{}, false
 	}
-	if a.cacheLookup == nil {
+	if a.lastKnownStore == nil {
 		return intelligence.IntelligenceResult{}, false
 	}
-	lastModel, ok := a.cacheLookup.lastKnown(a.clientID)
+	lastModel, ok := a.lastKnownStore.lastKnown(a.clientID)
 	if !ok {
 		return intelligence.IntelligenceResult{}, false
 	}
@@ -160,7 +190,7 @@ func (a *Adapter) cachePut(req intelligence.IntelligenceRequest, result intellig
 	if a.cache == nil {
 		return
 	}
-	if a.cacheLookup == nil {
+	if a.lastKnownStore == nil {
 		return
 	}
 	// Extract the actualModel from result.Model. We stamped it ourselves
@@ -172,7 +202,7 @@ func (a *Adapter) cachePut(req intelligence.IntelligenceRequest, result intellig
 		Model:       result.Model, // full string
 	}
 	a.cache.Put(key, result)
-	a.cacheLookup.setLastKnown(a.clientID, actualModel)
+	a.lastKnownStore.setLastKnown(a.clientID, actualModel)
 }
 
 // actualModelFromFull parses "mcp-sampling@<clientID>/<actualModel>"

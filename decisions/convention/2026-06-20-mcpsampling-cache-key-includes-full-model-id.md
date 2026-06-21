@@ -1,7 +1,8 @@
 # mcpsampling cache key includes the full chosen-model id
 
 - **Date:** 2026-06-20
-- **Status:** experimental
+- **Status:** superseded
+- **Superseded by:** [2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction](./2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction.md) (lifetime only — this decision's cache-key + two-phase lookup carry forward unchanged)
 - **Category:** convention
 - **Tags:** intelligence, mcpsampling, cache, cache-key, escalation, claude-md-rule, issue-13
 
@@ -49,6 +50,7 @@ First call per `clientID` always misses (no last-known yet). Model switches inva
 
 ## Related decisions
 
+- [2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction](./2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction.md) — **supersedes this decision (lifetime only).** Moves the cache from per-call to server-lifetime with LRU + entry-count-cap eviction; the full-model-id cache key + two-phase last-known-model lookup recorded here carry forward unchanged.
 - [2026-06-20-mcpsampling-prompt-templates-stay-in-package-for-13](./2026-06-20-mcpsampling-prompt-templates-stay-in-package-for-13.md) — same project tolerance for "good enough for phase one" — eviction policy out of scope for #13.
 - The Severity 2-value decision (2026-06-20) — diagnostics are not the path for cache-miss reporting; cache-miss is internal accounting (no `Diagnostic` emitted).
 

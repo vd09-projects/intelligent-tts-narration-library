@@ -8,6 +8,15 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction
+    title: "mcpsampling cache is server-lifetime with LRU + entry-count-cap eviction"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [intelligence, mcpsampling, cache, eviction, lru, cache-lifetime, issue-25]
+    path: convention/2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction.md
+    supersedes: 2026-06-20-mcpsampling-cache-key-includes-full-model-id
+    summary: "Moves the mcpsampling cache from per-call to server-lifetime with LRU + entry-count-cap eviction (DefaultCacheCapacity=512). The full-model-id cache key + two-phase last-known-model lookup CARRY FORWARD UNCHANGED from #13; only the per-call lifetime is superseded. Both the LRU and the last-known-model map now live on a single server-lifetime ServerCache, allocated once in cmd/narrate-mcp serve/newServer and shared across all runSpeak tool calls, so cross-call escalation stops re-billing. LRU+size-cap chosen over TTL because cached summaries are pure functions of (content_hash, level, full_model) and never go wall-clock stale — TTL would only force needless re-bills. The last-known-model map is NOT evicted: bounded by construction (one clientID per server via WithClientID). Benign cross-call stale-read window: a mid-session model switch costs at most one extra re-bill, never returns wrong data. Revisit if multiple clientIDs per server are ever introduced. Rejected: TTL eviction (content has no time dimension), unbounded cache (no memory bound)."
   - id: 2026-06-21-ephemeral-ctx-cancel-joined-error-not-ctx-only
     title: "Ephemeral sink ctx-cancel surfaces a joined error (ctx cause + process exit), not ctx-only"
     date: 2026-06-21
@@ -307,7 +316,8 @@ decisions:
   - id: 2026-06-20-mcpsampling-cache-key-includes-full-model-id
     title: "mcpsampling cache key includes the full chosen-model id"
     date: 2026-06-20
-    status: experimental
+    status: superseded
+    superseded_by: 2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction
     category: convention
     tags: [intelligence, mcpsampling, cache, cache-key, escalation, claude-md-rule, issue-13]
     path: convention/2026-06-20-mcpsampling-cache-key-includes-full-model-id.md

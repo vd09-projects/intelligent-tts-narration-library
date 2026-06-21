@@ -194,9 +194,17 @@ type speakResponse struct {
 // runSpeak (the real composition root) and stderr to os.Stderr. The run
 // seam lets unit tests exercise the handler wiring without spawning
 // Kokoro; the manual smoke test wires the real runSpeak.
+//
+// cache is the single server-lifetime mcpsampling cache handle (issue
+// #25). It is allocated ONCE in newServer and threaded into every tool
+// call's buildIntelligence so the bounded LRU and the shared last-known
+// map outlive a single call — that lifetime is what makes cross-call
+// escalation stop re-billing. A nil cache (e.g. tests wiring runSpeak
+// directly) means mcpsampling caching is off for that call.
 type runDeps struct {
 	stderr io.Writer
 	run    func(ctx context.Context, args speakArgs) (speakResponse, error)
+	cache  *mcpsampling.ServerCache
 }
 
 // The minimal surface runSpeak needs from a wired pipeline is
@@ -248,6 +256,21 @@ var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter
 // speakHandler — so the adapter can call CreateMessage without crossing
 // the pipeline.New layer boundary (plan Decision v3).
 func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
+	// runSpeak with no server cache: mcpsampling caching is off for this
+	// call. The production path goes through runSpeakWithCache (wired in
+	// newServer) so it threads the single server-lifetime cache handle.
+	return runSpeakWithCache(ctx, args, nil)
+}
+
+// runSpeakWithCache is the real composition body. cache is the single
+// server-lifetime mcpsampling.ServerCache allocated in newServer, or nil
+// to disable mcpsampling caching for this call. Hoisting this ONE
+// allocation out of the per-call path (it used to be a fresh per-call
+// cache constructed here, in buildIntelligence) is the cross-call fix:
+// the bounded LRU and the shared last-known map now outlive a single
+// tool call (issue #25). The per-call temp-dir + ephemeral-sink
+// lifecycle below is unchanged.
+func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.ServerCache) (speakResponse, error) {
 	args.applyDefaults()
 	if err := args.validate(); err != nil {
 		return speakResponse{}, err
@@ -268,7 +291,7 @@ func runSpeak(ctx context.Context, args speakArgs) (speakResponse, error) {
 		_ = os.RemoveAll(outDir)
 	}()
 
-	intel := buildIntelligence(args)
+	intel := buildIntelligence(args, cache)
 	pl := newPipeline(outDir, args, input, intel)
 
 	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
@@ -317,20 +340,22 @@ func inputAdapterAndRef(args speakArgs) (adapter.InputAdapter, plan.SourceRef, e
 
 // buildIntelligence selects an IntelligenceAdapter per args.Intelligence.
 // Returns nil for "none" so the planner takes its deterministic+degraded
-// path. For "mcpsampling":
+// path (intelligence == "none" still yields a nil adapter).
 //
-// Per-call cache: scoped to one MCP tool call. Catches intra-call
-// escalation (L1 → L2 re-narration of the same block) without persisting
-// across calls. Promoting to per-server lifetime is a deliberate future
-// change requiring eviction policy + cross-call thread-safety review;
-// out of scope for #13. (Per S4.)
-func buildIntelligence(args speakArgs) intelligence.IntelligenceAdapter {
+// For "mcpsampling" it wires the SHARED, server-lifetime ServerCache
+// passed in by the caller via WithServerCache. Issue #25: this handle is
+// allocated once in newServer and the same instance threads through every
+// tool call, so the bounded LRU and the shared last-known map outlive a
+// single call and cross-call escalation stops re-billing. A nil cache
+// (tests calling runSpeak directly) wires caching off — WithServerCache
+// treats nil as a no-op.
+func buildIntelligence(args speakArgs, cache *mcpsampling.ServerCache) intelligence.IntelligenceAdapter {
 	if args.Intelligence != "mcpsampling" {
 		return nil
 	}
 	return mcpsampling.New(
 		mcpsampling.WithClientID("narrate-mcp"),
-		mcpsampling.WithCache(mcpsampling.NewInMemoryCache()),
+		mcpsampling.WithServerCache(cache),
 	)
 }
 
@@ -408,7 +433,23 @@ func speakHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, spea
 
 // newServer constructs the MCP server with the `speak` tool registered.
 // Exposed for tests so they can drive the handler in-process.
+//
+// Issue #25: this is where the ONE server-lifetime mcpsampling cache is
+// allocated. When deps does not already carry a cache, newServer creates
+// a single ServerCache(DefaultCacheCapacity); when deps.run is the
+// default (unset), it wires the production run closure that threads that
+// shared handle into every tool call via runSpeakWithCache. Tests that
+// inject their own deps.run keep their stub untouched.
 func newServer(deps runDeps) *mcp.Server {
+	if deps.cache == nil {
+		deps.cache = mcpsampling.NewServerCache(mcpsampling.DefaultCacheCapacity)
+	}
+	if deps.run == nil {
+		cache := deps.cache
+		deps.run = func(ctx context.Context, args speakArgs) (speakResponse, error) {
+			return runSpeakWithCache(ctx, args, cache)
+		}
+	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "narrate-mcp",
 		Version: "0.1.0",
@@ -421,9 +462,11 @@ func newServer(deps runDeps) *mcp.Server {
 }
 
 func main() {
+	// Leave deps.run unset: newServer allocates the single server-lifetime
+	// mcpsampling cache and wires the production run closure that threads
+	// it through every tool call (issue #25).
 	deps := runDeps{
 		stderr: os.Stderr,
-		run:    runSpeak,
 	}
 	if err := serve(deps); err != nil {
 		_, _ = fmt.Fprintln(deps.stderr, "narrate-mcp: "+err.Error())
