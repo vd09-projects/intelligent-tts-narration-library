@@ -114,22 +114,65 @@ func levelHeading(rb rawBlock, target plan.Level, lex *compiledLex) levelResult 
 	}
 }
 
-// levelList — voice "List of N items: item 1. item 2. …" at all levels.
+// ordinalWords — frozen 1-based spelled-ordinal table for list positions
+// 1..10. Index n-1 holds the cue for position n (ordinalWords[0] == "First").
+// Past ten we fall back to a numeric "item N" cue (see ordinalCue) rather
+// than ship an ordinal-spelling engine for long lists.
+var ordinalWords = [...]string{
+	"First", "Second", "Third", "Fourth", "Fifth",
+	"Sixth", "Seventh", "Eighth", "Ninth", "Tenth",
+}
+
+// ordinalCue — spoken position cue for the n-th list item.
 //
-// Items are extracted by stripping markdown list markers ("-", "*", "+",
-// or digit-period) from each line. Indented continuation lines fold into
+// CONTRACT: n is 1-BASED (item 1 → "First"), NOT the 0-based loop index.
+// Callers iterating items must pass i+1, never i.
+//
+// 1..10 → spelled word from ordinalWords[n-1]; n ≥ 11 → numeric "item N".
+//
+// SPLIT-OFFSET TRAP: lists are not split by maybeSplit today (there is no
+// ClassList case there), so a list voices as one block and positions run
+// 1..N naturally. If list-splitting is ever added, each chunk MUST be given
+// a global position offset — chunk 2's first item is global position N+1,
+// not 1 — or this 1-based numbering will restart per chunk and mislabel.
+func ordinalCue(n int) string {
+	if n >= 1 && n <= len(ordinalWords) {
+		return ordinalWords[n-1]
+	}
+	return fmt.Sprintf("item %d", n)
+}
+
+// levelList — voice a list with spoken ordinal cues at all levels:
+// "{preamble} First, {item1}. Second, {item2}. …".
+//
+// Preamble has two forms (see splitListTitle):
+//   - TITLED list (a leading non-marker line precedes the markers): the
+//     source title becomes the preamble, with a trailing ":" converted to
+//     ". " and any other ending normalised so exactly one ". " separates it
+//     from the first cue. "Some items:" → "Some items. First, alpha. …".
+//   - BARE list (no leading title): generated "List of N items. ".
+//
+// In both forms N counts only the real list items — a title line is never
+// counted as an item. Items are extracted by stripping markdown list markers
+// ("-", "*", "+", or digit-period); indented continuation lines fold into
 // their parent item.
 func levelList(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
-	items := extractListItems(rb.text)
+	title, items := splitListTitle(rb.text)
+
 	var spoken strings.Builder
-	fmt.Fprintf(&spoken, "List of %d items: ", len(items))
-	for i, item := range items {
-		spoken.WriteString(voice(item, lex))
-		if i < len(items)-1 {
-			spoken.WriteString(". ")
-		}
+	if title != "" {
+		spoken.WriteString(listTitlePreamble(voice(title, lex)))
+	} else {
+		fmt.Fprintf(&spoken, "List of %d items.", len(items))
 	}
-	spoken.WriteString(".")
+	for i, item := range items {
+		// ordinalCue is 1-based; the loop index is 0-based → pass i+1.
+		spoken.WriteString(" ")
+		spoken.WriteString(ordinalCue(i + 1))
+		spoken.WriteString(", ")
+		spoken.WriteString(voice(item, lex))
+		spoken.WriteString(".")
+	}
 	return levelResult{
 		segments: []plan.Segment{
 			{ID: "s1", Kind: plan.SegmentKindSpeech, Text: spoken.String()},
@@ -138,6 +181,64 @@ func levelList(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 		deterministic: true,
 		facts:         []string{fmt.Sprintf("class: list, items: %d", len(items))},
 	}
+}
+
+// listTitlePreamble — normalise a list title into a preamble ending in a
+// single period (no trailing space; levelList adds the space before each
+// cue). A trailing ":" becomes "."; an existing "." is kept (no double
+// period); any other ending gets "." appended.
+func listTitlePreamble(title string) string {
+	title = strings.TrimSpace(title)
+	switch {
+	case strings.HasSuffix(title, ":"):
+		return strings.TrimSuffix(title, ":") + "."
+	case strings.HasSuffix(title, "."):
+		return title
+	default:
+		return title + "."
+	}
+}
+
+// splitListTitle — separate an optional leading title line from the real
+// list items. A title is a leading non-list-marker line, ending in ":",
+// that precedes the first list marker (e.g. the "Some items:" label above a
+// bullet list). The title is NOT counted as an item; the returned items
+// slice holds only real list items.
+//
+// The trailing-colon requirement is load-bearing, not cosmetic. The
+// goldmark segmenter strips the marker off the FIRST list item (a bare
+// "- alpha\n- beta" arrives as "alpha\n- beta"), so a leading non-marker
+// line is ambiguous: it could be a real title OR the de-markered first
+// item. The colon is the only reliable label signal that disambiguates the
+// two — without it we would mis-read item one as a title and drop it. (A
+// non-colon title is therefore voiced as a bare list; see discovered
+// followups, tracked: #54.)
+//
+// Returns ("", items) for a bare list (no titled label) so levelList takes
+// the generated "List of N items." preamble path.
+func splitListTitle(text string) (string, []string) {
+	lines := strings.Split(text, "\n")
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" {
+			continue
+		}
+		if isListMarkerLine(trimmed) {
+			break // first non-blank line is already a marker → bare list.
+		}
+		if strings.HasSuffix(trimmed, ":") {
+			// Titled list: this label line is the preamble; the remaining
+			// lines are the real items.
+			return trimmed, extractListItems(strings.Join(lines[i+1:], "\n"))
+		}
+		// LIMITATION (tracked: #54): a non-colon leading line (e.g. "Shopping
+		// list") cannot be told apart from the de-markered first item, so it
+		// is voiced as item one rather than a title. Lifting this needs the
+		// segmenter to preserve the first item's marker (or pass a title seam)
+		// — out of scope for this text-only diff.
+		break // leading non-marker, non-label line → treat whole block as bare.
+	}
+	return "", extractListItems(text)
 }
 
 // extractListItems — pull items from a markdown-shaped list block.
@@ -305,7 +406,7 @@ func humanLang(lang string) string {
 func extractTopLevelDecls(body string) []string {
 	var decls []string
 	prefixes := []string{"func ", "type ", "class ", "def ", "function ", "interface ", "struct "}
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		// Only top-level — no leading whitespace.
 		if len(ln) == 0 || ln[0] == ' ' || ln[0] == '\t' {
 			continue
@@ -413,7 +514,7 @@ func extractTopLevelKeys(body, dialect string) []string {
 	case "JSON":
 		// Cheap top-level "key": pull on lines starting with whitespace +
 		// quoted key + colon.
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			trimmed := strings.TrimSpace(ln)
 			if strings.HasPrefix(trimmed, "\"") {
 				if i := strings.Index(trimmed[1:], "\""); i > 0 {
@@ -426,14 +527,14 @@ func extractTopLevelKeys(body, dialect string) []string {
 			}
 		}
 	case "TOML", "INI":
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			trimmed := strings.TrimSpace(ln)
 			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 				keys = append(keys, strings.Trim(trimmed, "[]"))
 			}
 		}
 	default: // YAML
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			if isYAMLKeyLine(ln) {
 				name := ln
 				if i := strings.Index(name, ":"); i > 0 {
@@ -448,7 +549,7 @@ func extractTopLevelKeys(body, dialect string) []string {
 
 func extractKeyValuePairs(body, dialect string) []string {
 	var pairs []string
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -571,7 +672,7 @@ func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 
 func parseTableRows(text string) [][]string {
 	var rows [][]string
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if trimmed == "" {
 			continue
@@ -651,7 +752,7 @@ func diagramDialect(fenceInfo, _ string) string {
 func countMermaidNodes(body string) int {
 	seen := map[string]bool{}
 	arrowReps := []string{"-->", "---", "==>", "===", "-->>", "-->|", "|--"}
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		s := strings.TrimSpace(ln)
 		if s == "" || strings.HasPrefix(s, "graph ") || strings.HasPrefix(s, "flowchart ") ||
 			strings.HasPrefix(s, "sequenceDiagram") || strings.HasPrefix(s, "classDiagram") {
@@ -660,7 +761,7 @@ func countMermaidNodes(body string) int {
 		for _, a := range arrowReps {
 			s = strings.ReplaceAll(s, a, " ")
 		}
-		for _, tok := range strings.Fields(s) {
+		for tok := range strings.FieldsSeq(s) {
 			id := trimToIdent(tok)
 			if id != "" {
 				seen[id] = true

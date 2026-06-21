@@ -51,6 +51,7 @@ func goldenCases() []goldenCase {
 		{name: "config_l1", inputFile: "config_l1.md", level: plan.L1, intel: nil},
 		{name: "table_l1", inputFile: "table_l1.md", level: plan.L1, intel: nil},
 		{name: "diagram_l1", inputFile: "diagram_l1.md", level: plan.L1, intel: nil},
+		{name: "list_l1", inputFile: "list_l1.md", level: plan.L1, intel: nil},
 		{name: "refused_bare_image", inputFile: "refused_bare_image.md", level: plan.L1, intel: nil},
 		{name: "mixed_doc", inputFile: "mixed_doc.md", level: plan.L1, intel: nil},
 	}
