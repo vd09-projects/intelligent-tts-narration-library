@@ -406,7 +406,7 @@ func humanLang(lang string) string {
 func extractTopLevelDecls(body string) []string {
 	var decls []string
 	prefixes := []string{"func ", "type ", "class ", "def ", "function ", "interface ", "struct "}
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		// Only top-level — no leading whitespace.
 		if len(ln) == 0 || ln[0] == ' ' || ln[0] == '\t' {
 			continue
@@ -514,7 +514,7 @@ func extractTopLevelKeys(body, dialect string) []string {
 	case "JSON":
 		// Cheap top-level "key": pull on lines starting with whitespace +
 		// quoted key + colon.
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			trimmed := strings.TrimSpace(ln)
 			if strings.HasPrefix(trimmed, "\"") {
 				if i := strings.Index(trimmed[1:], "\""); i > 0 {
@@ -527,14 +527,14 @@ func extractTopLevelKeys(body, dialect string) []string {
 			}
 		}
 	case "TOML", "INI":
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			trimmed := strings.TrimSpace(ln)
 			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 				keys = append(keys, strings.Trim(trimmed, "[]"))
 			}
 		}
 	default: // YAML
-		for _, ln := range strings.Split(body, "\n") {
+		for ln := range strings.SplitSeq(body, "\n") {
 			if isYAMLKeyLine(ln) {
 				name := ln
 				if i := strings.Index(name, ":"); i > 0 {
@@ -549,7 +549,7 @@ func extractTopLevelKeys(body, dialect string) []string {
 
 func extractKeyValuePairs(body, dialect string) []string {
 	var pairs []string
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -672,7 +672,7 @@ func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 
 func parseTableRows(text string) [][]string {
 	var rows [][]string
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if trimmed == "" {
 			continue
@@ -752,7 +752,7 @@ func diagramDialect(fenceInfo, _ string) string {
 func countMermaidNodes(body string) int {
 	seen := map[string]bool{}
 	arrowReps := []string{"-->", "---", "==>", "===", "-->>", "-->|", "|--"}
-	for _, ln := range strings.Split(body, "\n") {
+	for ln := range strings.SplitSeq(body, "\n") {
 		s := strings.TrimSpace(ln)
 		if s == "" || strings.HasPrefix(s, "graph ") || strings.HasPrefix(s, "flowchart ") ||
 			strings.HasPrefix(s, "sequenceDiagram") || strings.HasPrefix(s, "classDiagram") {
@@ -761,7 +761,7 @@ func countMermaidNodes(body string) int {
 		for _, a := range arrowReps {
 			s = strings.ReplaceAll(s, a, " ")
 		}
-		for _, tok := range strings.Fields(s) {
+		for tok := range strings.FieldsSeq(s) {
 			id := trimToIdent(tok)
 			if id != "" {
 				seen[id] = true
