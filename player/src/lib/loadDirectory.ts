@@ -85,9 +85,12 @@ export async function loadDirectory(input: LoadInput): Promise<LoadedDirectory> 
 
 function collectWarnings(plan: NarrationPlan, manifest: Manifest): string[] {
   const w: string[] = []
-  if (plan.schema_version && plan.schema_version !== EXPECTED_PLAN_SCHEMA) {
+  // Compare MAJOR version only — CLAUDE.md: "additive-compatible within a
+  // major schema_version". "1.0" / "1.3" stay compatible with major "1".
+  const planMajor = String(plan.schema_version).split('.')[0]
+  if (plan.schema_version && planMajor !== EXPECTED_PLAN_SCHEMA) {
     w.push(
-      `plan.json schema_version ${plan.schema_version} differs from expected ${EXPECTED_PLAN_SCHEMA}; unknown fields will be ignored.`,
+      `plan.json schema_version ${plan.schema_version} differs from expected major ${EXPECTED_PLAN_SCHEMA}; unknown fields will be ignored.`,
     )
   }
   if (

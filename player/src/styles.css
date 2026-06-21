@@ -29,6 +29,7 @@ body {
 
 button {
   font: inherit;
+  color: inherit;
   cursor: pointer;
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--border);
