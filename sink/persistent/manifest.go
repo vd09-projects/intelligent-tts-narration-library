@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 )
@@ -80,6 +81,20 @@ func writeManifest(path string, m Manifest) error {
 	// prompt afterwards. Idempotency: the trailing newline is byte-stable.
 	raw = append(raw, '\n')
 	return atomicWriteFile(path, raw, 0o644)
+}
+
+// ReadManifest loads the Manifest from the manifest.json inside outDir.
+//
+// Additive exported reader (issue #49 / R1): the cmd/narrate-server HTTP edge
+// resolves a persistent-sink directory's source (SourceURI / SourceKind /
+// ContentHash) before calling Narrate, and re-reads the manifest after a patch
+// to shape its response — both without re-implementing the read or reaching
+// into the unexported readManifest. No behavior change to existing callers.
+//
+// Error semantics match readManifest: an absent file is wrapped so callers can
+// errors.Is(err, os.ErrNotExist); a corrupt JSON payload is a hard error.
+func ReadManifest(outDir string) (Manifest, error) {
+	return readManifest(filepath.Join(outDir, manifestFilename))
 }
 
 // readManifest loads m from path. An absent file is reported as
