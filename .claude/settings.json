@@ -1,5 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {},
   "permissions": {
     "allow": [
       "Bash(git status)",
@@ -40,5 +41,7 @@
     ]
   },
   "hooks": {},
-  "env": {}
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
+  }
 }

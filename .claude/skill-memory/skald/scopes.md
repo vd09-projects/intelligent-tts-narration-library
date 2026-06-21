@@ -180,3 +180,20 @@ scopes:
       rather than reusing the issue-13 scope. Planned via mimir task depth with
       the concurrency overlay (eviction-time writes vs Voice() readers under
       the shared lifetime). Issue-numbered naming continues the convention.
+  - slug: planner-data-races-42
+    title: fix data races in planner package under -race (issue #42)
+    created: 2026-06-21
+    reasoning: |
+      Plan cycle for GitHub issue #42 (kill the DATA RACE that make test-race
+      surfaces in the planner batch). Root cause is two unsynchronized
+      package-global test seams (nowFunc/newPlanIDFunc) swapped by ~8
+      t.Parallel() tests while a sibling Plan() reads them; the three
+      detector-named tests are bystanders. Follow-on to the planner-races
+      note flagged during mcpsampling-cache-eviction-25 review (a follow-up
+      was requested before make test-race becomes a CI gate). Distinct
+      issue-numbered slug, planner- prefixed to mark the package under fix
+      and disambiguate from planner-issue-4 (the original core build).
+      Planned via mimir task depth with the concurrency overlay. Plan was
+      pre-produced externally by mimir and persisted draft (awaiting user
+      approval before sindri consumes). Issue-numbered naming continues the
+      convention.
