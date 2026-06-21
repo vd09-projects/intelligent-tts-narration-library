@@ -13,10 +13,15 @@ function stubFetch() {
   const ok = (body: BodyInit, init?: ResponseInit) => new Response(body, { status: 200, ...init })
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+    // /healthz is intentionally NOT served here → useServerMode resolves to
+    // FIXTURE mode, which is the surface these smoke ACs assert (the legacy
+    // copy-command EscalateCard). Live escalation is covered in
+    // Escalate.integration.test.tsx.
+    if (url.includes('/healthz')) return new Response('down', { status: 503 })
     if (url.endsWith('plan.json')) return ok(JSON.stringify(planFixture))
-    if (url.endsWith('manifest.json')) return ok(JSON.stringify(manifestFixture))
+    if (url.includes('manifest.json')) return ok(JSON.stringify(manifestFixture))
     if (url.endsWith('source.md')) return ok(SOURCE_MD)
-    if (url.endsWith('audio.wav')) return ok(new Uint8Array([0x52, 0x49, 0x46, 0x46]).buffer)
+    if (url.includes('audio.wav')) return ok(new Uint8Array([0x52, 0x49, 0x46, 0x46]).buffer)
     return new Response('not found', { status: 404 })
   })
 }
@@ -89,11 +94,19 @@ describe('App smoke — 8 acceptance criteria from issue #18', () => {
     expect(screen.getByTestId('source-pre')).toBeInTheDocument()
   })
 
-  it('AC5: per-block Escalate L3 button surfaces the literal CLI command', async () => {
+  it('AC5 (fixture mode): per-block Escalate L3 button surfaces the literal CLI command', async () => {
     render(<App />)
     await waitFor(() => screen.getByTestId('block-list'))
+    // Wait for /healthz to resolve to FIXTURE mode — only then does the legacy
+    // copy-command toggle render (issue #50 mode split).
+    await waitFor(() =>
+      expect(screen.getByTestId('server-mode-indicator')).toHaveAttribute(
+        'data-server-mode',
+        'fixture',
+      ),
+    )
     const escButtons = screen.getAllByRole('button', { name: /^Escalate L3$/ })
-    // 10 voiced/degraded blocks have the button; 2 refused blocks hide it.
+    // 10 voiced/degraded blocks have the toggle; 2 refused blocks hide it.
     expect(escButtons.length).toBe(10)
 
     const user = userEvent.setup()

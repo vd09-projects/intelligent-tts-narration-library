@@ -20,7 +20,10 @@ export interface FixtureState {
   error: string | null
 }
 
-const FIXTURE_BASE = '/fixtures/sample'
+// FIXTURE_BASE is the URL prefix the bundled fixture is served from. Exported
+// so the escalation patch flow can re-fetch manifest.json / audio.wav from the
+// same origin after a server-side patch (the player re-reads the served copy).
+export const FIXTURE_BASE = '/fixtures/sample'
 
 export function useFixture(): FixtureState {
   const [state, setState] = useState<FixtureState>({

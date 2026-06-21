@@ -1,20 +1,29 @@
-import type { Block, NarrationPlan } from '../types/plan.ts'
+import { memo } from 'react'
+import type { Block, Level, NarrationPlan } from '../types/plan.ts'
 import type { ManifestBlock } from '../types/manifest.ts'
+import type { ServerMode } from '../hooks/useServerMode.ts'
+import type { RowState } from '../hooks/useEscalation.ts'
 import { RefusalBadge } from './RefusalBadge.tsx'
 import { EscalateCard } from './EscalateCard.tsx'
 import { escalateCommand } from '../lib/escalateCommand.ts'
+import { escalateTargets } from '../lib/escalateTargets.ts'
 
-// BlockRow renders one row of the block list. Carries three concerns:
+// BlockRow renders one row of the block list. Concerns:
 //   1. Click anywhere (the row) → seekToBlock (mouse-only shortcut).
 //   2. The "Seek" button is keyboard-focusable and does the same.
-//   3. The "Escalate L3" button toggles an inline EscalateCard.
+//   3. Escalation controls — mode-dependent (issue #50):
+//        - server mode: live "Escalate L{n}" buttons (one per escalate target),
+//          spinner + disabled while loading, inline error/refusal/stale notice.
+//          Disabled-with-hint when the dir field is empty (Q2 gate).
+//        - fixture mode: the legacy single toggle → EscalateCard (copy command).
+//        - unknown mode: neutral — no escalation control yet (no flicker).
 //
-// aria-current="true" when this row is the active playback block. The row
-// also gets a class for the visual highlight, but the screen-reader cue is
-// the aria attribute.
+// Wrapped in React.memo so a patch to one row does NOT re-render its siblings
+// (the parent passes stable callbacks + per-row rowState).
 //
-// Hidden when status === "refused": the Escalate button. Refused blocks
-// have nothing yet to escalate to.
+// aria-current="true" when this row is the active playback block.
+// Hidden when status === "refused": escalation controls. Refused blocks have
+// nothing to escalate to (they were not voiced at all).
 
 export interface BlockRowProps {
   block: Block
@@ -23,8 +32,12 @@ export interface BlockRowProps {
   isActive: boolean
   isSourceCursor: boolean
   isEscalated: boolean
-  onSeek: () => void
-  onToggleEscalate: () => void
+  serverMode: ServerMode
+  dir: string
+  rowState: RowState
+  onSeek: (blockId: string) => void
+  onEscalate: (blockId: string, level: Level) => void
+  onToggleEscalate: (blockId: string) => void
   onDismissEscalate: () => void
 }
 
@@ -41,14 +54,18 @@ function spokenSummary(block: Block): string {
   return block.source_map.raw_excerpt ?? '(no excerpt)'
 }
 
-export function BlockRow({
+function BlockRowImpl({
   block,
   manifestBlock,
   plan,
   isActive,
   isSourceCursor,
   isEscalated,
+  serverMode,
+  dir,
+  rowState,
   onSeek,
+  onEscalate,
   onToggleEscalate,
   onDismissEscalate,
 }: BlockRowProps) {
@@ -63,6 +80,10 @@ export function BlockRow({
   const spoken = spokenSummary(block)
   const truncated = spoken.length > 280 ? spoken.slice(0, 280) + '…' : spoken
 
+  const loading = rowState.status === 'loading'
+  const targets = escalateTargets(block.level, block.class)
+  const dirMissing = serverMode === 'server' && dir.trim() === ''
+
   return (
     <li
       className={className}
@@ -74,7 +95,7 @@ export function BlockRow({
     >
       <div
         className="block-row-clickable"
-        onClick={onSeek}
+        onClick={() => onSeek(block.id)}
         // The clickable wrapper is a mouse convenience only. Keyboard users
         // use the explicit "Seek" button below; the wrapper has no tabindex
         // so it does not double-trip in tab order (a11y rule).
@@ -98,13 +119,44 @@ export function BlockRow({
       </div>
 
       <div className="block-actions">
-        <button type="button" onClick={onSeek} aria-label={`Seek to block ${block.id}`}>
+        <button
+          type="button"
+          onClick={() => onSeek(block.id)}
+          aria-label={`Seek to block ${block.id}`}
+        >
           Seek
         </button>
-        {!refused && (
+
+        {/* Server mode: live per-level escalate buttons (prose only — structured
+            classes have no targets per the deterministic-L1 rule). */}
+        {serverMode === 'server' &&
+          !refused &&
+          targets.up.map((lvl) => (
+            <button
+              key={lvl}
+              type="button"
+              className="escalate-level-btn"
+              disabled={loading || dirMissing}
+              title={
+                dirMissing
+                  ? 'Enter the escalate output directory (top bar) to enable live escalation'
+                  : `Re-narrate this block at L${lvl} via the escalate server`
+              }
+              data-testid={`escalate-${block.id}-L${lvl}`}
+              onClick={() => onEscalate(block.id, lvl)}
+            >
+              {loading ? (
+                <span className="escalate-spinner" aria-hidden="true" />
+              ) : null}
+              Escalate L{lvl}
+            </button>
+          ))}
+
+        {/* Fixture mode: legacy single toggle → copy-command EscalateCard. */}
+        {serverMode === 'fixture' && !refused && (
           <button
             type="button"
-            onClick={onToggleEscalate}
+            onClick={() => onToggleEscalate(block.id)}
             aria-expanded={isEscalated}
             aria-controls={`escalate-${block.id}`}
           >
@@ -113,7 +165,43 @@ export function BlockRow({
         )}
       </div>
 
-      {isEscalated && !refused && (
+      {/* Inline, on-the-row status — never a toast/modal (honesty rule). */}
+      {loading && (
+        <p className="escalate-status muted" role="status" data-testid={`escalate-loading-${block.id}`}>
+          Escalating…
+        </p>
+      )}
+      {rowState.status === 'error' && rowState.error && (
+        <p
+          className="escalate-error"
+          role="status"
+          data-testid={`escalate-error-${block.id}`}
+        >
+          Escalate failed: {rowState.error.message}{' '}
+          <code className="escalate-error-reason">{rowState.error.reason}</code>
+        </p>
+      )}
+      {rowState.status === 'noop' && (
+        <p
+          className="escalate-noop muted"
+          role="status"
+          data-testid={`escalate-noop-${block.id}`}
+        >
+          No visible change — the block already reads the same at this level.
+        </p>
+      )}
+      {rowState.staleDownstream && (
+        <p
+          className="escalate-stale muted"
+          role="status"
+          data-testid={`escalate-stale-${block.id}`}
+        >
+          Block updated, but downstream timings could not be refreshed. Reload the
+          directory to resync later blocks.
+        </p>
+      )}
+
+      {serverMode === 'fixture' && isEscalated && !refused && (
         <div id={`escalate-${block.id}`}>
           <EscalateCard command={command} onDismiss={onDismissEscalate} />
         </div>
@@ -121,3 +209,5 @@ export function BlockRow({
     </li>
   )
 }
+
+export const BlockRow = memo(BlockRowImpl)

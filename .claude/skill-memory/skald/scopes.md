@@ -197,3 +197,31 @@ scopes:
       pre-produced externally by mimir and persisted draft (awaiting user
       approval before sindri consumes). Issue-numbered naming continues the
       convention.
+  - slug: planner-list-ordinals-45
+    title: speak list items with ordinals — first, second, third (issue #45)
+    created: 2026-06-21
+    reasoning: |
+      Plan cycle for GitHub issue #45 (vibe). levelList in planner/level.go
+      currently voices a list as "List of N items: a. b. c." with no spoken
+      position markers; the change prefixes each item with an ordinal cue
+      ("First, alpha. Second, beta. ...") plus a numeric fallback past ~10
+      items ("item 11, ..."). Deterministic, no intelligence adapter, no
+      schema change — only the string inside Segment.Text changes. planner-
+      prefixed to mark the package under change; issue-numbered suffix
+      continues the convention (cf. planner-data-races-42). Planned via mimir
+      task depth, no overlays triggered (text-only single-segment change).
+  - slug: player-escalate-buttons-50
+    title: in-place Escalate L2/L3 buttons in React player (issue #50)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #50 (player/ — evolve the per-block Escalate
+      button from a copy-the-CLI-command card into a real in-place escalation:
+      click hits the local HTTP escalate endpoint from #49, spinner on the row,
+      then patches just that block into React state — text/status/level/refusal +
+      swapped BlockTiming + re-pointed audio source — with the command card kept
+      as the static-fixture fallback via a /healthz mode toggle). Front-end
+      consumer of the #49 escalate server. player- prefixed to mark the package
+      under change and disambiguate from player-react-issue-18 (the original
+      reference-player build); issue-numbered suffix continues the convention.
+      Planned via mimir task depth (5-phase breakdown). Plan persisted draft —
+      awaiting user approval before sindri consumes.
