@@ -167,3 +167,16 @@ scopes:
       its own scope. Descriptive-qualifier slug (sink-ephemeral-polish) + issue
       number, continuing the issue-numbered naming convention. Priority low,
       rune:vibe; mimir planned (multi-AC bucket benefits from per-phase grouping).
+  - slug: mcpsampling-cache-eviction-25
+    title: "intelligence/mcpsampling: cross-call cache lifetime + eviction policy (issue #25)"
+    created: 2026-06-21
+    reasoning: |
+      Plan + build + review + close cycle for GitHub issue #25 (resolve the
+      two deferred items from #13: promote the per-call mcpsampling cache to
+      per-server lifetime, and add eviction so the now-long-lived sync.Map
+      stops being a memory leak). Distinct slug from intelligence-mcpsampling-
+      issue-13 (the base adapter build) — this is a follow-on lifetime+eviction
+      feature on the same package, so an explicit cache-eviction qualifier
+      rather than reusing the issue-13 scope. Planned via mimir task depth with
+      the concurrency overlay (eviction-time writes vs Voice() readers under
+      the shared lifetime). Issue-numbered naming continues the convention.
