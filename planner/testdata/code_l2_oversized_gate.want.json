@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "code_l2_oversized.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 2,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "code",
+      "level": 2,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 2,
+        "end_line": 265,
+        "raw_excerpt": "func process() {\n\ttotal := 0\n\ttotal += 0\n\ttotal += 1\n\ttotal += 2\n\ttotal += 3\n\ttotal += 4\n\ttotal += 5\n\ttotal += 6\n\ttotal += 7\n\ttotal += 8\n\ttotal += 9\n\ttotal += 10\n\ttotal += 11\n\ttotal += 12\n\ttotal += 13\n\ttotal += 14\n\ttotal += 15\n\ttotal += 16\n\ttotal += 17\n\ttotal += 18\n\ttotal += 19\n\ttotal += 20\n\ttotal += 21\n\ttotal += 22\n\ttotal += 23\n\ttotal += 24\n\ttotal += 25\n\ttotal += 26\n\ttotal += 27\n\ttotal += 28\n\ttotal += 29\n\ttotal += 30\n\ttotal += 31\n\ttotal += 32\n\ttotal += 33\n\ttotal += 34\n\ttotal += 35\n\ttotal += 36\n\ttotal += 37\n\ttotal += 38\n\ttotal += 39\n\ttotal += 40\n\ttotal += 41\n\ttotal += 42\n\ttotal += 43\n\ttotal += 44\n\ttotal += 45\n\ttotal += 46\n\ttotal += 47\n\ttotal += 48\n\ttotal += 49\n\ttotal += 50\n\ttotal += 51\n\ttotal += 52\n\ttotal += 53\n\ttotal += 54\n\ttotal += 55\n\ttotal += 56\n\ttotal += 57\n\ttotal += 58\n\ttotal += 59\n\ttotal += 60\n\ttotal += 61\n\ttotal += 62\n\ttotal += 63\n\ttotal += 64\n\ttotal += 65\n\ttotal += 66\n\ttotal += 67\n\ttotal += 68\n\ttotal += 69\n\ttotal += 70\n\ttotal += 71\n\ttotal += 72\n\ttotal += 73\n\ttotal += 74\n\ttotal += 75\n\ttotal += 76\n\ttotal += 77\n\ttotal += 78\n\ttotal += 79\n\ttotal += 80\n\ttotal += 81\n\ttotal += 82\n\ttotal += 83\n\ttotal += 84\n\ttotal += 85\n\ttotal += 86\n\ttotal += 87\n\ttotal += 88\n\ttotal += 89\n\ttotal += 90\n\ttotal += 91\n\ttotal += 92\n\ttotal += 93\n\ttotal += 94\n\ttotal += 95\n\ttotal += 96\n\ttotal += 97\n\ttotal += 98\n\ttotal += 99\n\ttotal += 100\n\ttotal += 101\n\ttotal += 102\n\ttotal += 103\n\ttotal += 104\n\ttotal += 105\n\ttotal += 106\n\ttotal += 107\n\ttotal += 108\n\ttotal += 109\n\ttotal += 110\n\ttotal += 111\n\ttotal += 112\n\ttotal += 113\n\ttotal += 114\n\ttotal += 115\n\ttotal += 116\n\ttotal += 117\n\ttotal += 118\n\ttotal += 119\n\ttotal += 120\n\ttotal += 121\n\ttotal += 122\n\ttotal += 123\n\ttotal += 124\n\ttotal += 125\n\ttotal += 126\n\ttotal += 127\n\ttotal += 128\n\ttotal += 129\n\ttotal += 130\n\ttotal += 131\n\ttotal += 132\n\ttotal += 133\n\ttotal += 134\n\ttotal += 135\n\ttotal += 136\n\ttotal += 137\n\ttotal += 138\n\ttotal += 139\n\ttotal += 140\n\ttotal += 141\n\ttotal += 142\n\ttotal += 143\n\ttotal += 144\n\ttotal += 145\n\ttotal += 146\n\ttotal += 147\n\ttotal += 148\n\ttotal += 149\n\ttotal += 150\n\ttotal += 151\n\ttotal += 152\n\ttotal += 153\n\ttotal += 154\n\ttotal += 155\n\ttotal += 156\n\ttotal += 157\n\ttotal += 158\n\ttotal += 159\n\ttotal += 160\n\ttotal += 161\n\ttotal += 162\n\ttotal += 163\n\ttotal += 164\n\ttotal += 165\n\ttotal += 166\n\ttotal += 167\n\ttotal += 168\n\ttotal += 169\n\ttotal += 170\n\ttotal += 171\n\ttotal += 172\n\ttotal += 173\n\ttotal += 174\n\ttotal += 175\n\ttotal += 176\n\ttotal += 177\n\ttotal += 178\n\ttotal += 179\n\ttotal += 180\n\ttotal += 181\n\ttotal += 182\n\ttotal += 183\n\ttotal += 184\n\ttotal += 185\n\ttotal += 186\n\ttotal += 187\n\ttotal += 188\n\ttotal += 189\n\ttotal += 190\n\ttotal += 191\n\ttotal += 192\n\ttotal += 193\n\ttotal += 194\n\ttotal += 195\n\ttotal += 196\n\ttotal += 197\n\ttotal += 198\n\ttotal += 199\n\ttotal += 200\n\ttotal += 201\n\ttotal += 202\n\ttotal += 203\n\ttotal += 204\n\ttotal += 205\n\ttotal += 206\n\ttotal += 207\n\ttotal += 208\n\ttotal += 209\n\ttotal += 210\n\ttotal += 211\n\ttotal += 212\n\ttotal += 213\n\ttotal += 214\n\ttotal += 215\n\ttotal += 216\n\ttotal += 217\n\ttotal += 218\n\ttotal += 219\n\ttotal += 220\n\ttotal += 221\n\ttotal += 222\n\ttotal += 223\n\ttotal += 224\n\ttotal += 225\n\ttotal += 226\n\ttotal += 227\n\ttotal += 228\n\ttotal += 229\n\ttotal += 230\n\ttotal += 231\n\ttotal += 232\n\ttotal += 233\n\ttotal += 234\n\ttotal += 235\n\ttotal += 236\n\ttotal += 237\n\ttotal += 238\n\ttotal += 239\n\ttotal += 240\n\ttotal += 241\n\ttotal += 242\n\ttotal += 243\n\ttotal += 244\n\ttotal += 245\n\ttotal += 246\n\ttotal += 247\n\ttotal += 248\n\ttotal += 249\n\ttotal += 250\n\ttotal += 251\n\ttotal += 252\n\ttotal += 253\n\ttotal += 254\n\ttotal += 255\n\ttotal += 256\n\ttotal += 257\n\ttotal += 258\n\ttotal += 259\n\tprintln(total)\n}\n"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A 264-line Go code block. Declares process."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    }
+  ]
+}

@@ -97,6 +97,40 @@ func TestDegrade_StructuredVoicedNoChange(t *testing.T) {
 	}
 }
 
+// TestDegrade_CodeL2NoAdapter — code asked at L2 with no intelligence
+// adapter falls back to the deterministic count+decls gist at L2 with
+// Status=degraded and an intelligence_unavailable info diagnostic. It must
+// NOT downshift to L1 (the dedicated code-L2 branch sits before
+// degradeStructuredDownshift). The segment text must equal
+// deterministicCodeGist for the same body.
+func TestDegrade_CodeL2NoAdapter(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+	rb := rawBlock{text: "```go\nfunc factorial(n int) int {\n\treturn n\n}\n```", hint: hintCode, fenceInfo: "go"}
+	sm := plan.SourceMap{Kind: plan.SourceKindLineRange, StartLine: 1, EndLine: 5}
+	out := level(rb, plan.ClassCode, plan.L2, lex)
+	blk, diag := degrade(rb, plan.ClassCode, plan.L2, out, sm, lex)
+
+	if blk.Status != plan.StatusDegraded {
+		t.Errorf("code L2 without intel should be degraded, got %s", blk.Status)
+	}
+	if blk.Level != plan.L2 {
+		t.Errorf("code L2 degrade should stay at L2 (not downshift to L1), got level %d", blk.Level)
+	}
+	if blk.Provenance.VoicedBy != "planner" {
+		t.Errorf("code L2 degrade VoicedBy: want planner, got %s", blk.Provenance.VoicedBy)
+	}
+	if diag == nil || diag.Code != "intelligence_unavailable" || diag.Severity != "info" {
+		t.Errorf("expected intelligence_unavailable info diagnostic, got %+v", diag)
+	}
+	// Segment text matches deterministicCodeGist for the same body.
+	wantText, _ := deterministicCodeGist(stripFenceMarkers(rb.text), codeLangPhrase(rb.fenceInfo))
+	wantText = voice(wantText, lex)
+	if len(blk.Segments) != 1 || blk.Segments[0].Text != wantText {
+		t.Errorf("code L2 degrade text mismatch:\n want %q\n  got %+v", wantText, blk.Segments)
+	}
+}
+
 func TestDegrade_CodeL3DownshiftsToL1(t *testing.T) {
 	t.Parallel()
 	lex := compileLexicon()

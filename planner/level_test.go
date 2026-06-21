@@ -156,17 +156,193 @@ func TestLevel_CodeL1L2L3(t *testing.T) {
 		t.Errorf("code L1 missing lang: %q", l1.segments[0].Text)
 	}
 
+	// Code L2 below the gate now asks for an AI semantic gist: empty
+	// segments + needsIntelligence (issue #48). The deterministic decls
+	// still flow to the adapter as Facts, not as voiced segments.
 	l2 := level(rb, plan.ClassCode, plan.L2, lex)
-	if !strings.Contains(l2.segments[0].Text, "Declares") {
-		t.Errorf("code L2 missing decls: %q", l2.segments[0].Text)
+	if !l2.needsIntelligence {
+		t.Errorf("code L2 under the gate should need intelligence")
 	}
-	if !strings.Contains(l2.segments[0].Text, "One") || !strings.Contains(l2.segments[0].Text, "S") {
-		t.Errorf("code L2 missing identifier: %q", l2.segments[0].Text)
+	if len(l2.segments) != 0 {
+		t.Errorf("code L2 under the gate should emit no deterministic segments, got %+v", l2.segments)
+	}
+	if !factsContain(l2.facts, "decls: 2") {
+		t.Errorf("code L2 should carry decls fact for the adapter: %v", l2.facts)
 	}
 
 	l3 := level(rb, plan.ClassCode, plan.L3, lex)
 	if !l3.needsIntelligence {
 		t.Errorf("code L3 should need intelligence")
+	}
+}
+
+// factsContain — small test helper: true if any fact string contains sub.
+func factsContain(facts []string, sub string) bool {
+	for _, f := range facts {
+		if strings.Contains(f, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLevel_CodeL1ByteIdentical — explicit regression guard (issue #48,
+// Suggestion 3). L1 code behavior must stay BYTE-IDENTICAL after the L2
+// enrichment landed; the L1 arm of levelCode was not to be touched.
+func TestLevel_CodeL1ByteIdentical(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+	rb := rawBlock{text: "```go\npackage main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n```", hint: hintCode, fenceInfo: "go"}
+	got := level(rb, plan.ClassCode, plan.L1, lex)
+	if len(got.segments) != 1 {
+		t.Fatalf("code L1 should emit exactly one segment, got %d", len(got.segments))
+	}
+	const want = "A 5-line Go code block."
+	if got.segments[0].Text != want {
+		t.Errorf("code L1 text drifted:\n want %q\n  got %q", want, got.segments[0].Text)
+	}
+	if !got.deterministic || got.needsIntelligence {
+		t.Errorf("code L1 must stay deterministic with no intelligence: %+v", got)
+	}
+}
+
+// TestLevel_CodeL2Gate — the AI size-gate is behavioral: below the gate
+// levelCode asks for intelligence (empty segments); above it voices the
+// deterministic count+decls gist directly (no LLM, Status path = voiced),
+// with no size_gated fact anywhere. Boundary pinned at exactly
+// codeGistMaxLines and +1.
+func TestLevel_CodeL2Gate(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+
+	// codeBlock builds a fenced go block with n body lines and a single
+	// top-level decl seam so the body line count is deterministic.
+	codeBlock := func(bodyLines int) rawBlock {
+		var b strings.Builder
+		b.WriteString("```go\n")
+		b.WriteString("func process() {\n")
+		for i := 0; i < bodyLines-2; i++ {
+			fmt.Fprintf(&b, "\tx := %d\n", i)
+		}
+		b.WriteString("}\n")
+		b.WriteString("```")
+		return rawBlock{text: b.String(), hint: hintCode, fenceInfo: "go"}
+	}
+
+	cases := []struct {
+		name            string
+		bodyLines       int
+		wantIntel       bool
+		wantSegments    int
+		wantSizeGatedNo bool
+	}{
+		{"at_gate_needs_intel", codeGistMaxLines, true, 0, true},
+		{"plus_one_gated_voiced", codeGistMaxLines + 1, false, 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rb := codeBlock(tc.bodyLines)
+			// Confirm the fixture lands on the intended side of the gate.
+			if got := countLines(stripFenceMarkers(rb.text)); (got > codeGistMaxLines) == tc.wantIntel {
+				t.Fatalf("fixture line count %d is on the wrong side of gate %d for case %q", got, codeGistMaxLines, tc.name)
+			}
+			res := level(rb, plan.ClassCode, plan.L2, lex)
+			if res.needsIntelligence != tc.wantIntel {
+				t.Errorf("needsIntelligence = %v, want %v", res.needsIntelligence, tc.wantIntel)
+			}
+			if len(res.segments) != tc.wantSegments {
+				t.Errorf("segments = %d, want %d", len(res.segments), tc.wantSegments)
+			}
+			// No size_gated fact must ever be emitted — the gate is
+			// behavioral-only.
+			if factsContain(res.facts, "size_gated") {
+				t.Errorf("size_gated fact leaked into facts: %v", res.facts)
+			}
+		})
+	}
+}
+
+// TestDeterministicCodeGist — the shared helper produces the expected
+// raw string and decl count for representative inputs (with and without
+// top-level declarations). langPhrase is passed by the caller exactly as
+// codeLangPhrase produces it.
+func TestDeterministicCodeGist(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		body      string
+		lang      string
+		wantText  string
+		wantDecls int
+	}{
+		{
+			name:      "with_decls",
+			body:      "func main() {\n\tprintln(1)\n}",
+			lang:      "go",
+			wantText:  "A 3-line Go code block. Declares main.",
+			wantDecls: 1,
+		},
+		{
+			name:      "no_decls",
+			body:      "x := 1\ny := 2",
+			lang:      "go",
+			wantText:  "A 2-line Go code block.",
+			wantDecls: 0,
+		},
+		{
+			name:      "unfenced_no_lang",
+			body:      "echo hi",
+			lang:      "",
+			wantText:  "A 1-line code block.",
+			wantDecls: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotText, gotDecls := deterministicCodeGist(tc.body, codeLangPhrase(tc.lang))
+			if gotText != tc.wantText {
+				t.Errorf("text mismatch:\n want %q\n  got %q", tc.wantText, gotText)
+			}
+			if gotDecls != tc.wantDecls {
+				t.Errorf("decl count = %d, want %d", gotDecls, tc.wantDecls)
+			}
+		})
+	}
+}
+
+// TestCodeL2_GateAndDegradeByteIdentical — cross-path byte-identity
+// (issue #48, Suggestion 2). The SAME code body taken through (a) the
+// gated levelCode path and (b) the no-adapter degradeCodeL2 path must
+// produce byte-identical segment text, because both compute langPhrase
+// via codeLangPhrase and call deterministicCodeGist.
+func TestCodeL2_GateAndDegradeByteIdentical(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+	// An oversized (>gate) seamless block so the gated path voices
+	// deterministically rather than asking for intelligence.
+	var b strings.Builder
+	b.WriteString("```go\n")
+	b.WriteString("func process() {\n")
+	for i := 0; i < codeGistMaxLines+5; i++ {
+		fmt.Fprintf(&b, "\tx := %d\n", i)
+	}
+	b.WriteString("}\n")
+	b.WriteString("```")
+	rb := rawBlock{text: b.String(), hint: hintCode, fenceInfo: "go"}
+
+	gated := level(rb, plan.ClassCode, plan.L2, lex)
+	if len(gated.segments) != 1 {
+		t.Fatalf("gated path should voice one segment, got %d", len(gated.segments))
+	}
+	degraded, _ := degradeCodeL2(rb, plan.SourceMap{}, lex)
+	if len(degraded.Segments) != 1 {
+		t.Fatalf("degrade path should voice one segment, got %d", len(degraded.Segments))
+	}
+	if gated.segments[0].Text != degraded.Segments[0].Text {
+		t.Errorf("gate vs degrade text not byte-identical:\n gate     %q\n degraded %q",
+			gated.segments[0].Text, degraded.Segments[0].Text)
 	}
 }
 
