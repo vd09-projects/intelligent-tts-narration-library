@@ -1,7 +1,9 @@
-.PHONY: help build build-mcp test test-race test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
+ADDR ?= 127.0.0.1:8080
+CORS_ORIGIN ?= http://localhost:5173
 PLAYER_FIXTURE_DIR ?= player/public/fixtures/sample
 PLAYER_FIXTURE_DURATION ?= 2.0
 
@@ -9,6 +11,7 @@ help:
 	@echo "Targets:"
 	@echo "  build                  — go build ./..."
 	@echo "  build-mcp              — go build ./cmd/narrate-mcp (compile MCP server in isolation)"
+	@echo "  build-server           — go build ./cmd/narrate-server (compile HTTP escalate edge in isolation)"
 	@echo "  test                   — unit + golden fixtures (no audio, no subprocess)"
 	@echo "  test-race              — unit tests under the race detector (go test -race ./...)"
 	@echo "  test-manual            — end-to-end smoke with real Kokoro + afplay"
@@ -21,6 +24,7 @@ help:
 	@echo "  run-male               — narrate \$$SAMPLE at level 1, male voice"
 	@echo "  run-persistent         — narrate \$$SAMPLE via persistent sink → \$$OUT"
 	@echo "  run-mcp                — start the MCP stdio server (Ctrl-C to stop)"
+	@echo "  run-server             — start the localhost HTTP escalate server on \$$ADDR (Ctrl-C to stop)"
 	@echo "  sanity                 — go build + check scripts/kokoro present"
 	@echo "  clean                  — go clean -testcache"
 	@echo ""
@@ -39,6 +43,9 @@ build:
 
 build-mcp:
 	go build ./cmd/narrate-mcp
+
+build-server:
+	go build ./cmd/narrate-server
 
 test:
 	go test ./...
@@ -77,6 +84,9 @@ run-persistent:
 
 run-mcp:
 	go run ./cmd/narrate-mcp
+
+run-server:
+	go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN)
 
 sanity:
 	go build ./... && test -x scripts/kokoro && echo "ok: build + scripts/kokoro present"
