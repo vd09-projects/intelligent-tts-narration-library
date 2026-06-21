@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-errclass-classcaller-routes-to-500-on-server-patch
+    title: "ClassInternal is the zero value; ClassCaller routes to 500 on the server patch path (category-vs-wire split)"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [internal/errclass, cmd/narrate-server, cmd/narrate-mcp, error-classification, zero-value, fail-safe, wire-mapping, issue-51]
+    path: convention/2026-06-21-errclass-classcaller-routes-to-500-on-server-patch.md
+    summary: "Task #51 errclass owns CATEGORY only (no strings/HTTP codes/wrapping). DECISION 1: ClassInternal is the iota zero value so a forgotten/unrecognized/nil-classified path fails SAFE to internal — matching both roots' default branch (MCP 'internal_error: pipeline failure' / server 500 reasonInternal). DECISION 2: on the server patch path ClassCaller routes to 500 reasonInternal (falls through the existing default), NOT a 4xx — a deliberate category-vs-wire split where the SAME caller-class error (fs.ErrNotExist/ErrPermission) is 4xx invalid_argument on MCP but 500 on the server patch path. Each root owns its own Class->wire mapping; server adds no caller case; read-path source 400/404 in classifySourceErr untouched. Adding fs 4xx to the server patch path is out of scope. Revisit if a richer escalate contract needs caller errors surfaced as 4xx on the server."
+  - id: 2026-06-21-errclass-imports-mcpsampling-one-classifier-place
+    title: "errclass imports intelligence/mcpsampling so all shared classification lives in one place (Option A)"
+    date: 2026-06-21
+    status: accepted
+    category: architecture
+    tags: [internal/errclass, intelligence/mcpsampling, error-classification, import-coupling, layering, dedup, issue-51]
+    path: architecture/2026-06-21-errclass-imports-mcpsampling-one-classifier-place.md
+    summary: "Task #51 consolidated the duplicated caller-vs-internal-vs-cancel ladder (the // DUP marker) into internal/errclass. DECISION (Option A): errclass imports intelligence/mcpsampling solely to recognize its two adapter sentinels (ErrNoSamplingClient, ErrUnexpectedContentKind) and classify both as ClassInternal — keeping ALL shared classification in ONE place, honoring the prior fact that sampling sentinels route to internal. Rejected Option B (omit the sentinels, re-handle them at the MCP root): re-duplicates the very logic #51 consolidates and leaves MCP with two classifiers. P1 verified no import cycle (mcpsampling imports only plan/, intelligence/, MCP SDK; never reaches internal/) and no layering-lint flag. The latent coupling errclass -> intelligence/mcpsampling is documented as a named edge in the errclass.go package doc. Revisit (fall back to Option B for the two sentinels) if a cycle or layering flag appears."
+  - id: 2026-06-21-errclass-class-omits-isvalid-internal-return-type
+    title: "errclass.Class deliberately omits IsValid() (closed internal return type), keeps only String()"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [internal/errclass, typed-enum, isvalid, string-method, error-classification, issue-51]
+    path: convention/2026-06-21-errclass-class-omits-isvalid-internal-return-type.md
+    summary: "Task #51 introduced the errclass.Class typed enum. DECISION: it deliberately DEPARTS from the project's typed-enum-with-IsValid() convention (the #10/#23 sweep, plan/enums.go) — NO IsValid(). Rationale turns the convention's own trigger around: the #10/#23 enums carry IsValid() because they are parsed from wire / deserialized / user-supplied and need input validation; Class is a closed INTERNAL return type produced only by Classify, never parsed/deserialized/user-supplied, so there's no untrusted input to validate and IsValid() would be dead code. String() IS provided (the only method) for debuggability + readable test failures. The departure is documented in a doc comment on the Class type so the absence reads as intentional. Clarifies the convention applies to wire/parsed enums, not closed internal return types. Revisit if Class ever becomes serialized or built from untrusted input."
   - id: 2026-06-21-errnothingtopatch-maps-to-4xx-not-patchblock-change
     title: "Map a real ErrNothingToPatch to a 4xx (Option A); do NOT add already-at-level detection to persistent.PatchBlock (Option B rejected)"
     date: 2026-06-21
