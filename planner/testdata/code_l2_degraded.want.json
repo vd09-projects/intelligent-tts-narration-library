@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "code_l2_small.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 2,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "code",
+      "level": 2,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 2,
+        "end_line": 7,
+        "raw_excerpt": "func factorial(n int) int {\n\tif n \u003c= 1 {\n\t\treturn 1\n\t}\n\treturn n * factorial(n-1)\n}\n"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A 6-line Go code block. Declares factorial."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "intelligence_unavailable",
+      "severity": "info",
+      "message": "code block read at deterministic L2 (count + declarations) without an intelligence adapter",
+      "block_id": "b001"
+    }
+  ]
+}

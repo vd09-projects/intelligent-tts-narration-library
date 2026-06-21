@@ -3,6 +3,8 @@ package planner
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,9 +21,14 @@ import (
 type scriptedIntel struct {
 	replies []intelligence.IntelligenceResult
 	calls   int
+	// reqs captures every IntelligenceRequest the planner sent, in call
+	// order, so a test can assert the planner forwarded the deterministic
+	// Facts (e.g. the decls count) to the adapter.
+	reqs []intelligence.IntelligenceRequest
 }
 
-func (s *scriptedIntel) Voice(_ context.Context, _ intelligence.IntelligenceRequest) (intelligence.IntelligenceResult, error) {
+func (s *scriptedIntel) Voice(_ context.Context, req intelligence.IntelligenceRequest) (intelligence.IntelligenceResult, error) {
+	s.reqs = append(s.reqs, req)
 	idx := s.calls
 	s.calls++
 	if idx >= len(s.replies) {
@@ -128,6 +135,93 @@ func TestPlan_IntelligenceVoicesProse(t *testing.T) {
 	}
 	if got.Blocks[0].Provenance.VoicedBy != "intelligence" {
 		t.Errorf("VoicedBy: want intelligence, got %s", got.Blocks[0].Provenance.VoicedBy)
+	}
+}
+
+// TestPlan_CodeL2ForwardsDeclsToAdapter — issue #48: when a code block is
+// voiced at L2 through an intelligence adapter, the planner must forward
+// the deterministic decls count as a Fact so the adapter can frame its
+// one-line semantic gist. Asserts both the Fact made it into the request
+// and the adapter's reply was voiced.
+func TestPlan_CodeL2ForwardsDeclsToAdapter(t *testing.T) {
+	t.Parallel()
+	seams := deterministicSeams(t)
+	intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
+		{Text: "Computes the factorial of n recursively.", Model: "scripted@test"},
+	}}
+	src := "```go\nfunc factorial(n int) int {\n\treturn n\n}\n```\n"
+	got, err := Plan(context.Background(), stubDoc(src, "code.md"), Request{Level: plan.L2}, intel, seams...)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(got.Blocks) != 1 || got.Blocks[0].Status != plan.StatusVoiced {
+		t.Fatalf("code L2 with intel should voice one block, got %+v", got.Blocks)
+	}
+	if got.Blocks[0].Segments[0].Text != "Computes the factorial of n recursively." {
+		t.Errorf("scripted reply not voiced: %q", got.Blocks[0].Segments[0].Text)
+	}
+	if len(intel.reqs) != 1 {
+		t.Fatalf("adapter should have been called exactly once, got %d", len(intel.reqs))
+	}
+	req := intel.reqs[0]
+	if req.Class != plan.ClassCode {
+		t.Errorf("request Class: want code, got %q", req.Class)
+	}
+	if req.Level != plan.L2 {
+		t.Errorf("request Level: want L2, got %d", req.Level)
+	}
+	if !factsContain(req.Facts, "decls: 1") {
+		t.Errorf("request Facts missing decls count: %v", req.Facts)
+	}
+}
+
+// TestPlan_CodeL2GatedNeverCallsAdapter — issue #48: a code block above
+// the AI size gate (>codeGistMaxLines seamless body lines) requested at L2
+// must voice the deterministic structural gist WITHOUT ever billing the
+// intelligence adapter. The code_l2_oversized.md fixture is a 265-line
+// single-func body (one func seam → maybeSplit can't split it), so it lands
+// over the gate. This asserts the "gated path never bills the LLM" AC
+// airtight at the Plan() orchestrator level: the scripted adapter records
+// ZERO Voice invocations (intel.calls == 0), complementing the
+// code_l2_oversized_gate golden which proves it behaviorally via the
+// absent scripted reply.
+func TestPlan_CodeL2GatedNeverCallsAdapter(t *testing.T) {
+	t.Parallel()
+	seams := deterministicSeams(t)
+	// Scripted reply that MUST NOT be voiced — its presence in output
+	// would mean the gate failed and the adapter was called.
+	intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
+		{Text: "SHOULD NOT APPEAR", Model: "scripted@test"},
+	}}
+	data, err := os.ReadFile(filepath.Join("testdata", "code_l2_oversized.md"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	got, err := Plan(context.Background(), stubDoc(string(data), "code_l2_oversized.md"), Request{Level: plan.L2}, intel, seams...)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if intel.calls != 0 {
+		t.Errorf("gated code L2 must never bill the adapter, got %d call(s)", intel.calls)
+	}
+	if len(intel.reqs) != 0 {
+		t.Errorf("gated code L2 must send no IntelligenceRequest, got %d", len(intel.reqs))
+	}
+	if len(got.Blocks) != 1 {
+		t.Fatalf("want 1 block, got %d", len(got.Blocks))
+	}
+	blk := got.Blocks[0]
+	if blk.Status != plan.StatusVoiced {
+		t.Errorf("gated code L2 should be voiced (deterministic gist), got %s", blk.Status)
+	}
+	if blk.Provenance.VoicedBy != "planner" {
+		t.Errorf("gated code L2 should be voiced by planner, got %s", blk.Provenance.VoicedBy)
+	}
+	if len(blk.Segments) == 0 || blk.Segments[0].Text != "A 264-line Go code block. Declares process." {
+		t.Errorf("gated code L2 deterministic gist text wrong: %+v", blk.Segments)
+	}
+	if strings.Contains(blk.Segments[0].Text, "SHOULD NOT APPEAR") {
+		t.Errorf("scripted adapter reply leaked into gated output: %q", blk.Segments[0].Text)
 	}
 }
 

@@ -25,6 +25,28 @@ const (
 	structuredMaxChars = 2500 // midpoint of 2000-3000 range.
 )
 
+// codeGistMaxLines is the AI size-GATE for code at L2, distinct from the
+// split THRESHOLD above. The two do different jobs and must not be
+// confused:
+//
+//   - GATE (codeGistMaxLines): a code block whose line count exceeds this
+//     is NOT sent to the intelligence adapter at L2. It is voiced
+//     deterministically (count + declarations) with Status=voiced. The
+//     gate is a billing / quality safety net for very large blocks — it
+//     does NOT cut the block, it just declines the LLM call for it.
+//   - SPLIT (structuredMaxLines / structuredMaxChars, used by maybeSplit):
+//     chops an oversized block into child blocks at clean structural seams
+//     (func / type / top-level key / table row). It restructures; the gate
+//     does not.
+//
+// Coexistence (why the gate is not dead code): a >250-line code block is
+// usually already split by maybeSplit before leveling — UNLESS it has no
+// clean seam (splitOnLineMatch needs ≥2 seams, e.g. one long function body
+// or a flat run of indented statements). The gate is the safety net for
+// exactly those large, seamless code blocks that survive splitting and
+// reach levelCode whole.
+const codeGistMaxLines = 250
+
 // levelResult — what level() returns. The orchestrator inspects this to
 // decide whether to call an IntelligenceAdapter (needsIntelligence) and
 // how to assemble the final plan.Block.
@@ -313,17 +335,54 @@ func stripListMarker(line string) string {
 	return line
 }
 
-// levelCode — L1 = "a {N}-line {lang} code block". L2 = same plus enumerated
-// top-level declarations. L3 = marks needsIntelligence=true; degrade.go
-// downshifts to L2 if no intelligence is plugged in.
+// codeLangPhrase — the deterministic language phrase used in every code
+// gist string ("Go code", "Python code", or bare "code" for an unfenced
+// block). Centralised so the size-gate path in levelCode and the
+// no-adapter degrade path in degrade.go compute it IDENTICALLY — the two
+// deterministic strings must be byte-identical (issue #48, Suggestion 2).
+func codeLangPhrase(lang string) string {
+	lang = strings.TrimSpace(lang)
+	if lang == "" {
+		return "code"
+	}
+	return humanLang(lang) + " code"
+}
+
+// deterministicCodeGist — build the raw (un-voiced) deterministic code
+// gist body and the declaration count, shared by the L2 size-gate path
+// (levelCode) and the no-adapter degrade path (degradeCodeL2). The body
+// is "A {N}-line {langPhrase} block." plus, when decls are present,
+// " Declares {decls}." Callers apply voice(...) themselves before
+// emitting a Segment, so this stays a pure string builder.
+//
+// langPhrase MUST be codeLangPhrase(lang) at every call site — that is
+// what guarantees the gate and degrade paths emit byte-identical text.
+func deterministicCodeGist(body, langPhrase string) (string, int) {
+	nLines := countLines(body)
+	l1 := fmt.Sprintf("A %d-line %s block.", nLines, langPhrase)
+	decls := extractTopLevelDecls(body)
+	var spoken strings.Builder
+	spoken.WriteString(l1)
+	if len(decls) > 0 {
+		spoken.WriteString(" Declares ")
+		spoken.WriteString(strings.Join(decls, ", "))
+		spoken.WriteString(".")
+	}
+	return spoken.String(), len(decls)
+}
+
+// levelCode — L1 = "a {N}-line {lang} code block" (deterministic, free).
+// L2 = AI one-line semantic meaning-gist (needsIntelligence=true) for
+// blocks at or under the codeGistMaxLines gate; degrade.go falls back to
+// a deterministic count+decls gist when no adapter is plugged in. Over
+// the gate, L2 voices the deterministic count+decls gist directly (no LLM
+// call, Status=voiced). L3 = marks needsIntelligence=true; degrade.go
+// downshifts to L1 if no intelligence is plugged in.
 func levelCode(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 	body := stripFenceMarkers(rb.text)
 	nLines := countLines(body)
 	lang := strings.TrimSpace(rb.fenceInfo)
-	langPhrase := "code"
-	if lang != "" {
-		langPhrase = humanLang(lang) + " code"
-	}
+	langPhrase := codeLangPhrase(lang)
 	l1 := fmt.Sprintf("A %d-line %s block.", nLines, langPhrase)
 
 	facts := []string{
@@ -339,20 +398,27 @@ func levelCode(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 			facts:         facts,
 		}
 	case plan.L2:
-		decls := extractTopLevelDecls(body)
-		var spoken strings.Builder
-		spoken.WriteString(l1)
-		if len(decls) > 0 {
-			spoken.WriteString(" Declares ")
-			spoken.WriteString(strings.Join(decls, ", "))
-			spoken.WriteString(".")
+		gist, declCount := deterministicCodeGist(body, langPhrase)
+		facts = append(facts, fmt.Sprintf("decls: %d", declCount))
+		if nLines > codeGistMaxLines {
+			// Over the GATE — do NOT bill the LLM. Voice the deterministic
+			// count+decls gist directly with Status=voiced. The gate is
+			// observable only behaviorally (Status + Segments); no
+			// size_gated fact is emitted.
+			return levelResult{
+				segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(gist, lex)}},
+				provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
+				deterministic: true,
+				facts:         facts,
+			}
 		}
-		facts = append(facts, fmt.Sprintf("decls: %d", len(decls)))
+		// Under the gate — request an AI semantic gist. Empty segments
+		// signal the orchestrator to call the adapter (or degrade.go to
+		// fall back deterministically when none is plugged in).
 		return levelResult{
-			segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(spoken.String(), lex)}},
-			provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
-			deterministic: true,
-			facts:         facts,
+			provenance:        plan.Provenance{LevelAsked: target},
+			needsIntelligence: true,
+			facts:             facts,
 		}
 	case plan.L3:
 		// Line-by-line meaning needs intelligence.

@@ -8,6 +8,38 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-22-code-l2-size-gate-observed-behaviorally-no-schema-field
+    title: "Code L2 size-gate is observed behaviorally (no `size_gated` plan field)"
+    date: 2026-06-22
+    status: accepted
+    category: convention
+    tags: [planner, levelCode, size-gate, plan-schema, additive-compatible, no-io-invariant, honesty-rule, observability, issue-48]
+    path: convention/2026-06-22-code-l2-size-gate-observed-behaviorally-no-schema-field.md
+    summary: "Implementation of issue #48's code-L2 size-gate (skip the LLM for blocks over ~250 lines, voice the deterministic gist instead). Question: how does the system signal a block was gated vs AI-gisted? DECISION (Option A): observe it BEHAVIORALLY — a gated block is Status=voiced + deterministic count+decls text + NO AI reply (no intelligence request emitted), indistinguishable in the plan from any other deterministically-voiced block. NO `size_gated` fact is ever emitted; a test (TestLevel_CodeL2Gate) pins the boundary at exactly codeGistMaxLines AND asserts the fact never leaks. Rejected Option B (add a `size_gated` Facts/Diagnostic schema field): permanent additive-schema surface for an internal optimization with no consumer, threads diagnostic state through the pure planner. Rationale: the gate is a cost optimization, not part of the narration contract; both the additive-schema rule and the planner purity/no-I/O invariant argue against minting an unconsumed field. Revisit if real operator tooling needs to declare gated blocks — add an additive fact then, justified by that consumer."
+  - id: 2026-06-22-code-l2-deterministic-gist-shared-helper
+    title: "Code L2 deterministic gist shared by degrade and size-gate paths (single helper, byte-identical)"
+    date: 2026-06-22
+    status: accepted
+    category: convention
+    tags: [planner, levelCode, degrade, size-gate, deterministicCodeGist, codeLangPhrase, honesty-rule, dry, yagni, issue-48]
+    path: convention/2026-06-22-code-l2-deterministic-gist-shared-helper.md
+    summary: "Issue #48 code-L2 created two paths that must voice the SAME deterministic count+decls gist: the no-adapter degrade path (degrade.go, Status=degraded) and the size-gate path (levelCode, Status=voiced). They must be byte-identical — the size-gate's behavioral-observability decision rests on the gated block's text matching a normal deterministic block. DECISION (Option A): both call a single deterministicCodeGist(body, langPhrase) helper, with langPhrase ALWAYS from a single codeLangPhrase(lang) — so output is byte-identical by construction, drift impossible without changing the shared helper. Contract ('langPhrase MUST be codeLangPhrase(lang) at every call site') backed by doc comments at both call sites + a test pinning the degrade segment to deterministicCodeGist. Rejected Option B (a per-class levelResult.deterministicFallback field) as YAGNI — only code needs it today, the field would be dead for every other class. Revisit if a second structured class needs the same degrade+size-gate fallback (two consumers justify the generic field then)."
+  - id: 2026-06-22-code-semantic-gist-l2-only
+    title: "AI semantic gist for code at L2 only (keep L1 free/instant/deterministic)"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [planner, levelCode, intelligence, leveling, cost-model, deterministic-l1, core-invariant, honesty-rule, issue-48]
+    path: tradeoff/2026-06-22-code-semantic-gist-l2-only.md
+    summary: "Issue #48 unblocked. Code blocks only got a real 'what this code does' gist at L3+intelligence; default L1 was a bare line count. DECISION (Option 1 of 3): enrich at L2 ONLY — L1 keeps today's deterministic count, L2 sets needsIntelligence=true for a one-line meaning gist with honesty fallback to deterministic count/decls when no adapter (possibly size-gated to skip ~200-300+ line blocks). Rejected Option 2 (L1 behind opt-in flag — more surface, no L1 benefit user wanted) and Option 3 (full L1 AI gist by default — breaks the deterministic-L1 invariant, bills tokens+latency on every code block in every doc, needs explicit sign-off). Rationale: the deterministic-L1 invariant ('Deterministic L1 for structured classes') is load-bearing — the free/instant/zero-token property that makes the leveling cost story work; Option 1 delivers the gist one escalation away while leaving it intact, consistent with 'enriches L2/L3'. Same shape as the #47 table decision. Revisit Option 2/3 if demand for meaning-at-default-level grows."
+  - id: 2026-06-22-table-meaning-summary-via-intelligence-l2-l3
+    title: "Wire intelligence into table meaning-summary at L2/L3 (L1 stays deterministic)"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [planner, levelTable, intelligence, leveling, cost-model, structured-classes, honesty-rule, issue-47]
+    path: tradeoff/2026-06-22-table-meaning-summary-via-intelligence-l2-l3.md
+    summary: "Issue #47 unblocked. levelTable was fully deterministic at every level (L1 shape, L2 headers+first+last row, L3 every row raw) — a table was never interpreted, unlike levelDiagram which already sets needsIntelligence=true at L2/L3. DECISION (Option A): L1 stays deterministic (shape); L2/L3 set needsIntelligence=true and pass table facts (cols/rows/headers) via IntelligenceRequest.Facts for a meaning summary; no adapter -> degrade to deterministic header/row reading, never fabricate. Rejected Option B (L3 only — leaves a smaller version of the same diagram inconsistency, L2 still meaningless) and Option C (reject — tables stay the one structured class with no interpretation path). Rationale: aligns with existing rule 'intelligence enriches L2/L3 for structured classes'; diagrams already do this, so this is a consistency fix, not a new cost model — hence accepted without the heavier sign-off #48 needed. Caching by (hash,level,model) means escalation doesn't re-bill. Revisit if the L1-deterministic property is ever pushed up to L2."
   - id: 2026-06-21-errclass-classcaller-routes-to-500-on-server-patch
     title: "ClassInternal is the zero value; ClassCaller routes to 500 on the server patch path (category-vs-wire split)"
     date: 2026-06-21

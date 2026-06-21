@@ -48,6 +48,9 @@ func goldenCases() []goldenCase {
 		{name: "prose_degraded_verbatim", inputFile: "prose_l1_short.md", level: plan.L1, intel: nil},
 		{name: "prose_refused_too_large", inputFile: "prose_refused_too_large.md", level: plan.L1, intel: nil},
 		{name: "code_l1", inputFile: "code_l1.md", level: plan.L1, intel: nil},
+		{name: "code_l2_intel", inputFile: "code_l2_small.md", level: plan.L2, intel: scripted("Computes the factorial of n recursively.")},
+		{name: "code_l2_degraded", inputFile: "code_l2_small.md", level: plan.L2, intel: nil},
+		{name: "code_l2_oversized_gate", inputFile: "code_l2_oversized.md", level: plan.L2, intel: scripted("SHOULD NOT APPEAR")},
 		{name: "config_l1", inputFile: "config_l1.md", level: plan.L1, intel: nil},
 		{name: "table_l1", inputFile: "table_l1.md", level: plan.L1, intel: nil},
 		{name: "diagram_l1", inputFile: "diagram_l1.md", level: plan.L1, intel: nil},
@@ -72,6 +75,7 @@ func TestGoldenFixtures(t *testing.T) {
 			// the order tests run.
 			if si, ok := tc.intel.(*scriptedIntel); ok && si != nil {
 				si.calls = 0
+				si.reqs = nil
 			}
 			got, err := Plan(context.Background(), doc, Request{Level: tc.level}, tc.intel, seams...)
 			if err != nil {
@@ -107,6 +111,36 @@ func TestGoldenFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGolden_CodeL1ByteIdentical — explicit, dedicated regression guard
+// (issue #48, Suggestion 3). The L2 enrichment must NOT perturb L1 code
+// output. This reads the frozen code_l1.want.json and asserts the freshly
+// produced plan is byte-identical, independent of the table-driven loop
+// above so a maintainer sees the L1-stability contract named directly.
+func TestGolden_CodeL1ByteIdentical(t *testing.T) {
+	seams := deterministicSeams(t)
+	data, err := os.ReadFile(filepath.Join("testdata", "code_l1.md"))
+	if err != nil {
+		t.Fatalf("read code_l1.md: %v", err)
+	}
+	got, err := Plan(context.Background(), stubDoc(string(data), "code_l1.md"), Request{Level: plan.L1}, nil, seams...)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	gotBytes, err := json.MarshalIndent(got, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	gotBytes = append(gotBytes, '\n')
+	wantBytes, err := os.ReadFile(filepath.Join("testdata", "code_l1.want.json"))
+	if err != nil {
+		t.Fatalf("read code_l1.want.json: %v", err)
+	}
+	if string(gotBytes) != string(wantBytes) {
+		t.Errorf("code_l1 golden drifted — L1 code behavior must stay byte-identical:\n--- want ---\n%s\n--- got ---\n%s",
+			string(wantBytes), string(gotBytes))
 	}
 }
 
