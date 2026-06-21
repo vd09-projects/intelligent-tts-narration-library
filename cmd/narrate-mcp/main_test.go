@@ -524,7 +524,7 @@ func TestSpeakArgs_ValidIntelligence_Accepted(t *testing.T) {
 // nil adapter (planner takes its deterministic+degraded path).
 func TestBuildIntelligence_NoneReturnsNil(t *testing.T) {
 	t.Parallel()
-	got := buildIntelligence(speakArgs{Intelligence: "none"})
+	got := buildIntelligence(speakArgs{Intelligence: "none"}, mcpsampling.NewServerCache(mcpsampling.DefaultCacheCapacity))
 	if got != nil {
 		t.Errorf("want nil for Intelligence=none, got %T", got)
 	}
@@ -534,7 +534,7 @@ func TestBuildIntelligence_NoneReturnsNil(t *testing.T) {
 // => non-nil concrete adapter.
 func TestBuildIntelligence_McpsamplingReturnsAdapter(t *testing.T) {
 	t.Parallel()
-	got := buildIntelligence(speakArgs{Intelligence: "mcpsampling"})
+	got := buildIntelligence(speakArgs{Intelligence: "mcpsampling"}, mcpsampling.NewServerCache(mcpsampling.DefaultCacheCapacity))
 	if got == nil {
 		t.Fatalf("want non-nil adapter for Intelligence=mcpsampling, got nil")
 	}
