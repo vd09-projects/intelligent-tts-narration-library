@@ -6,9 +6,10 @@
 /bin/
 vendor/
 
-# Compiled binaries dropped at repo root by `make build` / `make build-mcp`
+# Compiled binaries dropped at repo root by `make build` / `make build-mcp` / `make build-server`
 /narrate
 /narrate-mcp
+/narrate-server
 
 # Node / React (player/)
 node_modules/
