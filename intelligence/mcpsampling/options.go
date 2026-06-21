@@ -69,19 +69,42 @@ func WithPromptTemplates(m map[plan.Class]PromptTemplate) Option {
 	}
 }
 
-// WithCache injects a Cache implementation. Defaults to nil — when nil,
-// Voice() skips the cache wrapper entirely. Production wiring in
-// cmd/narrate-mcp (Phase 5) passes NewInMemoryCache() with per-call
-// lifetime.
+// WithCache injects a plain Cache implementation (the unbounded
+// inMemoryCache tier — tests / per-call use). Defaults to nil; when nil,
+// Voice() skips the cache wrapper entirely.
 //
-// Setting WithCache also allocates the per-adapter last-known-model
-// map used by the two-phase lookup (see cache.go). Without it, the
-// lookup has no way to build the full CacheKey BEFORE the call.
+// This is the LEGACY / per-call path: it allocates a per-Adapter
+// last-known-model map (cacheLookupState) for the two-phase lookup.
+// That per-call last-known map is exactly what issue #25 proved cannot
+// support cross-call hits — a fresh Adapter per tool call starts empty
+// and misses though the answer sits in a shared cache. Production wiring
+// must use WithServerCache instead, which shares the last-known map at
+// server lifetime.
 func WithCache(c Cache) Option {
 	return func(a *Adapter) {
 		a.cache = c
-		if c != nil && a.cacheLookup == nil {
-			a.cacheLookup = newCacheLookupState()
+		if c != nil && a.lastKnownStore == nil {
+			a.lastKnownStore = newCacheLookupState()
 		}
+	}
+}
+
+// WithServerCache injects the server-lifetime ServerCache handle. This
+// is the PRODUCTION path: the same *ServerCache supplies BOTH the
+// bounded LRU (as the Cache) AND the shared last-known-model map (as the
+// lastKnownStore). Because every Adapter built per tool call shares one
+// handle, a second Voice() for an already-cached key hits without a
+// client call — the cross-call fix issue #25 exists for. It deliberately
+// does NOT allocate a per-call cacheLookupState; reintroducing one would
+// re-break cross-call hits.
+//
+// A nil handle is a no-op (caching stays off), matching WithCache(nil).
+func WithServerCache(sc *ServerCache) Option {
+	return func(a *Adapter) {
+		if sc == nil {
+			return
+		}
+		a.cache = sc
+		a.lastKnownStore = sc
 	}
 }

@@ -62,11 +62,13 @@ type Adapter struct {
 	clientID        string
 	promptTemplates map[plan.Class]PromptTemplate
 	cache           Cache
-	// cacheLookup tracks the per-clientID last-known actualModel so the
-	// two-phase cache lookup can build the full CacheKey BEFORE the
-	// call. Allocated lazily when WithCache is supplied; nil when
-	// caching is off.
-	cacheLookup *cacheLookupState
+	// lastKnownStore tracks the per-clientID last-known actualModel so the
+	// two-phase cache lookup can build the full CacheKey BEFORE the call.
+	// Sourced from the wired cache: when a *ServerCache is supplied it is
+	// the SHARED, server-lifetime store (the cross-call fix, issue #25);
+	// when a plain Cache is supplied a per-call cacheLookupState is
+	// allocated as the legacy/test fallback. nil when caching is off.
+	lastKnownStore lastKnownStore
 }
 
 // Compile-time assertion: *Adapter satisfies intelligence.IntelligenceAdapter.
@@ -75,8 +77,9 @@ var _ intelligence.IntelligenceAdapter = (*Adapter)(nil)
 // New constructs an Adapter. Defaults follow the plan's coarse heuristic
 // (MaxTokens scales with level), use "unknown" as the clientID when
 // WithClientID is not supplied, and pull DefaultPromptTemplates from
-// prompts.go. The production wiring in cmd/narrate-mcp (Phase 5) passes
-// WithClientID("narrate-mcp") and a per-call in-memory cache.
+// prompts.go. The production wiring in cmd/narrate-mcp passes
+// WithClientID("narrate-mcp") and WithServerCache(<shared handle>) so
+// the cache and last-known map live at server lifetime (issue #25).
 func New(opts ...Option) *Adapter {
 	a := &Adapter{
 		maxTokensL1:     600,
