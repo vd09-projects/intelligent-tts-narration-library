@@ -32,6 +32,30 @@ decisions:
     tags: [cmd/narrate-server, http-escalate, narrateresult, readback, persistent-sink, readmanifest, seam-gap, plan-schema, issue-49]
     path: architecture/2026-06-21-escalate-response-from-on-disk-readback-not-narrateresult.md
     summary: "Issue #49 escalate endpoint must return the updated Block/BlockTiming/audio_ref after PatchBlock, but NarrateResult does NOT expose them (build-review seam gap R1). DECISION (Option A): shape the response from post-patch ON-DISK state — read plan.json + manifest.json back from the patched outDir, which are the authoritative post-patch artifacts — and add an ADDITIVE exported persistent.ReadManifest, rather than changing plan/ (engine-neutral, zero-deps) or NarrateResult's contract (Option B, larger blast radius). Read-back is correct-by-construction (matches what was persisted) and minimal-surface. Accepted WITH the explicit note that R1 remains a known seam gap: a future NarrateResult enrichment could close it and let the handler drop the read-back. Same package-scope-read-side pattern as persistent.CheckStale. Revisit (drop read-back) if NarrateResult is enriched to expose updated block state."
+  - id: 2026-06-21-list-ordinal-cue-spelled-to-ten-numeric-beyond
+    title: "List item ordinal cue: spelled ordinals 1–10, numeric 'item N' fallback beyond ten"
+    date: 2026-06-21
+    status: accepted
+    category: algorithm
+    tags: [list, ordinals, voicing, planner, ticket-45]
+    path: algorithm/2026-06-21-list-ordinal-cue-spelled-to-ten-numeric-beyond.md
+    summary: "Ticket #45 list voicing. Items 1–10 get spelled ordinals from a frozen First..Tenth lookup table; items 11+ use a numeric 'item N' fallback rather than spelled ordinals past ten. Deliberate: avoids building/maintaining a general ordinal-spelling engine, and keeps long lists legible (spoken 'item 23' tracks better than 'twenty-third'). Cue style intentionally changes shape at the 10→11 boundary. Rejected: spelled ordinals for all items (needs full speller for tens/hundreds/compounds; long spelled ordinals hurt listener tracking). Revisit if the boundary reads as jarring or a general ordinal speller arrives for another reason."
+  - id: 2026-06-21-list-preamble-titled-reuses-source-bare-generates
+    title: "List preamble: titled list reuses the source title, bare list generates 'List of N items.'"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [list, preamble, honesty-rule, voicing, planner, ticket-45]
+    path: convention/2026-06-21-list-preamble-titled-reuses-source-bare-generates.md
+    summary: "Ticket #45 list voicing. A list with a preceding source title reuses that title as the spoken preamble, normalising a trailing colon to a period ('Steps to deploy:' → 'Steps to deploy.'). A bare list with no preceding label generates a synthetic 'List of N items.' preamble. Honesty-rule rationale: speak the real source label rather than fabricate one; only fall back to a factual generated preamble (asserts only a true count, invents no topic) when no source label exists. Depends on colon-gated title detection to pick the branch."
+  - id: 2026-06-21-colon-gated-list-title-detection-goldmark
+    title: "Colon-gated list title detection under goldmark marker stripping"
+    date: 2026-06-21
+    status: accepted
+    category: tradeoff
+    tags: [list, title-detection, goldmark, heuristic, false-positive, planner, ticket-45]
+    path: tradeoff/2026-06-21-colon-gated-list-title-detection-goldmark.md
+    summary: "Ticket #45. goldmark strips the first list item's marker, so the planner cannot structurally tell a true preceding title line from a de-markered first item — both surface as plain text ahead of the list. Constraint-driven heuristic: a trailing colon on the preceding line promotes it to a title (eligible for the titled-preamble branch). Documented, accepted false-positive direction: a genuine first item ending in ':' can be mis-promoted to a title and dropped from the spoken items. Bias chosen knowingly — the colon is the only reliable distinguishing signal left, and titled intro lines ending in ':' are far more common than items ending in ':'. Rejected: AST/structural detection (signal already gone). Revisit if the segmenter changes or the false positive shows up in real input."
   - id: 2026-06-21-planner-test-seam-race-thread-clock-planid-per-call
     title: "Fix planner test-seam data race by threading clock/plan-id seams per-call (Option B)"
     date: 2026-06-21

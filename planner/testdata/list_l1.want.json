@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01TESTPLANID0000000000000Z",
+  "created_at": "2026-06-18T12:00:00Z",
+  "source": {
+    "kind": "file",
+    "uri": "list_l1.md",
+    "content_hash": "deadbeef",
+    "adapter": "test@0.0.1"
+  },
+  "defaults": {
+    "level": 1,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "list",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 3,
+        "raw_excerpt": "alpha\n- beta\n- gamma"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "List of 3 items. First, alpha. Second, beta. Third, gamma."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true,
+        "level_asked": 1
+      }
+    }
+  ]
+}
