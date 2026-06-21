@@ -85,6 +85,29 @@ type voiceOptions struct {
 	// when parallel tests install distinct seams.
 	clock  func() time.Time
 	planID func() string
+	// concurrencyLimit — max in-flight intel.Voice calls during the
+	// Voice pass. 0 or negative means "use defaultIntelligenceConcurrency".
+	// Set via WithMaxIntelligenceConcurrency. limit=1 yields a fully
+	// serial fan-out — the sequential test oracle.
+	concurrencyLimit int
+}
+
+// defaultIntelligenceConcurrency bounds the concurrent intel.Voice
+// fan-out during the Voice pass when the caller has not set a limit.
+// Chosen as 4: high enough to overlap several LLM round-trips, low
+// enough to stay polite to the Anthropic API and avoid burst 429s on a
+// hobby key.
+const defaultIntelligenceConcurrency = 4
+
+// WithMaxIntelligenceConcurrency — cap the number of concurrent
+// intel.Voice calls the planner's Voice pass issues. n <= 0 (or unset)
+// falls back to defaultIntelligenceConcurrency. n == 1 makes the Voice
+// pass fully serial — the sequential oracle used by the determinism
+// tests.
+func WithMaxIntelligenceConcurrency(n int) VoiceOption {
+	return func(o *voiceOptions) {
+		o.concurrencyLimit = n
+	}
 }
 
 // WithLexicon — overlay extra on top of DefaultLexicon. User entries
