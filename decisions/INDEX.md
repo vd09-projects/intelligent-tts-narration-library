@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-errnothingtopatch-maps-to-4xx-not-patchblock-change
+    title: "Map a real ErrNothingToPatch to a 4xx (Option A); do NOT add already-at-level detection to persistent.PatchBlock (Option B rejected)"
+    date: 2026-06-21
+    status: accepted
+    category: error-handling
+    tags: [cmd/narrate-server, http-escalate, errnothingtopatch, persistent-sink, patchblock, idempotency, dependency-contract, issue-49]
+    path: error-handling/2026-06-21-errnothingtopatch-maps-to-4xx-not-patchblock-change.md
+    summary: "Issue #49 HTTP escalate endpoint. Build review found the plan's B3/B5 idempotency premise was FALSE against live persistent.PatchBlock — which returns ErrNothingToPatch only for an INCOMPLETE/absent persistent-sink dir, NOT for a block already at the requested level (a same-level escalate flows through the happy path and re-renders content-identical bytes). DECISION (Option A): map a real ErrNothingToPatch to a 4xx source_not_found-class error (correct, since the sentinel means 'no complete prior output to patch into'), and document same-level-escalate convergence as happening via content-identical re-render through the happy path — no special-casing. Rejected Option B (add already-at-level detection to persistent.PatchBlock): overloads a shared dependency's error contract for marginal re-render savings on a local hobby tool and risks the existing offline --block patch path. Accepted cost: same-level escalate does a wasted re-render. Revisit if PatchBlock gains a real notion of current level."
+  - id: 2026-06-21-loopback-enforcement-refuse-to-start-on-non-loopback-bind
+    title: "Loopback enforcement — refuse to start (non-zero exit) on any non-loopback bind host, not bind-all-then-filter"
+    date: 2026-06-21
+    status: accepted
+    category: security
+    tags: [cmd/narrate-server, http-escalate, loopback, bind-host, local-only, fail-closed, secrets, issue-49]
+    path: security/2026-06-21-loopback-enforcement-refuse-to-start-on-non-loopback-bind.md
+    summary: "cmd/narrate-server (issue #49) introduces an HTTP network surface to a local-only tool that may speak secrets aloud. DECISION (Option A): the server REFUSES TO START (non-zero exit) if the bind host is not a loopback address, rather than binding all interfaces and filtering requests at runtime (Option B). Fail-closed by construction — you cannot accidentally expose the server if it refuses to bind a public interface in the first place; the dangerous publicly-bound-socket state never exists. Aligns with the local-only CLAUDE.md posture + the gotcha that secrets may be read aloud on the user's machine. Misconfig surfaces as an immediate loud startup failure, not a silent runtime hole. Rejected Option B (bind-all-then-filter): fail-open; a filter bug or future refactor re-exposes it. Revisit only paired with an explicit auth story if a real remote/multi-host use case appears."
+  - id: 2026-06-21-escalate-response-from-on-disk-readback-not-narrateresult
+    title: "Escalate response shaped from post-patch on-disk read-back (plan.json + manifest.json), not from NarrateResult; add additive persistent.ReadManifest"
+    date: 2026-06-21
+    status: accepted
+    category: architecture
+    tags: [cmd/narrate-server, http-escalate, narrateresult, readback, persistent-sink, readmanifest, seam-gap, plan-schema, issue-49]
+    path: architecture/2026-06-21-escalate-response-from-on-disk-readback-not-narrateresult.md
+    summary: "Issue #49 escalate endpoint must return the updated Block/BlockTiming/audio_ref after PatchBlock, but NarrateResult does NOT expose them (build-review seam gap R1). DECISION (Option A): shape the response from post-patch ON-DISK state — read plan.json + manifest.json back from the patched outDir, which are the authoritative post-patch artifacts — and add an ADDITIVE exported persistent.ReadManifest, rather than changing plan/ (engine-neutral, zero-deps) or NarrateResult's contract (Option B, larger blast radius). Read-back is correct-by-construction (matches what was persisted) and minimal-surface. Accepted WITH the explicit note that R1 remains a known seam gap: a future NarrateResult enrichment could close it and let the handler drop the read-back. Same package-scope-read-side pattern as persistent.CheckStale. Revisit (drop read-back) if NarrateResult is enriched to expose updated block state."
   - id: 2026-06-21-planner-test-seam-race-thread-clock-planid-per-call
     title: "Fix planner test-seam data race by threading clock/plan-id seams per-call (Option B)"
     date: 2026-06-21
