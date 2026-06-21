@@ -93,8 +93,11 @@ export function useFixture(): FixtureState {
 
 function collectFixtureWarnings(plan: NarrationPlan, manifest: Manifest): string[] {
   const w: string[] = []
-  if (plan.schema_version && plan.schema_version !== EXPECTED_PLAN_SCHEMA) {
-    w.push(`plan.json schema_version ${plan.schema_version} differs from expected ${EXPECTED_PLAN_SCHEMA}.`)
+  // Compare MAJOR version only — CLAUDE.md: "additive-compatible within a
+  // major schema_version". "1.0" / "1.3" are all compatible with major "1".
+  const planMajor = String(plan.schema_version).split('.')[0]
+  if (plan.schema_version && planMajor !== EXPECTED_PLAN_SCHEMA) {
+    w.push(`plan.json schema_version ${plan.schema_version} differs from expected major ${EXPECTED_PLAN_SCHEMA}.`)
   }
   if (typeof manifest.schema_version === 'number' && manifest.schema_version !== EXPECTED_MANIFEST_SCHEMA) {
     w.push(`manifest.json schema_version ${manifest.schema_version} differs from expected ${EXPECTED_MANIFEST_SCHEMA}.`)

@@ -106,17 +106,26 @@ export function usePlayback(
       }
     }
     const settle = () => {
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-      // Emit one tick so the UI shows the resting state correctly.
+      // Emit one tick so the UI reflects the new playhead immediately.
       const tMs = Math.max(0, Math.floor(el.currentTime * 1000))
       const next = findActiveBlock(sortedBlocks, tMs)
       if (next !== activeRef.current) {
         activeRef.current = next
         setActiveBlockId(next)
         setCurrentTimeMs(tMs)
+      }
+      // Only tear the rAF loop down when playback has actually stopped.
+      // A 'seeked' fired mid-playback (e.g. a Seek-then-play click, where
+      // 'seeked' lands AFTER 'play' started the loop) must NOT kill the loop —
+      // otherwise the highlight freezes at the seek target while audio keeps
+      // running. Keep/restart the loop while playing; cancel only on pause/end.
+      if (el.paused || el.ended) {
+        if (rafRef.current != null) {
+          cancelAnimationFrame(rafRef.current)
+          rafRef.current = null
+        }
+      } else if (rafRef.current == null) {
+        rafRef.current = requestAnimationFrame(() => tickRef.current())
       }
     }
 
