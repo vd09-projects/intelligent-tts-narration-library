@@ -32,6 +32,46 @@ decisions:
     tags: [planner, concurrency, errgroup, determinism, race-freedom, diagnostics, issue-46]
     path: architecture/2026-06-22-planner-fanout-positional-diagnostics-slotting.md
     summary: "Issue #46 parallelizes per-block intelligence Voice calls in the pure no-I/O planner, whose output (incl. Diagnostics) must be deterministic. DECISION: each worker writes into a positionally-owned blockResult{block,diags} entry indexed by block position and never touches out.Diagnostics; the main goroutine flattens []blockResult into out.Diagnostics in index order only after the errgroup g.Wait() barrier. Rejected goroutine-appending to a shared out.Diagnostics slice (data race + scheduling-dependent, non-deterministic order, breaks golden plan.json fixtures). Rationale: disjoint index ownership = race-free; index-order flatten = deterministic, matches prior serial order, keeps go test -race clean and fixtures valid."
+  - id: 2026-06-22-player-playback-unit-stays-whole-audio-wav
+    title: "Player playback unit stays the whole audio.wav; re-point only the playing block on patch"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [player, escalate, block-level-sync, audio-playback, react, issue-50]
+    path: architecture/2026-06-22-player-playback-unit-stays-whole-audio-wav.md
+    summary: "Task #50 in-place Escalate buttons. The player's playback unit stays the single whole audio.wav blob (honoring the block-level-sync invariant). On a block patch: re-point/re-fetch the blob ONLY when the patched block is the one currently playing; otherwise just update manifest offsets in state. Rejected per-block <audio> elements — that drifts toward the word/segment-level sync the core invariant forbids."
+  - id: 2026-06-22-useplayback-reset-on-block-id-signature-not-manifest-identity
+    title: "usePlayback tracking-reset keyed on sorted block-id signature, not top-level manifest identity"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [player, escalate, usePlayback, react, reconcileManifest, identity, highlight, issue-50]
+    path: architecture/2026-06-22-useplayback-reset-on-block-id-signature-not-manifest-identity.md
+    summary: "Task #50. usePlayback resets active-block tracking on a sorted block-id signature (the real directory-swap signal), NOT on bare top-level manifest object identity. reconcileManifest deliberately changes top-level identity on every patch, so an identity-keyed reset would fire on every escalation and wipe the paused highlight (R7). The block-id set is stable across patches but changes on a true directory swap. Rejected: bare object-identity reset. Revisit if a patch can ever add/remove block ids (block split/merge)."
+  - id: 2026-06-22-topbar-manual-absolute-dir-field-enables-server-escalate
+    title: "Manual absolute-path dir field in TopBar is the server-mode escalate enabler"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [player, escalate, server-mode, topbar, absolute-path, browser-fs, go-server, issue-50]
+    path: architecture/2026-06-22-topbar-manual-absolute-dir-field-enables-server-escalate.md
+    summary: "Task #50 server mode. The Go escalate server needs a real absolute FS path (filepath.Abs -> readManifest). No browser file loader exposes a real absolute path, so a manual absolute-path dir text field in the TopBar is the go/no-go enabler for server-mode escalation. Rejected deriving the dir from the existing fixture/picker loaders — browsers hide the true path, so it is impossible."
+  - id: 2026-06-22-reconcilemanifest-preserves-per-block-identity
+    title: "reconcileManifest preserves per-block object identity for React.memo short-circuit"
+    date: 2026-06-22
+    status: accepted
+    category: performance
+    tags: [player, escalate, reconcileManifest, react-memo, BlockRow, rerender, identity, issue-50]
+    path: performance/2026-06-22-reconcilemanifest-preserves-per-block-identity.md
+    summary: "Task #50. reconcileManifest returns the prior per-block object reference when a block is deep-equal, giving a new reference only to the patched block. React.memo(BlockRow) then short-circuits every unchanged sibling, so only the patched row re-renders — satisfying 'zero re-render on other rows'. Chosen over wholesale manifest overwrite (which would re-render the whole list). Note: it deliberately DOES change top-level manifest identity per patch, which is why the usePlayback reset must not key on top-level identity."
+  - id: 2026-06-22-server-mode-refetch-resolves-against-fixture-base
+    title: "Server-mode re-fetch resolves against FIXTURE_BASE, not an arbitrary server dir (phase-one limitation)"
+    date: 2026-06-22
+    status: revisit-later
+    category: tradeoff
+    tags: [player, escalate, server-mode, repointAudio, reloadManifest, fixture-base, phase-one-limitation, deferred, issue-50]
+    path: tradeoff/2026-06-22-server-mode-refetch-resolves-against-fixture-base.md
+    summary: "Task #50 known phase-one limitation. After an escalate patch, repointAudio/reloadManifest resolve their URLs against FIXTURE_BASE, not the arbitrary absolute server dir from the TopBar field — so post-patch re-fetch is correct only when the served dir is FIXTURE_BASE. The escalate POST itself works against the arbitrary dir; only the re-fetch is constrained. A full fix needs a server-contract change to serve patched outputs back from an arbitrary directory — accepted and deferred as a follow-up. Revisit when that contract change lands."
   - id: 2026-06-22-code-l2-size-gate-observed-behaviorally-no-schema-field
     title: "Code L2 size-gate is observed behaviorally (no `size_gated` plan field)"
     date: 2026-06-22

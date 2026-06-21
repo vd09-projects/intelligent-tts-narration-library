@@ -83,6 +83,47 @@ export async function loadDirectory(input: LoadInput): Promise<LoadedDirectory> 
   }
 }
 
+// ManifestReload is the result of re-reading ONLY manifest.json after an
+// escalation patch. No audio blob is created (the audio.wav is re-fetched
+// separately and only when the patched block is the one playing — R3 blob-URL
+// hygiene). Warnings are recomputed so the manifest schema/stale signals stay
+// fresh; the caller REPLACES (not appends) its manifest-derived warnings so a
+// re-fetch does not duplicate them in the TopBar.
+export interface ManifestReload {
+  manifest: Manifest
+  warnings: string[]
+}
+
+// reloadManifest re-fetches manifest.json from `base` (a directory URL prefix,
+// e.g. the fixture base "/fixtures/sample") and re-parses it. It deliberately
+// does NOT touch plan.json or audio.wav — the patch flow keeps the existing
+// blob URL and only re-points audio when the patched block is playing.
+//
+// The plan is needed only to recompute schema-mismatch warnings against the
+// fresh manifest; it is not re-read. Throws on HTTP failure or invalid JSON so
+// the caller can keep the just-committed patch and flag staleDownstream rather
+// than rolling back (plan d8).
+export async function reloadManifest(
+  base: string,
+  plan: NarrationPlan,
+): Promise<ManifestReload> {
+  const url = `${base.replace(/\/$/, '')}/manifest.json`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) {
+    throw new Error(`re-fetch manifest.json failed: HTTP ${res.status}`)
+  }
+  const text = await res.text()
+  let manifest: Manifest
+  try {
+    manifest = JSON.parse(text) as Manifest
+  } catch (e) {
+    throw new Error(`re-fetched manifest.json is not valid JSON: ${(e as Error).message}`, {
+      cause: e,
+    })
+  }
+  return { manifest, warnings: collectWarnings(plan, manifest) }
+}
+
 function collectWarnings(plan: NarrationPlan, manifest: Manifest): string[] {
   const w: string[] = []
   // Compare MAJOR version only — CLAUDE.md: "additive-compatible within a

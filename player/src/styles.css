@@ -247,6 +247,55 @@ button[disabled] {
 }
 .escalate-footnote { margin: 0.4rem 0 0; font-size: 0.8rem; }
 
+/* ===== Escalate (in-place, server mode) ===== */
+.escalate-spinner {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.4em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: escalate-spin 0.6s linear infinite;
+  vertical-align: -0.05em;
+}
+@keyframes escalate-spin {
+  to { transform: rotate(360deg); }
+}
+.escalate-status { margin: 0.3rem 0 0; font-size: 0.85rem; }
+.escalate-error {
+  margin: 0.3rem 0 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  background: var(--refused-bg);
+  border: 1px solid var(--refused);
+  color: #7f1d1d;
+  font-size: 0.85rem;
+}
+.escalate-error-reason { font-size: 0.75rem; opacity: 0.8; }
+.escalate-noop { margin: 0.3rem 0 0; font-size: 0.85rem; font-style: italic; }
+.escalate-stale { margin: 0.3rem 0 0; font-size: 0.85rem; }
+
+/* ===== TopBar — escalate-server mode + dir field ===== */
+.server-mode-indicator { font-size: 0.85rem; }
+.server-mode-indicator[data-server-mode='server'] code { color: #15803d; }
+.server-mode-indicator[data-server-mode='fixture'] code { color: var(--fg-muted); }
+.escalate-dir-field { font-size: 0.85rem; }
+.escalate-dir-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.35rem;
+  min-width: 16rem;
+}
+.escalate-server-hint {
+  margin: 0.4rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  font-size: 0.85rem;
+}
+
 /* ===== Source pane ===== */
 .source-pane {
   overflow: auto;
