@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-22-planner-fanout-first-error-wins-errgroup
+    title: "First-error-wins via errgroup, not errors.Join, in planner fan-out"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [planner, concurrency, errgroup, error-handling, stop-semantics, issue-46]
+    path: architecture/2026-06-22-planner-fanout-first-error-wins-errgroup.md
+    summary: "Issue #46 parallelizes per-block intelligence Voice calls. DECISION: use errgroup first-error-wins — the first failing worker's error propagates and cancels the shared context; deliberately NOT errors.Join. Rationale: preserves the serial planner's stop-on-first-error contract (an error stops the pipeline; the pipeline doesn't need the full failure set), and aggregating concurrent errors would be non-deterministic for no consumer benefit. Refusals remain data and are unaffected. Revisit if a batch-validation mode ever needs all concurrent failures surfaced at once."
+  - id: 2026-06-22-planner-fanout-bounded-concurrency-default-4
+    title: "Bounded Voice fan-out concurrency default of 4 (defaultIntelligenceConcurrency)"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [planner, concurrency, anthropic, rate-limit, 429, hobby-key, issue-46]
+    path: tradeoff/2026-06-22-planner-fanout-bounded-concurrency-default-4.md
+    summary: "Issue #46 fans out per-block intelligence Voice calls (Anthropic API on a hobby key). DECISION: bound the fan-out with a limiter defaulting to 4 (defaultIntelligenceConcurrency). Rejected unbounded one-goroutine-per-block (burst 429s, impolite to a hobby/free endpoint). Rationale: 4 gives a clear speedup over serial for multi-block docs while keeping in-flight requests low enough to avoid burst rate-limits; local-only project with no recurring spend trades throughput for politeness. Single named knob, easy to raise later. Revisit if a higher-tier key or in-process backend removes rate-limit pressure."
+  - id: 2026-06-22-planner-fanout-positional-diagnostics-slotting
+    title: "Diagnostics positionally slotted per-block, flattened after g.Wait() in index order"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [planner, concurrency, errgroup, determinism, race-freedom, diagnostics, issue-46]
+    path: architecture/2026-06-22-planner-fanout-positional-diagnostics-slotting.md
+    summary: "Issue #46 parallelizes per-block intelligence Voice calls in the pure no-I/O planner, whose output (incl. Diagnostics) must be deterministic. DECISION: each worker writes into a positionally-owned blockResult{block,diags} entry indexed by block position and never touches out.Diagnostics; the main goroutine flattens []blockResult into out.Diagnostics in index order only after the errgroup g.Wait() barrier. Rejected goroutine-appending to a shared out.Diagnostics slice (data race + scheduling-dependent, non-deterministic order, breaks golden plan.json fixtures). Rationale: disjoint index ownership = race-free; index-order flatten = deterministic, matches prior serial order, keeps go test -race clean and fixtures valid."
   - id: 2026-06-22-player-playback-unit-stays-whole-audio-wav
     title: "Player playback unit stays the whole audio.wav; re-point only the playing block on patch"
     date: 2026-06-22

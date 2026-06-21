@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -14,6 +14,7 @@ help:
 	@echo "  build-server           — go build ./cmd/narrate-server (compile HTTP escalate edge in isolation)"
 	@echo "  test                   — unit + golden fixtures (no audio, no subprocess)"
 	@echo "  test-race              — unit tests under the race detector (go test -race ./...)"
+	@echo "  test-race-planner      — planner-only race gate (go test -race ./planner/...)"
 	@echo "  test-manual            — end-to-end smoke with real Kokoro + afplay"
 	@echo "  test-manual-persistent — sink/persistent smoke with real Kokoro (writes \$$OUT)"
 	@echo "  test-mcp-manual        — MCP runSpeak smoke against \$$SAMPLE (real Kokoro + afplay)"
@@ -52,6 +53,9 @@ test:
 
 test-race:
 	go test -race ./...
+
+test-race-planner:
+	go test -race ./planner/...
 
 test-manual:
 	go test -tags manual ./pipeline/...

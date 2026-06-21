@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
@@ -48,13 +50,21 @@ type Request struct {
 //  1. Validate req.Level; default to L1 if unset.
 //  2. Compile lexicon from DefaultLexicon + caller overrides.
 //  3. Segment the document.
-//  4. For each rawBlock: classify → level → (intel call OR degrade) →
-//     assemble plan.Block.
-//  5. Assemble NarrationPlan with stable header fields.
+//  4. Structural pass — single-threaded walk assigning every block its
+//     ID and Order, classifying + leveling, and deciding needsVoice. No
+//     intel.Voice calls here. IDs and Order are assigned before any
+//     goroutine starts.
+//  5. Voice pass — bounded-concurrent fan-out of the needsVoice blocks
+//     through intel.Voice, each goroutine writing only its own index-
+//     disjoint result slot. Non-Voice blocks were materialized inline in
+//     step 4. Diagnostics are flattened from the per-slot results only
+//     after the group's Wait, in document order.
+//  6. Assemble NarrationPlan with stable header fields.
 //
-// ctx is checked once at the top and before every intel.Voice call.
-// Pure CPU work between intel calls does not poll ctx — the calls
-// themselves are the cancellation points.
+// ctx is checked once at the top and (via the per-call group context)
+// before/inside every intel.Voice call. Pure CPU work in the structural
+// pass does not poll ctx — the Voice calls themselves are the
+// cancellation points.
 //
 // Error policy: returns an error only on IntelligenceAdapter transport
 // failures (network down, deadline exceeded, etc.). Validation issues
@@ -88,6 +98,10 @@ func Plan(
 	if newPlanID == nil {
 		newPlanID = plan.NewPlanID
 	}
+	limit := cfg.concurrencyLimit
+	if limit <= 0 {
+		limit = defaultIntelligenceConcurrency
+	}
 
 	rawBlocks := segment(doc)
 
@@ -111,98 +125,180 @@ func Plan(
 		return out, nil
 	}
 
+	// --- Structural pass ---------------------------------------------
+	// Single-threaded walk: classify + level every rawBlock, assign each
+	// resulting block its ID and Order, and decide needsVoice. No
+	// intel.Voice call happens here. idx stays a plain local int confined
+	// to this pass — the pointer-threaded counter never crosses a
+	// goroutine boundary. IDs and Order are assigned before any goroutine
+	// starts.
 	idx := 1
+	var planned []plannedBlock
 	for _, rb := range rawBlocks {
-		blocks, diags, err := planBlockTree(ctx, rb, &idx, doc, req, intel, lex)
-		if err != nil {
-			return plan.NarrationPlan{}, err
-		}
-		out.Blocks = append(out.Blocks, blocks...)
-		out.Diagnostics = append(out.Diagnostics, diags...)
+		planned = structuralPass(planned, rb, &idx, doc, req, lex)
 	}
 
-	// Set Order field after final flattening.
-	for i := range out.Blocks {
-		out.Blocks[i].Order = i + 1
+	// One result slot per planned block, pre-sized. Each slot is written
+	// by exactly one writer: the structural/materialization pass for
+	// non-Voice blocks below, or the owning Voice-pass goroutine for
+	// needsVoice blocks. No goroutine ever touches out.Diagnostics — the
+	// flatten happens-after Wait, in index order.
+	results := make([]blockResult, len(planned))
+
+	// Materialize the inline (non-Voice) blocks now via the pure degrade
+	// path. A block is voiced by the adapter only when it needs voicing
+	// AND an adapter is plugged in; otherwise the degrade path handles it
+	// (verbatim prose, refusal, structured downshift — the honesty rule's
+	// last line). Only those adapter-bound slots are left zero-valued for
+	// the Voice pass to fill.
+	dispatchVoice := intel != nil
+	anyVoice := false
+	for i := range planned {
+		pb := planned[i]
+		if pb.needsVoice && dispatchVoice {
+			anyVoice = true
+			continue
+		}
+		blk, diag := degrade(pb.rb, pb.cls, pb.target, pb.levelOut, pb.sm, lex)
+		results[i] = materialize(pb, blk, diag)
+	}
+
+	// --- Voice pass ----------------------------------------------------
+	// Short-circuit: with no adapter or no needsVoice block, skip
+	// errgroup entirely — no group, no goroutines. The nil-adapter /
+	// no-intel path stays byte-identical to a fully sequential run.
+	if dispatchVoice && anyVoice {
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(limit) // before the first g.Go — SetLimit-after-Go is a bug.
+		for i := range planned {
+			pb := planned[i]
+			if !pb.needsVoice {
+				continue
+			}
+			i := i // capture: each goroutine owns exactly one slot.
+			// g.Go is issued from the single Plan goroutine in this loop,
+			// never concurrently. gctx (not the parent ctx) is forwarded
+			// into intel.Voice so first-error cancellation reaches all
+			// in-flight calls.
+			g.Go(func() error {
+				blk, diag, err := callIntelligence(gctx, pb.rb, pb.cls, pb.target, pb.sm, pb.levelOut, intel)
+				if err != nil {
+					return err
+				}
+				results[i] = materialize(pb, blk, diag)
+				return nil // refusals are data, not errors — never trip cancellation.
+			})
+		}
+		// First-error-wins is deliberate: errgroup.Wait returns only the
+		// first non-nil error and discards siblings. Do NOT errors.Join —
+		// merging sibling errors would change the stop semantics.
+		if err := g.Wait(); err != nil {
+			return plan.NarrationPlan{}, err
+		}
+	}
+
+	// Flatten results in index (document) order, happens-after Wait. This
+	// is the load-bearing determinism + race invariant: out.Diagnostics
+	// ordering is document order, never completion order, and no goroutine
+	// ever appended to it.
+	for i := range results {
+		out.Blocks = append(out.Blocks, results[i].block)
+		out.Diagnostics = append(out.Diagnostics, results[i].diags...)
 	}
 	return out, nil
 }
 
-// planBlockTree — assemble plan.Blocks for one rawBlock. When the
-// oversized-split has produced sub-blocks, this recurses into each one
-// and returns them flat (no wrapper SubBlocks today — phase one emits a
-// flat block list; SubBlocks is reserved for the design doc's tree
-// shape and remains empty unless leveling produces children).
-func planBlockTree(
-	ctx context.Context,
+// plannedBlock — the output of the structural pass for one leaf block:
+// everything decided single-threaded (ID, Order, classification, level
+// result, needsVoice) before any goroutine starts. The Voice pass reads
+// these read-only; it never mutates a plannedBlock.
+type plannedBlock struct {
+	id         string
+	order      int
+	cls        plan.Class
+	target     plan.Level
+	sm         plan.SourceMap
+	levelOut   levelResult
+	needsVoice bool
+	rb         rawBlock
+}
+
+// blockResult — one index-disjoint result slot. Each slot is written by
+// a single writer (its owning goroutine, or the inline materialization
+// for non-Voice blocks); diagnostics live here, never in a shared slice.
+type blockResult struct {
+	block plan.Block
+	diags []plan.Diagnostic
+}
+
+// materialize — stamp a freshly built plan.Block with its structural-pass
+// ID and Order and attach any single diagnostic (also ID-tagged). Used by
+// both the inline non-Voice path and the Voice-pass goroutines so the
+// ID/Order stamping is identical on both paths.
+func materialize(pb plannedBlock, blk plan.Block, diag *plan.Diagnostic) blockResult {
+	blk.ID = pb.id
+	blk.Order = pb.order // carried verbatim from the structural pass — never re-derived.
+	res := blockResult{block: blk}
+	if diag != nil {
+		d := *diag
+		d.BlockID = pb.id
+		res.diags = []plan.Diagnostic{d}
+	}
+	return res
+}
+
+// structuralPass — single-threaded walk of one rawBlock (recursing into
+// oversized-split sub-blocks), appending a plannedBlock per leaf in
+// document order. Assigns IDs/Order via the *idx counter exactly as the
+// old sequential code did. Does classification + leveling + the
+// needsVoice decision, but NEVER calls intel.Voice — that is the Voice
+// pass's job. idx is threaded by pointer here and only here; it never
+// crosses a goroutine boundary.
+func structuralPass(
+	planned []plannedBlock,
 	rb rawBlock,
 	idx *int,
 	doc adapter.RawDocument,
 	req Request,
-	intel intelligence.IntelligenceAdapter,
 	lex *compiledLex,
-) ([]plan.Block, []plan.Diagnostic, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, fmt.Errorf("planner: %w", err)
-	}
-
+) []plannedBlock {
 	cls := classify(rb)
 	sm := rawBlockSourceMap(rb, doc)
 	target := effectiveLevel(req, fmt.Sprintf("b%03d", *idx))
 
 	levelOut := level(rb, cls, target, lex)
 
-	// Oversized-split: re-plan each sub-block.
+	// Oversized-split: recurse into each sub-block, still single-threaded.
 	if len(levelOut.subBlocks) > 0 {
-		var blocks []plan.Block
-		var diags []plan.Diagnostic
 		for _, sub := range levelOut.subBlocks {
-			subBlks, subDiags, err := planBlockTree(ctx, sub, idx, doc, req, intel, lex)
-			if err != nil {
-				return nil, nil, err
-			}
-			blocks = append(blocks, subBlks...)
-			diags = append(diags, subDiags...)
+			planned = structuralPass(planned, sub, idx, doc, req, lex)
 		}
-		return blocks, diags, nil
+		return planned
 	}
 
 	id := fmt.Sprintf("b%03d", *idx)
+	order := *idx
 	*idx++
 
-	// Intelligence path — only when an adapter is plugged in AND the
-	// level result asked for comprehension.
-	if intel != nil && levelOut.needsIntelligence {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, fmt.Errorf("planner: %w", err)
-		}
-		blk, diag, err := callIntelligence(ctx, rb, cls, target, sm, levelOut, intel)
-		if err != nil {
-			return nil, nil, err
-		}
-		blk.ID = id
-		blocks := []plan.Block{blk}
-		var diags []plan.Diagnostic
-		if diag != nil {
-			d := *diag
-			d.BlockID = id
-			diags = append(diags, d)
-		}
-		return blocks, diags, nil
-	}
+	return append(planned, plannedBlock{
+		id:         id,
+		order:      order,
+		cls:        cls,
+		target:     target,
+		sm:         sm,
+		levelOut:   levelOut,
+		needsVoice: intelNeedsVoice(levelOut),
+		rb:         rb,
+	})
+}
 
-	// No intelligence call → degrade path (handles refusal hints,
-	// verbatim prose, and structured downshift).
-	blk, diag := degrade(rb, cls, target, levelOut, sm, lex)
-	blk.ID = id
-	blocks := []plan.Block{blk}
-	var diags []plan.Diagnostic
-	if diag != nil {
-		d := *diag
-		d.BlockID = id
-		diags = append(diags, d)
-	}
-	return blocks, diags, nil
+// intelNeedsVoice — whether this leaf block, given its level result,
+// would dispatch to the intelligence adapter (vs the pure degrade path).
+// Mirrors the old planBlockTree branch condition; the intel != nil check
+// lives at the call site (a nil adapter short-circuits the whole Voice
+// pass).
+func intelNeedsVoice(levelOut levelResult) bool {
+	return levelOut.needsIntelligence
 }
 
 // callIntelligence — invoke the adapter and translate its result into a

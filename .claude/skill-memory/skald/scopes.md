@@ -197,6 +197,65 @@ scopes:
       pre-produced externally by mimir and persisted draft (awaiting user
       approval before sindri consumes). Issue-numbered naming continues the
       convention.
+  - slug: code-semantic-gist-l2-48
+    title: AI semantic gist for code at L2 (issue #48)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #48 (feat(planner): AI semantic meaning-gist
+      for code blocks at L2). Today L1 = deterministic line count, L2 = count +
+      declarations (both deterministic), and a real "what this code does" gist
+      only appears at L3 with an intelligence adapter. #48 enriches L2 to set
+      needsIntelligence=true for a one-line AI gist, keeping L1 deterministic
+      (load-bearing invariant), degrading to today's count+decls when no adapter
+      is wired (honesty rule), and size-gating ~250-line seamless code blocks to
+      keep the deterministic structural gist there. Sibling of #47 (table L2/L3)
+      — same L1-deterministic / L2-needsIntelligence / degrade-to-deterministic /
+      cache-by-(hash,level,model) shape; #48 may land the first in-source
+      instance of that pattern for a structured class. Decision
+      2026-06-22-code-semantic-gist-l2-only already recorded (accepted); no new
+      decision needed. Planned via mimir task depth (no overlays triggered —
+      pure-function internal planner change + additive internal/intelligencetmpl
+      prompt, no public-API / migration / concurrency / perf surface). Plan
+      persisted draft (awaiting user approval before sindri consumes). Issue-
+      numbered naming continues the convention.
+  - slug: planner-parallel-intelligence-46
+    title: parallelize per-block intelligence Voice calls in the planner (issue #46)
+    created: 2026-06-21
+    reasoning: |
+      Plan cycle for GitHub issue #46 (perf(planner): parallelize per-block
+      intelligence Voice calls). Plan loops rawBlocks sequentially and each
+      intelligence-needing block blocks on its own intel.Voice LLM round-trip,
+      so N such blocks pay the sum of N serial calls (main win: the anthropic
+      direct-API adapter; mcpsampling may serialize client-side). Plan fans the
+      Voice calls out concurrently (errgroup + bounded SetLimit) while keeping
+      the planner pure + deterministic + honest: a single-threaded structural
+      pass assigns all IDs/Order (retiring the racy *idx pointer from the hot
+      path, honoring the no-shared-mutable-state decision from
+      planner-data-races-42) then a bounded concurrent pass fills only the
+      Voice-dependent blocks into index-disjoint result slots. planner- prefix
+      marks the package under change and disambiguates from planner-issue-4
+      (original core build) and planner-data-races-42 (the -race seam fix this
+      plan explicitly builds on). Planned via mimir task depth with perf-critical
+      + concurrency overlays (both left ON in mimir config; brief is an explicit
+      perf+concurrency task). Plan persisted draft (awaiting user approval before
+      sindri consumes). Issue-numbered naming continues the convention.
+    created: 2026-06-21
+    reasoning: |
+      Plan cycle for GitHub issue #51 (extract the duplicated classifyPipelineErr
+      caller-vs-internal-vs-cancel error CLASSIFICATION into a new internal/errclass
+      package consumed by both cmd/narrate-mcp and cmd/narrate-server). The // DUP
+      marker in cmd/narrate-server/main.go statusForErr (added by #49) explicitly
+      pointed at #51 as the "3rd consumer lands, extract now" trigger; recorded as
+      carried tech debt across the server-escalate-endpoint-49 review rounds. Only
+      the classification (sentinel -> Class enum) is shared; each composition root
+      keeps its per-root wire-format mapping (MCP text prefixes vs server HTTP status
+      + reason tokens) at the call site. internal/ placement (sibling to
+      internal/intelligencetmpl) keeps the helper off the public surface, imported
+      only by the cmd/ roots. Descriptive-qualifier slug (errclass-extract) + issue
+      number, continuing the issue-numbered naming convention. Planned via mimir task
+      depth (no overlays triggered — internal-only package, no public API / migration
+      / concurrency surface). Plan persisted draft (awaiting user approval before
+      sindri consumes).
   - slug: planner-list-ordinals-45
     title: speak list items with ordinals — first, second, third (issue #45)
     created: 2026-06-21
