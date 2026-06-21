@@ -57,7 +57,7 @@ func goldenCases() []goldenCase {
 }
 
 func TestGoldenFixtures(t *testing.T) {
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	for _, tc := range goldenCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			inPath := filepath.Join("testdata", tc.inputFile)
@@ -72,7 +72,7 @@ func TestGoldenFixtures(t *testing.T) {
 			if si, ok := tc.intel.(*scriptedIntel); ok && si != nil {
 				si.calls = 0
 			}
-			got, err := Plan(context.Background(), doc, Request{Level: tc.level}, tc.intel)
+			got, err := Plan(context.Background(), doc, Request{Level: tc.level}, tc.intel, seams...)
 			if err != nil {
 				t.Fatalf("Plan: %v", err)
 			}

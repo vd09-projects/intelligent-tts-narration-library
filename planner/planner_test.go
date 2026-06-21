@@ -33,24 +33,23 @@ func (s *scriptedIntel) Voice(_ context.Context, _ intelligence.IntelligenceRequ
 	return s.replies[idx], nil
 }
 
-// installDeterministicSeams — replace clock + PlanID with deterministic
-// values for the duration of one test. Returns a restorer.
-func installDeterministicSeams(t *testing.T) func() {
+// deterministicSeams — return the per-call clock + PlanID seam options
+// for a test. No global swap, no deferred restore: each test passes these
+// opts to its own Plan() call, so the seam values are owned by that call
+// and never observed by a sibling. This is what makes the ~8 t.Parallel()
+// planner tests race-free.
+func deterministicSeams(t *testing.T) []VoiceOption {
 	t.Helper()
-	origNow := nowFunc
-	origID := newPlanIDFunc
-	nowFunc = func() time.Time { return time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC) }
-	newPlanIDFunc = func() string { return "01TESTPLANID0000000000000Z" }
-	return func() {
-		nowFunc = origNow
-		newPlanIDFunc = origID
+	return []VoiceOption{
+		withClock(func() time.Time { return time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC) }),
+		withPlanID(func() string { return "01TESTPLANID0000000000000Z" }),
 	}
 }
 
 func TestPlan_EmptyDocument(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
-	got, err := Plan(context.Background(), stubDoc("", "empty.md"), Request{Level: plan.L1}, nil)
+	seams := deterministicSeams(t)
+	got, err := Plan(context.Background(), stubDoc("", "empty.md"), Request{Level: plan.L1}, nil, seams...)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -64,9 +63,9 @@ func TestPlan_EmptyDocument(t *testing.T) {
 
 func TestPlan_HeadingPlusProseNoIntel(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	src := "# Hello\n\nA short paragraph here.\n"
-	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil)
+	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil, seams...)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -86,9 +85,9 @@ func TestPlan_HeadingPlusProseNoIntel(t *testing.T) {
 
 func TestPlan_RefusedImageHonestyRule(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	src := "Intro.\n\n![chart](bench.png)\n"
-	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil)
+	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil, seams...)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -112,12 +111,12 @@ func TestPlan_RefusedImageHonestyRule(t *testing.T) {
 
 func TestPlan_IntelligenceVoicesProse(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
 		{Text: "L1 gist of the prose.", Model: "scripted@test"},
 	}}
 	src := "This is a paragraph.\n"
-	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, intel)
+	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, intel, seams...)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -134,12 +133,12 @@ func TestPlan_IntelligenceVoicesProse(t *testing.T) {
 
 func TestPlan_IntelligenceRefusedConvertsToRefusal(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
 		{Refused: true, RefusalNote: "block too dense to faithfully summarize"},
 	}}
 	src := "Some prose.\n"
-	got, _ := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L2}, intel)
+	got, _ := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L2}, intel, seams...)
 	if len(got.Blocks) != 1 || got.Blocks[0].Status != plan.StatusRefused {
 		t.Fatalf("intel.Refused should produce refused block, got %+v", got.Blocks)
 	}
@@ -163,10 +162,10 @@ func TestPlan_ContextCancellation(t *testing.T) {
 
 func TestPlan_HonestyRuleAcrossAllBlocks(t *testing.T) {
 	t.Parallel()
-	defer installDeterministicSeams(t)()
+	seams := deterministicSeams(t)
 	// Mix every refusal-producing case in one document.
 	src := "# Intro\n\n![chart](bench.png)\n\n" + strings.Repeat("word ", 200) + "\n"
-	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil)
+	got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil, seams...)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -174,5 +173,90 @@ func TestPlan_HonestyRuleAcrossAllBlocks(t *testing.T) {
 		if !honestyRuleSatisfied(blk) {
 			t.Errorf("block %s violated honesty rule: %+v", blk.ID, blk)
 		}
+	}
+}
+
+// TestPlan_SeamsAreCallScoped — direct proof of per-call seam isolation.
+// Two concurrent Plan() calls install DISTINCT clock + plan-id seams and
+// each must observe its own values, never the sibling's. With the old
+// package globals this is exactly the cross-talk the race detector
+// flagged; with per-call threading it is correct by construction.
+func TestPlan_SeamsAreCallScoped(t *testing.T) {
+	t.Parallel()
+
+	type want struct {
+		planID  string
+		created string
+	}
+	caseFor := func(id string, ts time.Time) (want, []VoiceOption) {
+		return want{planID: id, created: ts.Format(time.RFC3339)},
+			[]VoiceOption{
+				withPlanID(func() string { return id }),
+				withClock(func() time.Time { return ts }),
+			}
+	}
+
+	wantA, optsA := caseFor("01AAAAAAAAAAAAAAAAAAAAAAAA", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	wantB, optsB := caseFor("01BBBBBBBBBBBBBBBBBBBBBBBB", time.Date(2030, 12, 31, 23, 59, 59, 0, time.UTC))
+
+	src := "# Heading\n"
+	run := func(opts []VoiceOption) (string, string) {
+		got, err := Plan(context.Background(), stubDoc(src, "doc.md"), Request{Level: plan.L1}, nil, opts...)
+		if err != nil {
+			t.Errorf("Plan: %v", err)
+			return "", ""
+		}
+		return got.PlanID, got.CreatedAt
+	}
+
+	const iters = 200
+	done := make(chan struct{}, 2)
+	go func() {
+		for i := 0; i < iters; i++ {
+			id, created := run(optsA)
+			if id != wantA.planID || created != wantA.created {
+				t.Errorf("call A observed sibling seam: id=%q created=%q", id, created)
+			}
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		for i := 0; i < iters; i++ {
+			id, created := run(optsB)
+			if id != wantB.planID || created != wantB.created {
+				t.Errorf("call B observed sibling seam: id=%q created=%q", id, created)
+			}
+		}
+		done <- struct{}{}
+	}()
+	<-done
+	<-done
+}
+
+// TestPlan_NoSeamUsesWallClockDefault — regression guard for the
+// no-opt path. With the globals deleted, the wall-clock + real-ULID
+// defaults must be resolved inside Plan(); a nil seam func must never
+// reach the read path. Asserts no panic and that real (non-test)
+// values are produced.
+func TestPlan_NoSeamUsesWallClockDefault(t *testing.T) {
+	t.Parallel()
+	before := time.Now().UTC().Add(-time.Second)
+	got, err := Plan(context.Background(), stubDoc("# Heading\n", "doc.md"), Request{Level: plan.L1}, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if got.PlanID == "" {
+		t.Errorf("default plan id should be non-empty")
+	}
+	if got.PlanID == "01TESTPLANID0000000000000Z" {
+		t.Errorf("default path leaked the test seam plan id")
+	}
+	ts, perr := time.Parse(time.RFC3339, got.CreatedAt)
+	if perr != nil {
+		t.Fatalf("default CreatedAt not RFC3339: %q (%v)", got.CreatedAt, perr)
+	}
+	after := time.Now().UTC().Add(time.Second)
+	if ts.Before(before) || ts.After(after) {
+		t.Errorf("default CreatedAt %v not within wall-clock window [%v, %v]", ts, before, after)
 	}
 }

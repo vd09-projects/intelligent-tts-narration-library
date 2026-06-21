@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-21-planner-test-seam-race-thread-clock-planid-per-call
+    title: "Fix planner test-seam data race by threading clock/plan-id seams per-call (Option B)"
+    date: 2026-06-21
+    status: accepted
+    category: architecture
+    tags: [planner, data-race, t.Parallel, test-seam, concurrency, voiceoptions, purity]
+    path: architecture/2026-06-21-planner-test-seam-race-thread-clock-planid-per-call.md
+    summary: "make test-race flagged data races in planner: package-level test seams nowFunc/newPlanIDFunc were mutated by parallel t.Parallel() tests while a sibling Plan() read them. Chose Option B — delete the globals, thread unexported withClock/withPlanID VoiceOptions per-call, resolved to locals inside Plan() with wall-clock + plan.NewPlanID defaults. Root-cause fix: no shared mutable state left to race on, tests stay parallel, planner stays pure. Plan review (7-reviewer panel) and build review both APPROVE'd. Rejected: A) drop t.Parallel() from ~8 tests (global footgun remains), C) sync.RWMutex on the globals (serializes but doesn't stop logical cross-talk; adds lock machinery to a pure hot path — worst structural fit). Note: plan.NewPlanID() returns a plain string, no named plan.PlanID type exists."
+  - id: 2026-06-21-preserve-variadic-compilelexicon-signature
+    title: "Preserve the variadic compileLexicon(opts...) signature when surfacing resolved voiceOptions to Plan()"
+    date: 2026-06-21
+    status: accepted
+    category: tradeoff
+    tags: [planner, voiceoptions, compilelexicon, api-shape, blast-radius, test-call-sites]
+    path: tradeoff/2026-06-21-preserve-variadic-compilelexicon-signature.md
+    summary: "Option B needed clock/planID surfaced from parsed opts into Plan() (previously only the compiled lexicon escaped the parse). Added clock/planID fields to the voiceOptions struct and introduced resolveVoiceOptions + compileLexiconCfg, but KEPT the existing variadic compileLexicon(opts...) signature (now delegating to compileLexiconCfg) rather than changing it — to avoid breaking ~25 unrelated test call sites. Minimal-blast-radius API-shape tradeoff, faithful to Option B's spirit. Two compile entry points coexist intentionally; revisit (collapse the wrapper) if the variadic call sites are ever migrated en masse. Serves the planner test-seam race fix decision."
   - id: 2026-06-21-mcpsampling-cache-server-lifetime-lru-eviction
     title: "mcpsampling cache is server-lifetime with LRU + entry-count-cap eviction"
     date: 2026-06-21
