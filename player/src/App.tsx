@@ -12,6 +12,7 @@ import { useEscalation } from './hooks/useEscalation.ts'
 import type { EscalateResult } from './lib/escalateClient.ts'
 import { reconcileManifest } from './lib/reconcileManifest.ts'
 import { reloadManifest as reloadManifestFile } from './lib/loadDirectory.ts'
+import { artifactUrl } from './lib/refetchBase.ts'
 import type { Manifest } from './types/manifest.ts'
 import type { Block, NarrationPlan } from './types/plan.ts'
 import { TopBar } from './components/TopBar.tsx'
@@ -105,14 +106,41 @@ export default function App() {
   // during render" rule — the same effect-synced-ref idiom usePlayback uses.
   // Escalation handlers fire on user interaction (post-commit), so the effect
   // has always run by the time a ref is read.
+  //
+  // dirRef + serverModeRef are in this set because BOTH mutate at runtime AFTER
+  // the stable re-fetch callbacks are created: `dir` via the TopBar input, and
+  // server.mode via useServerMode.recheck() (a /healthz re-probe can flip
+  // fixture↔server). Reading them through refs at CALL time is what makes the
+  // re-fetch resolve against the LIVE escalated dir, not a stale closure (#62).
+  // server.baseUrl is captured too so the resolver reads one consistent live
+  // snapshot. (Fix for the two former KNOWN GAP markers — resolved in #62.)
   const planRef = useRef(plan)
   const manifestRef = useRef(manifest)
   const playbackRef = useRef(playback)
+  const dirRef = useRef(dir)
+  const serverModeRef = useRef(server.mode)
+  const serverBaseUrlRef = useRef(server.baseUrl)
   useEffect(() => {
     planRef.current = plan
     manifestRef.current = manifest
     playbackRef.current = playback
-  }, [plan, manifest, playback])
+    dirRef.current = dir
+    serverModeRef.current = server.mode
+    serverBaseUrlRef.current = server.baseUrl
+  }, [plan, manifest, playback, dir, server.mode, server.baseUrl])
+
+  // resolveArtifactUrl reads the live refs at CALL time and builds the URL to
+  // re-fetch one artifact (audio.wav / manifest.json). Pure delegation to
+  // lib/refetchBase.artifactUrl — kept here so both re-fetch sites resolve
+  // identically against the current (dir, serverMode) snapshot.
+  const resolveArtifactUrl = useCallback((name: string): string => {
+    return artifactUrl(name, {
+      serverMode: serverModeRef.current === 'server',
+      dir: dirRef.current,
+      serverBaseUrl: serverBaseUrlRef.current,
+      fixtureBase: FIXTURE_BASE,
+    })
+  }, [])
 
   // Capture the audio element ref into state so usePlayback sees the mounted
   // node (refs alone don't re-trigger effects). Re-runs when audioUrl swaps.
@@ -123,31 +151,34 @@ export default function App() {
   // repointAudio re-fetches audio.wav (cache-busted) and swaps the <audio> src
   // to a fresh blob, revoking the previous escalation blob first (R3). The base
   // (source-loaded) blob is owned by its loader hook and not revoked here.
-  const repointAudio = useCallback(async (): Promise<void> => {
+  //
+  // Returns true on a successful re-point, false if the re-fetch failed (so the
+  // caller can flag staleDownstream rather than silently keep stale audio). The
+  // old blob keeps playing on failure — the patch is retained, not rolled back.
+  const repointAudio = useCallback(async (): Promise<boolean> => {
+    // Resolved in #62: the re-fetch URL now resolves against the LIVE escalated
+    // dir via lib/refetchBase. In server mode it hits the server's GET /artifact
+    // route for the user's `dir`; in fixture mode it stays on FIXTURE_BASE. The
+    // former KNOWN GAP (hardwired FIXTURE_BASE) is closed.
+    const base = resolveArtifactUrl('audio.wav')
+    const sep = base.includes('?') ? '&' : '?'
     try {
-      // KNOWN GAP (served-origin re-fetch) (tracked: #62): in server mode the patched output
-      // lives at the user's `dir`, but the audio re-fetch is hardwired to the
-      // served fixture origin (FIXTURE_BASE), not `dir`. A server-mode user who
-      // points `dir` at a non-fixture outDir re-fetches the WRONG audio.wav.
-      // Fixing it properly needs the server to statically serve an arbitrary
-      // outDir's artifacts over HTTP — a server-contract change, out of this
-      // front-end-only scope. The patched row stays correct meanwhile because
-      // offsets are updated optimistically from the response `timing`. See the
-      // matching gap in reloadManifest below.
-      const res = await fetch(`${FIXTURE_BASE}/audio.wav?ts=${Date.now()}`, {
+      const res = await fetch(`${base}${sep}ts=${Date.now()}`, {
         cache: 'no-store',
       })
-      if (!res.ok) return
+      if (!res.ok) return false
       const blob = new Blob([await res.arrayBuffer()], { type: 'audio/wav' })
       const url = URL.createObjectURL(blob)
       if (repointedUrlRef.current) URL.revokeObjectURL(repointedUrlRef.current)
       repointedUrlRef.current = url
       setAudioUrl(url)
+      return true
     } catch {
       // Audio re-fetch failure is non-fatal: offsets already updated, the old
-      // blob still plays. The patch is retained.
+      // blob still plays. The patch is retained; caller flags staleDownstream.
+      return false
     }
-  }, [])
+  }, [resolveArtifactUrl])
 
   // reloadManifest re-fetches manifest.json and reconciles it into App-owned
   // state. Returns true on success; false (leaving the prior manifest in place)
@@ -158,14 +189,12 @@ export default function App() {
     const prev = manifestRef.current
     if (!cur || !prev) return false
     try {
-      // KNOWN GAP (served-origin re-fetch) (tracked: #62): like repointAudio above, this
-      // re-reads manifest.json from the served fixture origin (FIXTURE_BASE),
-      // not the server-mode `dir`. A server-mode user pointing `dir` at a
-      // non-fixture outDir re-fetches the WRONG manifest.json (stale downstream
-      // offsets). Same root cause + same out-of-scope fix (server must serve an
-      // arbitrary outDir over HTTP); the just-patched row stays correct via the
-      // optimistic timing update in patchVoicedBlock.
-      const { manifest: next, warnings } = await reloadManifestFile(FIXTURE_BASE, cur)
+      // Resolved in #62: the manifest re-fetch URL now resolves against the LIVE
+      // escalated dir via lib/refetchBase. In server mode it hits the server's
+      // GET /artifact route for the user's `dir`; in fixture mode it stays on
+      // FIXTURE_BASE. The former KNOWN GAP (hardwired FIXTURE_BASE) is closed.
+      const manifestUrl = resolveArtifactUrl('manifest.json')
+      const { manifest: next, warnings } = await reloadManifestFile(manifestUrl, cur)
       setManifest((m) => reconcileManifest(m ?? prev, next))
       // REPLACE (not append) manifest-derived warnings so a re-fetch does not
       // duplicate schema/stale lines in the TopBar (plan: dedup on re-fetch).
@@ -174,7 +203,7 @@ export default function App() {
     } catch {
       return false
     }
-  }, [])
+  }, [resolveArtifactUrl])
 
   // patchVoicedBlock replaces ONE plan block with the escalated block and
   // updates its manifest timing. Other blocks (and their identities) are
@@ -224,12 +253,18 @@ export default function App() {
       // Audio re-point (Q3): only re-fetch + rebuild the audio blob when the
       // patched block is the one currently playing. Otherwise the whole
       // audio.wav blob is unchanged and we only update offsets above.
+      //
+      // A FAILED audio re-fetch flags refetchOk:false too (not just a failed
+      // manifest re-fetch) so the row surfaces staleDownstream rather than
+      // silently keeping stale audio — the patch is retained either way (#62
+      // SUGGESTION: route non-ok audio fetch into staleDownstream).
+      let audioOk = true
       if (playbackRef.current.activeBlockId === blockId) {
-        await repointAudio()
+        audioOk = await repointAudio()
       }
 
-      const refetchOk = await reloadManifest()
-      return { refetchOk, changed }
+      const manifestOk = await reloadManifest()
+      return { refetchOk: audioOk && manifestOk, changed }
     },
     [reloadManifest, repointAudio],
   )

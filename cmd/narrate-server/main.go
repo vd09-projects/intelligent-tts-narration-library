@@ -15,6 +15,26 @@
 //	  200 refused         → {block, refusal}            (timing + audio_ref ABSENT, not null)
 //	  non-2xx             → ErrorResponse{reason, message}  (single envelope, always)
 //	GET  /healthz   → 200 {"status":"ok"}
+//	GET  /artifact?dir=&name=  → 200 file bytes (audio.wav | manifest.json ONLY)
+//	  non-2xx             → ErrorResponse{reason, message}  (same envelope as /escalate)
+//
+// # Static artifact route (#62) — re-fetch the just-patched output over HTTP
+//
+//	After an in-place escalate the React player must re-read the patched
+//	artifacts (audio.wav, manifest.json) so downstream offsets + audio reflect
+//	the patched outDir — but in server mode that outDir is an arbitrary path the
+//	user typed, NOT the bundled fixture. GET /artifact serves exactly those two
+//	files out of exactly that one user-supplied dir so the player can resolve its
+//	re-fetch base against the served dir instead of the fixture origin.
+//
+//	Containment guarantee: the route serves ONLY {manifest.json, audio.wav} and
+//	ONLY from within the requested dir. The served path is resolved with
+//	filepath.EvalSymlinks and confirmed to stay inside the (also symlink-resolved)
+//	dir via a filepath.Rel boundary check — NOT a raw string-prefix check, so a
+//	sibling dir sharing a name prefix (…/base vs …/base-evil) cannot bypass it,
+//	and a symlink whose target escapes the dir is rejected. No directory listing,
+//	no browse root, no arbitrary filename. It inherits the loopback-only bind and
+//	the pinned single-origin CORS unchanged (never widens either).
 //
 // ErrorResponse.reason is drawn from a CLOSED, APPEND-ONLY enum (a token is
 // never removed or repurposed — the #50 client switches on these strings; only
@@ -71,6 +91,14 @@
 //   - Single-writer assumption: this in-process mutex serializes within THIS
 //     server only, not across processes or external writers. Local-trust phase
 //     one makes that sufficient.
+//   - Read-during-write consistency (#62): GET /artifact takes the SAME per-dir
+//     mutex /escalate writers hold, so a re-fetch issued mid-patch observes the
+//     fully-old or fully-new artifact triple — never a torn cross-file state.
+//     persistent.PatchBlock writes both manifest.json and audio.wav via atomic
+//     tmp+rename, but commits them as SEQUENTIAL renames (plan, manifest, audio
+//     LAST), so without the read-side lock a reader could observe new manifest +
+//     old audio. The lock closes that window; the cross-file torn state is not
+//     left as accepted debt.
 //   - Every request runs under a per-request context.WithTimeout (--request-
 //     timeout, default 120s) so a hung Kokoro render cannot hold the per-dir
 //     mutex for the server lifetime; a timeout surfaces as 408 cancelled. (R2c)
@@ -94,6 +122,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -382,6 +411,7 @@ func newMux(args serverArgs) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthzHandler)
 	mux.Handle("/escalate", escalateHandler(args))
+	mux.HandleFunc("/artifact", artifactHandler)
 	return withCORS(args.CORSOrigin, mux)
 }
 
@@ -396,7 +426,9 @@ func withCORS(origin string, next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			// GET added for the /artifact static-artifact route (#62); POST stays
+			// for /escalate. One pinned method list across the shared middleware.
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
@@ -451,6 +483,162 @@ func escalateHandler(args serverArgs) http.Handler {
 		}
 		writeJSON(w, status, resp)
 	})
+}
+
+// artifactAllowlist is the closed set of filenames GET /artifact will serve.
+// Exact-match only — a request for anything else (incl. plan.json, source.md, a
+// path containing a separator, or "..") is a missing_field rejection. This is
+// the first containment gate, before any filesystem touch.
+var artifactAllowlist = map[string]string{
+	"audio.wav":     "audio/wav",
+	"manifest.json": "application/json",
+}
+
+// artifactHandler serves GET /artifact?dir=&name= — the static re-fetch route
+// (#62). It serves ONLY {manifest.json, audio.wav} and ONLY from inside the
+// requested dir, resolving symlinks and confirming containment via a
+// filepath.Rel boundary check (not a raw string prefix). Errors map onto the
+// existing closed reason enum only — no new tokens. It takes the per-dir mutex
+// READ side (the same mutex /escalate writers hold) so a re-fetch mid-patch sees
+// a consistent artifact triple, never a torn cross-file state.
+func artifactHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "GET only")
+		return
+	}
+
+	dir := r.URL.Query().Get("dir")
+	name := r.URL.Query().Get("name")
+	if dir == "" {
+		writeError(w, http.StatusBadRequest, reasonMissingField, "dir is required")
+		return
+	}
+	if name == "" {
+		writeError(w, http.StatusBadRequest, reasonMissingField, "name is required")
+		return
+	}
+
+	// Allowlist gate FIRST (before any fs touch). Exact-match against the closed
+	// set; a name carrying a path separator or ".." is never in the map and is
+	// rejected here as missing_field — a malformed artifact name, not a 404.
+	contentType, ok := artifactAllowlist[name]
+	if !ok {
+		writeError(w, http.StatusBadRequest, reasonMissingField,
+			fmt.Sprintf("name must be one of audio.wav or manifest.json (got %q)", name))
+		return
+	}
+	// Defence in depth: even though the allowlist is exact-match, reject any name
+	// that contains a separator or "..". A future allowlist edit cannot smuggle a
+	// traversal segment past this guard.
+	if strings.ContainsRune(name, '/') || strings.ContainsRune(name, os.PathSeparator) || strings.Contains(name, "..") {
+		writeError(w, http.StatusBadRequest, reasonMissingField,
+			fmt.Sprintf("name must not contain a path separator or %q (got %q)", "..", name))
+		return
+	}
+
+	// Resolve the requested dir to an absolute path — this is also the per-dir
+	// mutex key, the SAME key /escalate uses (filepath.Abs of req.Dir), so a
+	// concurrent escalate on the same dir serializes against this read.
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, reasonMissingField, "resolve dir: "+err.Error())
+		return
+	}
+
+	// Take the per-dir lock READ side for the duration of resolve+open+serve so a
+	// mid-patch reader observes the fully-old or fully-new triple. Shares the
+	// /escalate write-side mutex registry (sync.Mutex has no separate read lock;
+	// a full Lock is correct and the read path is short).
+	muIface, _ := dirLocks.LoadOrStore(absDir, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
+	served, status, errResp := resolveArtifactPath(absDir, name)
+	if errResp != nil {
+		writeError(w, status, errResp.Reason, errResp.Message)
+		return
+	}
+
+	f, err := os.Open(served) //nolint:gosec // path is containment-checked above
+	if err != nil {
+		// A file that EvalSymlinks resolved cleanly but then fails to open is the
+		// only genuinely unexpected fault here → internal (500). A not-exist at
+		// open time (raced delete) is still caller-correctable → source_not_found.
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, reasonSourceNotFound, "artifact not found: "+name)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, reasonInternal, "open artifact: "+err.Error())
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, reasonInternal, "stat artifact: "+err.Error())
+		return
+	}
+
+	// Pin the Content-Type from the allowlist (do NOT let http sniff it) and
+	// forbid caching so a re-fetch always sees the just-patched bytes.
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	// http.ServeContent (not http.FileServer/http.Dir) — no directory listing, no
+	// implicit index, just these bytes. It honors Range + sets Content-Length.
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// resolveArtifactPath resolves name inside absDir to a fully symlink-resolved
+// leaf and confirms it stays inside the symlink-resolved base via a
+// filepath.Rel boundary check. It returns the path to serve, or an
+// ErrorResponse + HTTP status drawn ONLY from the closed enum. A non-existent
+// dir/leaf or any containment failure is source_not_found (404) — never a 500.
+// internal (500) is reserved for unexpected faults at open time (handled by the
+// caller), not for resolution failures here.
+func resolveArtifactPath(absDir, name string) (string, int, *ErrorResponse) {
+	// Build the FULL joined leaf, then EvalSymlinks the WHOLE thing — so a
+	// symlinked leaf whose target escapes the dir is caught by the boundary check
+	// below (resolution happens before, not after, the check).
+	leaf := filepath.Join(absDir, name)
+	resolvedLeaf, err := filepath.EvalSymlinks(leaf)
+	if err != nil {
+		// EvalSymlinks failure is a CLEAN reject, never a 500: ErrNotExist (file
+		// absent / dangling symlink) and any other resolve failure both map to
+		// source_not_found (404). We cannot serve a path we cannot resolve.
+		return "", http.StatusNotFound, &ErrorResponse{
+			Reason:  reasonSourceNotFound,
+			Message: "artifact not found: " + name,
+		}
+	}
+
+	// Independently resolve the base dir's symlinks so the boundary check
+	// compares fully-resolved against fully-resolved (otherwise a symlinked dir
+	// would spuriously fail containment).
+	resolvedBase, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		return "", http.StatusNotFound, &ErrorResponse{
+			Reason:  reasonSourceNotFound,
+			Message: "artifact dir not found",
+		}
+	}
+
+	// Boundary check via filepath.Rel — NOT raw strings.HasPrefix, which would let
+	// a sibling sharing a name prefix (…/base vs …/base-evil) slip through.
+	// Containment holds ONLY if rel is computable, is not "..", does not start
+	// with "../", and is not absolute.
+	rel, err := filepath.Rel(resolvedBase, resolvedLeaf)
+	if err != nil ||
+		rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) ||
+		filepath.IsAbs(rel) {
+		return "", http.StatusNotFound, &ErrorResponse{
+			Reason:  reasonSourceNotFound,
+			Message: "artifact not found: " + name,
+		}
+	}
+
+	return resolvedLeaf, http.StatusOK, nil
 }
 
 // runEscalate is the handler core (Step 4). Returns either a success response

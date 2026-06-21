@@ -284,3 +284,28 @@ scopes:
       reference-player build); issue-numbered suffix continues the convention.
       Planned via mimir task depth (5-phase breakdown). Plan persisted draft —
       awaiting user approval before sindri consumes.
+  - slug: server-escalate-livedir-62
+    title: Server-mode escalate re-fetch resolves against the live escalated dir, not FIXTURE_BASE (#62)
+    created: 2026-06-21
+    reasoning: |
+      Plan cycle for GitHub issue #62 (server-mode escalate re-fetch must resolve
+      against the live escalated outDir, not the hardwired FIXTURE_BASE). Follow-on
+      to player-escalate-buttons-50: the in-place escalate landed there left two
+      self-describing KNOWN GAP (tracked: #62) markers at player/src/App.tsx:128/161
+      because both re-fetch call sites (repointAudio, reloadManifest) still point at
+      FIXTURE_BASE, so a server-mode user escalating a non-fixture outDir re-fetches
+      the wrong manifest/audio (stale downstream offsets). Fix is a server-contract
+      change in cmd/narrate-server (new read-only GET /artifact?dir=&name= route
+      serving ONLY the escalated dir's {manifest.json, audio.wav} allowlist under the
+      existing withCORS + loopback-only) plus a pure player refetchBase resolver
+      threaded through the live-ref pattern. server- prefixed to mark the cmd/narrate-
+      server package as the primary edge under change (the player change is the
+      consumer side) and to disambiguate from server-escalate-endpoint-49 (the base
+      escalate-endpoint build this resolves the downstream-staleness gap of); livedir
+      qualifier captures the live-escalated-dir-vs-FIXTURE_BASE crux. Planned via mimir
+      task depth with public-api-change + infra-blast + state-management overlays
+      (new public HTTP route surface + static-file-serving blast radius incl
+      traversal/symlink containment + React re-fetch state invariants). Retires the
+      [revisit-later] FIXTURE_BASE phase-one-limitation decision. Plan persisted draft
+      — awaiting user approval before sindri consumes. Issue-numbered naming continues
+      the convention.

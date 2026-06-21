@@ -3,7 +3,7 @@
 | Field    | Value            |
 |----------|------------------|
 | Date     | 2026-06-22       |
-| Status   | revisit-later    |
+| Status   | superseded       |
 | Category | tradeoff         |
 | Tags     | player, escalate, server-mode, repointAudio, reloadManifest, fixture-base, phase-one-limitation, deferred, issue-50 |
 
@@ -39,5 +39,6 @@ When a server-contract change lands that lets the player fetch a patched block's
 
 ## Related decisions
 
+- [Read-only GET /artifact route serves the live escalated dir; player re-fetch resolves against it](../architecture/2026-06-22-artifact-route-serves-live-dir-resolves-refetch.md) — **supersedes this decision.** Issue #62 added the server-contract change the revisit trigger called for: re-fetch now resolves against the live dir, not FIXTURE_BASE.
 - [Manual absolute-path dir field in TopBar is the server-mode escalate enabler](../architecture/2026-06-22-topbar-manual-absolute-dir-field-enables-server-escalate.md) — the arbitrary dir the re-fetch cannot yet resolve against.
 - [Player playback unit stays the whole audio.wav](../architecture/2026-06-22-player-playback-unit-stays-whole-audio-wav.md) — the blob `repointAudio` re-fetches.
