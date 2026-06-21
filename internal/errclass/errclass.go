@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strconv"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 )
@@ -68,31 +69,8 @@ func (c Class) String() string {
 	case ClassCancelled:
 		return "ClassCancelled"
 	default:
-		return "Class(" + itoa(int(c)) + ")"
+		return "Class(" + strconv.Itoa(int(c)) + ")"
 	}
-}
-
-// itoa avoids pulling strconv just for the unreachable default String() arm.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }
 
 // Classify decides the CATEGORY of a pipeline/patch error. It inspects the
