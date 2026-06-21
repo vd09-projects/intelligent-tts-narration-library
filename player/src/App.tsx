@@ -125,7 +125,7 @@ export default function App() {
   // (source-loaded) blob is owned by its loader hook and not revoked here.
   const repointAudio = useCallback(async (): Promise<void> => {
     try {
-      // KNOWN GAP (served-origin re-fetch): in server mode the patched output
+      // KNOWN GAP (served-origin re-fetch) (tracked: #62): in server mode the patched output
       // lives at the user's `dir`, but the audio re-fetch is hardwired to the
       // served fixture origin (FIXTURE_BASE), not `dir`. A server-mode user who
       // points `dir` at a non-fixture outDir re-fetches the WRONG audio.wav.
@@ -158,7 +158,7 @@ export default function App() {
     const prev = manifestRef.current
     if (!cur || !prev) return false
     try {
-      // KNOWN GAP (served-origin re-fetch): like repointAudio above, this
+      // KNOWN GAP (served-origin re-fetch) (tracked: #62): like repointAudio above, this
       // re-reads manifest.json from the served fixture origin (FIXTURE_BASE),
       // not the server-mode `dir`. A server-mode user pointing `dir` at a
       // non-fixture outDir re-fetches the WRONG manifest.json (stale downstream
