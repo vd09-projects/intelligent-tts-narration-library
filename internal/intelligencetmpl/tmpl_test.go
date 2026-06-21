@@ -171,6 +171,51 @@ func TestRenderPrompt_FallbackWhenUserTemplateMissing(t *testing.T) {
 	}
 }
 
+// TestPickUserTemplate_CodeL2UsesCodeTemplate — ClassCode at L2 must
+// resolve to the code-specific one-sentence gist template (CodeUserL2),
+// NOT the shared three-to-five-sentence UserL2. Guards issue #48's wiring
+// and catches accidental drift back to the generic summary prompt.
+func TestPickUserTemplate_CodeL2UsesCodeTemplate(t *testing.T) {
+	t.Parallel()
+	tpl := DefaultPromptTemplates[plan.ClassCode]
+	if got := PickUserTemplate(tpl, plan.L2); got != CodeUserL2 {
+		t.Errorf("ClassCode L2 should pick CodeUserL2, got:\n%s", got)
+	}
+	// L1 and L3 stay on the shared skeletons.
+	if got := PickUserTemplate(tpl, plan.L1); got != UserL1 {
+		t.Errorf("ClassCode L1 should pick shared UserL1, got:\n%s", got)
+	}
+	if got := PickUserTemplate(tpl, plan.L3); got != UserL3 {
+		t.Errorf("ClassCode L3 should pick shared UserL3, got:\n%s", got)
+	}
+}
+
+// TestRenderPrompt_CodeL2SubstitutesCodeTemplate — the rendered ClassCode
+// L2 user prompt must carry the one-sentence / 30-word framing and the
+// block text, and must NOT carry the generic "three to five sentences"
+// summary instruction.
+func TestRenderPrompt_CodeL2SubstitutesCodeTemplate(t *testing.T) {
+	t.Parallel()
+	tpl := DefaultPromptTemplates[plan.ClassCode]
+	req := intelligence.IntelligenceRequest{
+		BlockText: "CODE_MARKER_99",
+		Class:     plan.ClassCode,
+		Facts:     []string{"class: code, lang: go, lines: 12", "decls: 1"},
+		Level:     plan.L2,
+		Locale:    "en",
+	}
+	_, user := RenderPrompt(tpl, req)
+	if !strings.Contains(user, "CODE_MARKER_99") {
+		t.Errorf("code L2 user prompt missing block text:\n%s", user)
+	}
+	if !strings.Contains(user, "one sentence") || !strings.Contains(user, "30 words") {
+		t.Errorf("code L2 user prompt missing one-sentence/30-word framing:\n%s", user)
+	}
+	if strings.Contains(user, "three to five sentences") {
+		t.Errorf("code L2 user prompt unexpectedly used the generic summary skeleton:\n%s", user)
+	}
+}
+
 // itoa is a tiny helper to keep test names compact without importing
 // strconv just for one call.
 func itoa(n int) string {

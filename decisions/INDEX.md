@@ -48,6 +48,62 @@ decisions:
     tags: [player, escalate, server-mode, repointAudio, reloadManifest, fixture-base, phase-one-limitation, deferred, issue-50]
     path: tradeoff/2026-06-22-server-mode-refetch-resolves-against-fixture-base.md
     summary: "Task #50 known phase-one limitation. After an escalate patch, repointAudio/reloadManifest resolve their URLs against FIXTURE_BASE, not the arbitrary absolute server dir from the TopBar field — so post-patch re-fetch is correct only when the served dir is FIXTURE_BASE. The escalate POST itself works against the arbitrary dir; only the re-fetch is constrained. A full fix needs a server-contract change to serve patched outputs back from an arbitrary directory — accepted and deferred as a follow-up. Revisit when that contract change lands."
+  - id: 2026-06-22-code-l2-size-gate-observed-behaviorally-no-schema-field
+    title: "Code L2 size-gate is observed behaviorally (no `size_gated` plan field)"
+    date: 2026-06-22
+    status: accepted
+    category: convention
+    tags: [planner, levelCode, size-gate, plan-schema, additive-compatible, no-io-invariant, honesty-rule, observability, issue-48]
+    path: convention/2026-06-22-code-l2-size-gate-observed-behaviorally-no-schema-field.md
+    summary: "Implementation of issue #48's code-L2 size-gate (skip the LLM for blocks over ~250 lines, voice the deterministic gist instead). Question: how does the system signal a block was gated vs AI-gisted? DECISION (Option A): observe it BEHAVIORALLY — a gated block is Status=voiced + deterministic count+decls text + NO AI reply (no intelligence request emitted), indistinguishable in the plan from any other deterministically-voiced block. NO `size_gated` fact is ever emitted; a test (TestLevel_CodeL2Gate) pins the boundary at exactly codeGistMaxLines AND asserts the fact never leaks. Rejected Option B (add a `size_gated` Facts/Diagnostic schema field): permanent additive-schema surface for an internal optimization with no consumer, threads diagnostic state through the pure planner. Rationale: the gate is a cost optimization, not part of the narration contract; both the additive-schema rule and the planner purity/no-I/O invariant argue against minting an unconsumed field. Revisit if real operator tooling needs to declare gated blocks — add an additive fact then, justified by that consumer."
+  - id: 2026-06-22-code-l2-deterministic-gist-shared-helper
+    title: "Code L2 deterministic gist shared by degrade and size-gate paths (single helper, byte-identical)"
+    date: 2026-06-22
+    status: accepted
+    category: convention
+    tags: [planner, levelCode, degrade, size-gate, deterministicCodeGist, codeLangPhrase, honesty-rule, dry, yagni, issue-48]
+    path: convention/2026-06-22-code-l2-deterministic-gist-shared-helper.md
+    summary: "Issue #48 code-L2 created two paths that must voice the SAME deterministic count+decls gist: the no-adapter degrade path (degrade.go, Status=degraded) and the size-gate path (levelCode, Status=voiced). They must be byte-identical — the size-gate's behavioral-observability decision rests on the gated block's text matching a normal deterministic block. DECISION (Option A): both call a single deterministicCodeGist(body, langPhrase) helper, with langPhrase ALWAYS from a single codeLangPhrase(lang) — so output is byte-identical by construction, drift impossible without changing the shared helper. Contract ('langPhrase MUST be codeLangPhrase(lang) at every call site') backed by doc comments at both call sites + a test pinning the degrade segment to deterministicCodeGist. Rejected Option B (a per-class levelResult.deterministicFallback field) as YAGNI — only code needs it today, the field would be dead for every other class. Revisit if a second structured class needs the same degrade+size-gate fallback (two consumers justify the generic field then)."
+  - id: 2026-06-22-code-semantic-gist-l2-only
+    title: "AI semantic gist for code at L2 only (keep L1 free/instant/deterministic)"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [planner, levelCode, intelligence, leveling, cost-model, deterministic-l1, core-invariant, honesty-rule, issue-48]
+    path: tradeoff/2026-06-22-code-semantic-gist-l2-only.md
+    summary: "Issue #48 unblocked. Code blocks only got a real 'what this code does' gist at L3+intelligence; default L1 was a bare line count. DECISION (Option 1 of 3): enrich at L2 ONLY — L1 keeps today's deterministic count, L2 sets needsIntelligence=true for a one-line meaning gist with honesty fallback to deterministic count/decls when no adapter (possibly size-gated to skip ~200-300+ line blocks). Rejected Option 2 (L1 behind opt-in flag — more surface, no L1 benefit user wanted) and Option 3 (full L1 AI gist by default — breaks the deterministic-L1 invariant, bills tokens+latency on every code block in every doc, needs explicit sign-off). Rationale: the deterministic-L1 invariant ('Deterministic L1 for structured classes') is load-bearing — the free/instant/zero-token property that makes the leveling cost story work; Option 1 delivers the gist one escalation away while leaving it intact, consistent with 'enriches L2/L3'. Same shape as the #47 table decision. Revisit Option 2/3 if demand for meaning-at-default-level grows."
+  - id: 2026-06-22-table-meaning-summary-via-intelligence-l2-l3
+    title: "Wire intelligence into table meaning-summary at L2/L3 (L1 stays deterministic)"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [planner, levelTable, intelligence, leveling, cost-model, structured-classes, honesty-rule, issue-47]
+    path: tradeoff/2026-06-22-table-meaning-summary-via-intelligence-l2-l3.md
+    summary: "Issue #47 unblocked. levelTable was fully deterministic at every level (L1 shape, L2 headers+first+last row, L3 every row raw) — a table was never interpreted, unlike levelDiagram which already sets needsIntelligence=true at L2/L3. DECISION (Option A): L1 stays deterministic (shape); L2/L3 set needsIntelligence=true and pass table facts (cols/rows/headers) via IntelligenceRequest.Facts for a meaning summary; no adapter -> degrade to deterministic header/row reading, never fabricate. Rejected Option B (L3 only — leaves a smaller version of the same diagram inconsistency, L2 still meaningless) and Option C (reject — tables stay the one structured class with no interpretation path). Rationale: aligns with existing rule 'intelligence enriches L2/L3 for structured classes'; diagrams already do this, so this is a consistency fix, not a new cost model — hence accepted without the heavier sign-off #48 needed. Caching by (hash,level,model) means escalation doesn't re-bill. Revisit if the L1-deterministic property is ever pushed up to L2."
+  - id: 2026-06-21-errclass-classcaller-routes-to-500-on-server-patch
+    title: "ClassInternal is the zero value; ClassCaller routes to 500 on the server patch path (category-vs-wire split)"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [internal/errclass, cmd/narrate-server, cmd/narrate-mcp, error-classification, zero-value, fail-safe, wire-mapping, issue-51]
+    path: convention/2026-06-21-errclass-classcaller-routes-to-500-on-server-patch.md
+    summary: "Task #51 errclass owns CATEGORY only (no strings/HTTP codes/wrapping). DECISION 1: ClassInternal is the iota zero value so a forgotten/unrecognized/nil-classified path fails SAFE to internal — matching both roots' default branch (MCP 'internal_error: pipeline failure' / server 500 reasonInternal). DECISION 2: on the server patch path ClassCaller routes to 500 reasonInternal (falls through the existing default), NOT a 4xx — a deliberate category-vs-wire split where the SAME caller-class error (fs.ErrNotExist/ErrPermission) is 4xx invalid_argument on MCP but 500 on the server patch path. Each root owns its own Class->wire mapping; server adds no caller case; read-path source 400/404 in classifySourceErr untouched. Adding fs 4xx to the server patch path is out of scope. Revisit if a richer escalate contract needs caller errors surfaced as 4xx on the server."
+  - id: 2026-06-21-errclass-imports-mcpsampling-one-classifier-place
+    title: "errclass imports intelligence/mcpsampling so all shared classification lives in one place (Option A)"
+    date: 2026-06-21
+    status: accepted
+    category: architecture
+    tags: [internal/errclass, intelligence/mcpsampling, error-classification, import-coupling, layering, dedup, issue-51]
+    path: architecture/2026-06-21-errclass-imports-mcpsampling-one-classifier-place.md
+    summary: "Task #51 consolidated the duplicated caller-vs-internal-vs-cancel ladder (the // DUP marker) into internal/errclass. DECISION (Option A): errclass imports intelligence/mcpsampling solely to recognize its two adapter sentinels (ErrNoSamplingClient, ErrUnexpectedContentKind) and classify both as ClassInternal — keeping ALL shared classification in ONE place, honoring the prior fact that sampling sentinels route to internal. Rejected Option B (omit the sentinels, re-handle them at the MCP root): re-duplicates the very logic #51 consolidates and leaves MCP with two classifiers. P1 verified no import cycle (mcpsampling imports only plan/, intelligence/, MCP SDK; never reaches internal/) and no layering-lint flag. The latent coupling errclass -> intelligence/mcpsampling is documented as a named edge in the errclass.go package doc. Revisit (fall back to Option B for the two sentinels) if a cycle or layering flag appears."
+  - id: 2026-06-21-errclass-class-omits-isvalid-internal-return-type
+    title: "errclass.Class deliberately omits IsValid() (closed internal return type), keeps only String()"
+    date: 2026-06-21
+    status: accepted
+    category: convention
+    tags: [internal/errclass, typed-enum, isvalid, string-method, error-classification, issue-51]
+    path: convention/2026-06-21-errclass-class-omits-isvalid-internal-return-type.md
+    summary: "Task #51 introduced the errclass.Class typed enum. DECISION: it deliberately DEPARTS from the project's typed-enum-with-IsValid() convention (the #10/#23 sweep, plan/enums.go) — NO IsValid(). Rationale turns the convention's own trigger around: the #10/#23 enums carry IsValid() because they are parsed from wire / deserialized / user-supplied and need input validation; Class is a closed INTERNAL return type produced only by Classify, never parsed/deserialized/user-supplied, so there's no untrusted input to validate and IsValid() would be dead code. String() IS provided (the only method) for debuggability + readable test failures. The departure is documented in a doc comment on the Class type so the absence reads as intentional. Clarifies the convention applies to wire/parsed enums, not closed internal return types. Revisit if Class ever becomes serialized or built from untrusted input."
   - id: 2026-06-21-errnothingtopatch-maps-to-4xx-not-patchblock-change
     title: "Map a real ErrNothingToPatch to a 4xx (Option A); do NOT add already-at-level detection to persistent.PatchBlock (Option B rejected)"
     date: 2026-06-21

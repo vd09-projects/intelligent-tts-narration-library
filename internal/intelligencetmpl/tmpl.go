@@ -104,6 +104,17 @@ Block:
 {{.BlockText}}`
 )
 
+// CodeUserL2 is the code-specific L2 user prompt: a single sentence
+// semantic meaning-gist of what the code does (issue #48). It overrides
+// the shared UserL2 (three-to-five-sentence summary) for ClassCode only —
+// at L2 a listener wants one line of meaning, not a paragraph. CodeSystem
+// + HonestySystemPreamble + the __REFUSE__ contract are unchanged; this
+// only reshapes the user-side instruction.
+const CodeUserL2 = `Level 2 ({{.LevelName}}): one sentence, at most 30 words, stating what this code does — its purpose and primary effect. Name the key function or type if there is an obvious one. Do not read syntax aloud; do not list every declaration. Class: {{.Class}}. Facts: {{.Facts}}.
+
+Block:
+{{.BlockText}}`
+
 // DefaultPromptTemplates is the frozen, per-class prompt set shipped
 // with the library. Adapters use it by default; callers override via
 // each adapter's WithPromptTemplates option.
@@ -121,7 +132,7 @@ var DefaultPromptTemplates = map[plan.Class]PromptTemplate{
 	},
 	plan.ClassCode: {
 		System: CodeSystem,
-		UserL1: UserL1, UserL2: UserL2, UserL3: UserL3,
+		UserL1: UserL1, UserL2: CodeUserL2, UserL3: UserL3,
 	},
 	plan.ClassConfig: {
 		System: ConfigSystem,

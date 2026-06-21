@@ -117,6 +117,36 @@ func TestVoice_DifferentLevelInvalidates(t *testing.T) {
 	}
 }
 
+// TestCacheKey_IncludesLevel — hard build-time guard (issue #48). The
+// cache key MUST distinguish L2 from L3 so escalation across levels does
+// not return a stale lower-level summary. Two keys identical except for
+// Level must be unequal as map keys. If a future refactor drops Level
+// from CacheKey, this test goes RED rather than silently re-billing or
+// returning a stale gist.
+//
+// This is the structural complement to TestVoice_DifferentLevelInvalidates
+// (the behavioral HTTP-count proof): together they pin "(hash, level,
+// model)" per CLAUDE.md. Today the Anthropic CacheKey carries Level, so
+// this lands green.
+func TestCacheKey_IncludesLevel(t *testing.T) {
+	t.Parallel()
+	k2 := CacheKey{ContentHash: "h", Level: plan.L2, Model: "anthropic@m"}
+	k3 := CacheKey{ContentHash: "h", Level: plan.L3, Model: "anthropic@m"}
+	if k2 == k3 {
+		t.Fatalf("CacheKey ignores Level — L2 and L3 collide: %+v == %+v", k2, k3)
+	}
+	// And the cache must treat them as distinct entries.
+	c := NewInMemoryCache()
+	c.Put(k2, "L2 summary")
+	c.Put(k3, "L3 detail")
+	if v, _ := c.Get(k2); v != "L2 summary" {
+		t.Errorf("L2 entry clobbered by L3: got %q", v)
+	}
+	if v, _ := c.Get(k3); v != "L3 detail" {
+		t.Errorf("L3 entry clobbered by L2: got %q", v)
+	}
+}
+
 // TestVoice_DifferentBlockTextInvalidates — different text, same level
 // → different ContentHash → cache miss on the second call.
 func TestVoice_DifferentBlockTextInvalidates(t *testing.T) {

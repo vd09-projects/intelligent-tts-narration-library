@@ -100,6 +100,7 @@ import (
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
+	"github.com/vd09-projects/intelligent-tts-narration-library/internal/errclass"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
@@ -630,17 +631,27 @@ func classifySourceErr(err error) *ErrorResponse {
 }
 
 // statusForErr classifies a pipeline/patch error into (HTTP status,
-// ErrorResponse). This is the server's copy of cmd/narrate-mcp's caller-vs-
-// internal-vs-cancel split, mapped to the HTTP enum instead of wire prefixes.
+// ErrorResponse). The caller/internal/cancel CATEGORY decision is delegated to
+// the shared errclass.Classify (#51); this root owns the HTTP enum mapping
+// (status + reason token) and flattens the error via err.Error() into
+// ErrorResponse.Message (NO %w wrap — the server never propagated a wrapped
+// error and must not start, or ErrorResponse.Message would change).
 //
-// DUP: mirrors cmd/narrate-mcp classifyPipelineErr (main.go:383) — the
-// caller/internal/cancel classification is duplicated here. Extract the shared
-// classification to internal/errclass when the 3rd consumer lands (#51); only
-// the wire-format mapping (HTTP status + reason token vs the MCP text prefix)
-// should stay per-root.
+// Branch order is load-bearing and preserved verbatim: the cancel check stays
+// FIRST, then the five persistent.Err* -> 409 branches, then the default 500.
+// Only the cancel category is delegated to errclass; the persistent ladder is
+// NOT handed to errclass (it is server-specific patch-state, not pipeline
+// classification).
+//
+// Note (#51 [Domain Logic]): errclass also distinguishes ClassCaller (fs
+// not-found / permission), but on the server PATCH path a caller-class error
+// maps to 500 reasonInternal today and MUST continue to — so this function adds
+// NO caller case; ClassCaller falls through to the default 500 alongside
+// ClassInternal. (Source-resolution 400/404 on the READ path is owned by
+// classifySourceErr, untouched.)
 func statusForErr(err error) (int, *ErrorResponse) {
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errclass.Classify(err) == errclass.ClassCancelled:
 		return http.StatusRequestTimeout, &ErrorResponse{Reason: reasonCancelled, Message: "request cancelled or timed out: " + err.Error()}
 	case errors.Is(err, persistent.ErrStalePatch):
 		return http.StatusConflict, &ErrorResponse{Reason: reasonStalePatch, Message: err.Error()}

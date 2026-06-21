@@ -59,6 +59,15 @@ func degrade(
 		return degradeProse(rb, target, sm, lex)
 	}
 
+	// Code at L2 with no adapter: fall back to a deterministic count+decls
+	// gist at L2 (Status=degraded) rather than downshift to L1. The
+	// ordering here is load-bearing — this branch sits AFTER the ClassProse
+	// check and BEFORE degradeStructuredDownshift so code L2 keeps its
+	// richer count+decls gist instead of collapsing to the bare L1 line.
+	if cls == plan.ClassCode && target == plan.L2 {
+		return degradeCodeL2(rb, sm, lex)
+	}
+
 	// Structured class needing intelligence (code L3, diagram L2/L3).
 	// Downshift to L1 deterministic gist and mark Status=degraded.
 	return degradeStructuredDownshift(rb, cls, target, sm, lex)
@@ -130,6 +139,36 @@ func degradeProse(rb rawBlock, target plan.Level, sm plan.SourceMap, lex *compil
 			Code:     "intelligence_unavailable",
 			Severity: "info",
 			Message:  fmt.Sprintf("prose block under %d words read verbatim without an intelligence adapter", proseVerbatimMaxWords),
+		}
+}
+
+// degradeCodeL2 — no-adapter fallback for a code block asked at L2.
+// Voices the deterministic count+declarations gist (the same string the
+// size-gate path in levelCode produces) and marks Status=degraded so a
+// downstream consumer sees the requested-AI-gist-vs-delivered gap. The
+// langPhrase MUST be computed via codeLangPhrase, identically to
+// levelCode, so the gated and degraded segment texts are byte-identical.
+func degradeCodeL2(rb rawBlock, sm plan.SourceMap, lex *compiledLex) (plan.Block, *plan.Diagnostic) {
+	body := stripFenceMarkers(rb.text)
+	langPhrase := codeLangPhrase(rb.fenceInfo)
+	gist, _ := deterministicCodeGist(body, langPhrase)
+	return plan.Block{
+			Class:     plan.ClassCode,
+			Level:     plan.L2,
+			Status:    plan.StatusDegraded,
+			SourceMap: sm,
+			Segments: []plan.Segment{
+				{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(gist, lex)},
+			},
+			Provenance: plan.Provenance{
+				VoicedBy:      "planner",
+				Deterministic: true,
+				LevelAsked:    plan.L2,
+			},
+		}, &plan.Diagnostic{
+			Code:     "intelligence_unavailable",
+			Severity: "info",
+			Message:  "code block read at deterministic L2 (count + declarations) without an intelligence adapter",
 		}
 }
 

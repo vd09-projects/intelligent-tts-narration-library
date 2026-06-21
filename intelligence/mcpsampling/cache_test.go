@@ -245,3 +245,33 @@ func TestCacheKey_UsesFullModelString(t *testing.T) {
 		t.Errorf("fullModelString: got %q want %q", got, want)
 	}
 }
+
+// TestCacheKey_IncludesLevel — hard build-time guard (issue #48). The
+// cache key MUST distinguish L2 from L3 so cross-level escalation does not
+// return a stale lower-level gist or re-bill incorrectly. Two keys
+// identical except for Level must be unequal as map keys, and the Level
+// field must derive from the requested plan.Level (via levelToCacheKey).
+// If a future refactor drops Level from CacheKey, this goes RED.
+//
+// Structural complement to TestCache_KeyIsolationByLevel (the behavioral
+// proof). Today CacheKey carries Level, so this lands green.
+func TestCacheKey_IncludesLevel(t *testing.T) {
+	t.Parallel()
+	k2 := CacheKey{ContentHash: "h", Level: levelToCacheKey(int(plan.L2)), Model: "m"}
+	k3 := CacheKey{ContentHash: "h", Level: levelToCacheKey(int(plan.L3)), Model: "m"}
+	if k2.Level == k3.Level {
+		t.Fatalf("levelToCacheKey collapses L2 and L3 to %q", k2.Level)
+	}
+	if k2 == k3 {
+		t.Fatalf("CacheKey ignores Level — L2 and L3 collide: %+v == %+v", k2, k3)
+	}
+	c := NewInMemoryCache()
+	c.Put(k2, intelligence.IntelligenceResult{Text: "L2 summary"})
+	c.Put(k3, intelligence.IntelligenceResult{Text: "L3 detail"})
+	if v, _ := c.Get(k2); v.Text != "L2 summary" {
+		t.Errorf("L2 entry clobbered by L3: got %q", v.Text)
+	}
+	if v, _ := c.Get(k3); v.Text != "L3 detail" {
+		t.Errorf("L3 entry clobbered by L2: got %q", v.Text)
+	}
+}
