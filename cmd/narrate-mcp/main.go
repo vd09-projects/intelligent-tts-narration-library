@@ -73,6 +73,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/mcptext"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
+	"github.com/vd09-projects/intelligent-tts-narration-library/internal/errclass"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
@@ -380,30 +381,41 @@ func receiptFromSink(r sink.SinkReceipt, outDir string) speakReceipt {
 // Context cancellation is its own class: the MCP layer treats it as
 // `cancelled` already; we still tag the wire message so the classifier
 // remains the single source of truth.
+//
+// The CATEGORY decision (caller/internal/cancel) is delegated to the shared
+// errclass.Classify (#51). This root owns only the per-root wire mapping:
+// the text-prefix contract, the local errors.Is message-pickers, and the %w
+// wrapping of the ORIGINAL err. The message-selection errors.Is checks below
+// are deliberate wire-format choices (distinct text per sentinel), NOT
+// leftover dedup — they stay per-root.
 func classifyPipelineErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	switch errclass.Classify(err) {
+	case errclass.ClassCancelled:
 		return fmt.Errorf("cancelled: %w", err)
-	}
-	if errors.Is(err, fs.ErrNotExist) {
+	case errclass.ClassCaller:
+		// Wire-format text choice: pick the caller message per fs sentinel.
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("caller-error: invalid_argument: source permission denied: %w", err)
+		}
+		// fs.ErrNotExist (and any future caller sentinel) -> not-found text.
 		return fmt.Errorf("caller-error: invalid_argument: source not found: %w", err)
+	default: // errclass.ClassInternal
+		// Phase 5 of #13: mcpsampling sentinels. ErrNoSamplingClient means the
+		// server failed to thread the session — operator bug, not caller bug.
+		// ErrUnexpectedContentKind means the client returned non-text content
+		// from a sampling request — outside the caller's control. These are
+		// wire-format text choices within the internal category.
+		if errors.Is(err, mcpsampling.ErrNoSamplingClient) {
+			return fmt.Errorf("internal_error: sampling client missing from ctx: %w", err)
+		}
+		if errors.Is(err, mcpsampling.ErrUnexpectedContentKind) {
+			return fmt.Errorf("internal_error: sampling reply not text: %w", err)
+		}
+		return fmt.Errorf("internal_error: pipeline failure: %w", err)
 	}
-	if errors.Is(err, fs.ErrPermission) {
-		return fmt.Errorf("caller-error: invalid_argument: source permission denied: %w", err)
-	}
-	// Phase 5 of #13: mcpsampling sentinels. ErrNoSamplingClient means the
-	// server failed to thread the session — operator bug, not caller bug.
-	// ErrUnexpectedContentKind means the client returned non-text content
-	// from a sampling request — outside the caller's control.
-	if errors.Is(err, mcpsampling.ErrNoSamplingClient) {
-		return fmt.Errorf("internal_error: sampling client missing from ctx: %w", err)
-	}
-	if errors.Is(err, mcpsampling.ErrUnexpectedContentKind) {
-		return fmt.Errorf("internal_error: sampling reply not text: %w", err)
-	}
-	return fmt.Errorf("internal_error: pipeline failure: %w", err)
 }
 
 // speakHandler bridges the SDK's typed handler signature to runSpeak.
