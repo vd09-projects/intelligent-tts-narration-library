@@ -360,3 +360,84 @@ scopes:
       migration / concurrency / perf surface). Plan persisted draft (awaiting
       user approval before sindri consumes). Issue-numbered naming continues the
       convention.
+  - slug: planner-list-singular-plural-55
+    title: planner bare-list preamble singular/plural agreement (N=1 reads "1 item") (issue #55)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #55 (planner generated bare-list preamble
+      reads ungrammatical "List of 1 items." at N=1). Cosmetic grammar fix in
+      planner/level.go levelList: the bare-branch (title=="") fmt.Fprintf at
+      line 188 emits "List of %d items." unconditionally; fix to agree in number
+      — "List of 1 item." at N=1, "List of N items." for N!=1 (N=0 "0 items."
+      acceptable). Named debt consciously scoped OUT of the #45 ordinals change,
+      self-contained, no design dependency. Honors the #45 "titled list reuses
+      source title, bare list generates 'List of N items.'" decision (touch the
+      bare branch only; titled branch + colon-gated branch selection untouched)
+      and the honesty rule (true count, no invented topic). Guard is exactly
+      len(items)==1 — no other N value crosses the English singular boundary.
+      Minimal change: one production hunk in level.go + one assertion update at
+      level_test.go:118; N=0/3/11 cases and the list_l1.want.json golden stay
+      byte-identical (no golden regen, preserves #46 deterministic ordering).
+      Slug pre-supplied + pre-approved by user in orchestration prompt. Planned
+      via mimir task depth, no overlays triggered (single-string cosmetic fix, no
+      public API / migration / concurrency / perf surface). Plan persisted draft
+      (awaiting user approval before sindri consumes). Issue-numbered naming
+      continues the convention.
+  - slug: planner-list-title-detection-54
+    title: planner list title detection misreads de-markered / colon-terminated first item (issue #54)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #54 (splitListTitle in planner/level.go
+      misclassifies a list block's leading line because its only title signal is
+      a trailing colon on the first non-marker line, while goldmark de-markers the
+      first list item — so the colon heuristic errs in two directions: a non-colon
+      leading label is voiced as item one (false negative, AC1), and a bare list
+      whose genuine first item ends in a colon is mis-promoted to a title, dropping
+      it from items, undercounting N and shifting every ordinalCue (false positive,
+      AC2)). Recommends Option B-markdown: the segmenter (which holds the AST and
+      knows the marker was stripped) sets a planner-internal firstItemDemarkered
+      flag on rawBlock so splitListTitle refuses title-promotion of the first line
+      on the goldmark path — Direction 2 impossible by construction, N always
+      correct; the trailing-colon title branch is retained only for the
+      plaintext-fallback shape where it is still sound. AC1 surfaced as a likely
+      ticket divergence (in true markdown the non-colon title is already voiced
+      correctly as its own prose block; AC1 read literally is either already
+      satisfied or unsatisfiable without guessing) — step-1 decision gate before
+      coding. planner- prefixed to mark the package under change and disambiguate
+      from planner-issue-4 (original core build), planner-data-races-42,
+      planner-parallel-intelligence-46, planner-list-ordinals-45, and
+      planner-list-singular-plural-55 (siblings touching levelList); list-title-
+      detection qualifier captures the crux. Planned via mimir task depth, no
+      overlays triggered (planner-internal pure change, no plan/ schema field, no
+      public API / migration / concurrency / perf surface). Plan persisted draft
+      (awaiting user approval before sindri consumes). Issue-numbered naming
+      continues the convention.
+  - slug: player-load-by-path-70
+    title: player load plan by typed server dir path + widen server artifact allowlist (issue #70)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #70 (in server mode, let the user type an
+      absolute server-side persistent-sink dir path and load that plan directly
+      by fetching {plan.json, manifest.json, audio.wav, source.md?} over the
+      escalate server's GET /artifact route — no folder picker). Requires
+      widening cmd/narrate-server's artifact allowlist (currently {audio.wav,
+      manifest.json}) to also serve plan.json + source.md, extending the
+      allowlist map ONLY while the allowlist-before-join + EvalSymlinks +
+      filepath.Rel containment pipeline, loopback-only bind, and pinned CORS
+      stay byte-for-byte unchanged. Bundles a real 0600-vs-0644 audio-perm
+      bugfix; a pre-flight drift report widened that bugfix scope from the
+      brief's writeAudio (persistent.go) alone to ALSO stageAudioTmp (patch.go),
+      since the block-patch path has the identical missing-Chmod(0o644) defect.
+      Follow-on consumer of server-escalate-livedir-62 (which introduced the
+      GET /artifact route + per-file allowlist); player- prefixed to mark the
+      reference player as the primary surface under change and disambiguate from
+      player-react-issue-18 (original build) and player-escalate-buttons-50;
+      load-by-path qualifier captures the crux. Planned via mimir task depth
+      with public-api-change + infra-blast overlays (widened public HTTP artifact
+      surface + static-file-serving security blast radius). Three load-bearing
+      decisions marked inline for harvest (scope of the perm bugfix, security
+      minimal-surface allowlist widening, triple non-atomic per-file fetch).
+      Slug pre-supplied + pre-approved by user in orchestration prompt; prior
+      skald run failed to persist (scope dir absent). Plan persisted draft
+      (awaiting user approval before sindri consumes). Issue-numbered naming
+      continues the convention.

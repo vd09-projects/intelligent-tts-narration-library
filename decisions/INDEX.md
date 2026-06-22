@@ -8,6 +8,38 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-22-artifact-allowlist-widen-plan-source-name-agnostic-verified
+    title: "Artifact allowlist widened to plan.json + source.md only; downstream name-agnosticism a verified precondition proven by symmetric traversal coverage"
+    date: 2026-06-22
+    status: accepted
+    category: security
+    tags: [cmd/narrate-server, artifact-route, allowlist, plan.json, source.md, path-traversal, EvalSymlinks, filepath-rel, loopback, CORS, name-agnosticism, symmetric-coverage, issue-70]
+    path: security/2026-06-22-artifact-allowlist-widen-plan-source-name-agnostic-verified.md
+    summary: "Issue #70 load-by-path needs GET /artifact to serve plan.json + source.md beyond {audio.wav, manifest.json}. DECISION: widen artifactAllowlist by exactly two entries (plan.json -> application/json, source.md -> text/markdown; charset=utf-8); the #62 containment pipeline (allowlist-before-join, EvalSymlinks, filepath.Rel, :533 separator/'..' guard, loopback bind, pinned CORS) is byte-for-byte unchanged; no new ErrorResponse.reason token; Content-Type pinned from the map (no MIME sniffing). Name-agnosticism of every post-allowlist step is a VERIFIED precondition (Phase-1 step 0 re-reads resolveArtifactPath + the :533 guard), not a prose claim, and is PROVEN by symmetric traversal-reject coverage for BOTH new names (../source.md, sub/source.md, sub/plan.json alongside ../plan.json). Supersedes the v1 mark's unbacked name-agnosticism claim and asymmetric coverage. References #62's containment decision (extends, does not modify it)."
+  - id: 2026-06-22-audio-perm-0644-fix-covers-both-write-paths
+    title: "0600->0644 audio-permission bugfix covers BOTH audio-write paths (writeAudio + stageAudioTmp)"
+    date: 2026-06-22
+    status: accepted
+    category: scope
+    tags: [persistent-sink, audio.wav, file-permissions, 0644, writeAudio, stageAudioTmp, consume, block-patch, tempfile-chmod, drift, issue-70]
+    path: scope/2026-06-22-audio-perm-0644-fix-covers-both-write-paths.md
+    summary: "The #70 brief cited a single 0600-vs-0644 audio-perm bug in writeAudio (initial Consume); the drift report found the identical bug in stageAudioTmp (block-patch). DECISION: scope the fix to BOTH audio-write paths via the existing tempFile.Chmod(0o644) seam — writeAudio and stageAudioTmp — so block-patched audio matches the 0644 that plan.json/manifest.json already get. Fixing only writeAudio would leave patched outputs at 0600. The load-bearing call is the scope (two paths via drift, not the one the brief named), not the routine permission change itself. Per-path perm tests after Consume and PatchBlock."
+  - id: 2026-06-22-source-md-failure-modes-pinned-null-or-warning-never-abort
+    title: "source.md failure modes pinned: 200->text, 404->null silent, all other failures->null + warning, never abort"
+    date: 2026-06-22
+    status: accepted
+    category: resilience
+    tags: [player, loadFromServerDir, source.md, honesty-rule, collectWarnings, source-null, graceful-fallback, optional-artifact, issue-70]
+    path: resilience/2026-06-22-source-md-failure-modes-pinned-null-or-warning-never-abort.md
+    summary: "Issue #70 loadFromServerDir treats {plan,manifest,audio} as required (precise per-file throw on !res.ok or JSON-parse failure -> load aborts) and source.md as optional. DECISION (resolves former Open Question 1): source.md is fetched separately and handled tolerantly — 200 -> text; 404 -> source:null silent (absence is expected); any other outcome (non-OK-non-404, network, timeout, abort) -> source:null PLUS a collectWarnings warning 'source unavailable: <status-or-reason>', never throw/abort. Honesty rule applied at the fetch layer: present-but-unreadable surfaced as a warning, absent degraded silently, required artifacts fail loud. Player source pane already handles source:null (banner + raw_excerpt); warning rides the existing warnings array."
+  - id: 2026-06-22-single-in-flight-load-enforced-in-hook
+    title: "Single-in-flight load enforced in the loader hook so concurrent triggers cannot race the shared revokeRef"
+    date: 2026-06-22
+    status: accepted
+    category: state-management
+    tags: [player, useDirectoryLoader, isLoading, abort-prior-load, revokeRef, blob-url, concurrency, double-click, in-flight-guard, issue-70]
+    path: state-management/2026-06-22-single-in-flight-load-enforced-in-hook.md
+    summary: "Issue #70 adds a load-by-path entry point alongside two pickers, all sharing one revokeRef for blob-URL lifetime; round-1 review flagged a concurrent/double-click race on revokeRef. DECISION: enforce at most one load in flight in the hook (useDirectoryLoader) — reuse picker in-flight handling if present, else add isLoading / abort-prior-load — at the source of the shared revokeRef, so concurrent triggers are blocked not raced regardless of which control fires; all paths use the same runLoad revoke discipline (revoke before commit, set revokeRef = data.audioUrl); rejected loads never update revokeRef to an uncommitted URL; isLoading clears in finally and is surfaced so the UI disables the Load button + both pickers. UI disabling is a second layer, not the primary mechanism."
   - id: 2026-06-22-list-title-detection-firstitemdemarkered-seam
     title: "Issue #54 colon-gated list-title detection resolved via upstream firstItemDemarkered seam; AC1 taken as documented divergence"
     date: 2026-06-22
