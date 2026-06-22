@@ -559,6 +559,18 @@ func TestEscalate_ErrorStatusMapping(t *testing.T) {
 		{"container", fmt.Errorf("%w", persistent.ErrContainerMismatch), nil, http.StatusConflict, reasonContainerMismatch},
 		{"format", fmt.Errorf("%w", persistent.ErrFormatMismatch), nil, http.StatusConflict, reasonFormatMismatch},
 		{"internal_patch", errors.New("disk on fire"), nil, http.StatusInternalServerError, reasonInternal},
+		// caller_patch_*: fs.ErrNotExist/fs.ErrPermission wrapped through the patch
+		// seam are errclass.ClassCaller, yet the server patch path deliberately routes
+		// ClassCaller to the default 500 alongside ClassInternal (statusForErr, main.go
+		// #51 note) — NOT the MCP root's caller→4xx. These rows are what PROVE that
+		// ClassCaller specifically lands on 500: flipping statusForErr's default to a
+		// 4xx would redden them. (It would also redden the existing genuinely-internal
+		// rows like internal_patch — those aren't ClassCaller, so only these two pin
+		// the ClassCaller→500 wire mapping.) The wrap text avoids the ErrNothingToPatch
+		// sentinel so the handler reaches statusForErr instead of the 4xx source_not_found
+		// pre-branch (main.go:539).
+		{"caller_patch_notexist", fmt.Errorf("patch read: %w", fs.ErrNotExist), nil, http.StatusInternalServerError, reasonInternal},
+		{"caller_patch_permission", fmt.Errorf("patch read: %w", fs.ErrPermission), nil, http.StatusInternalServerError, reasonInternal},
 		{
 			"manifest_absent_404", nil,
 			func(_ string) (persistent.Manifest, error) {
