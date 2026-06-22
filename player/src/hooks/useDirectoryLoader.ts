@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   loadDirectory,
+  loadFromServerDir as loadFromServerDirLib,
   type LoadInput,
   type LoadedDirectory,
 } from '../lib/loadDirectory.ts'
+import { FIXTURE_BASE } from './useFixture.ts'
 
 // useDirectoryLoader wires the runtime directory picker (plan D2 + R2).
 // Prefers the File System Access API (`window.showDirectoryPicker`) when
@@ -27,6 +29,12 @@ export interface DirectoryLoaderState {
 export interface DirectoryLoaderApi extends DirectoryLoaderState {
   pickDirectory: () => Promise<void>
   loadFromFileList: (files: File[]) => Promise<void>
+  // loadFromServerDir loads a whole plan by typed SERVER dir path (#70). The
+  // hook builds the RefetchBaseInputs from the typed dir + server base URL.
+  loadFromServerDir: (dir: string, serverBaseUrl: string) => Promise<void>
+  // isLoading is true while ANY load (picker or load-by-path) is in flight, so
+  // the UI can disable every trigger and enforce a single in-flight load (#70).
+  isLoading: boolean
   supportsFsAccess: boolean
 }
 
@@ -36,7 +44,14 @@ export function useDirectoryLoader(): DirectoryLoaderApi {
     data: null,
     error: null,
   })
+  const [isLoading, setIsLoading] = useState(false)
   const revokeRef = useRef<string | null>(null)
+  // Single-in-flight guard (#70 Decision v2 state-management): a synchronous ref
+  // so a double-click / concurrent trigger is rejected BEFORE a second load can
+  // race the shared revokeRef. The async `isLoading` state drives the UI; this
+  // ref is the actual mutual-exclusion lock (state updates are async and would
+  // let two clicks through in the same tick).
+  const inFlightRef = useRef(false)
   const supportsFsAccess =
     typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 
@@ -50,48 +65,107 @@ export function useDirectoryLoader(): DirectoryLoaderApi {
     }
   }, [])
 
-  const runLoad = useCallback(async (input: LoadInput) => {
-    setState((s) => ({ ...s, status: 'loading', error: null }))
+  // commitLoaded applies a successfully loaded directory with revoke-before-
+  // replace discipline (R3): revoke the PREVIOUS audioUrl, then adopt the new
+  // one. Shared by the picker paths and the load-by-path path so revokeRef is
+  // mutated in exactly one place.
+  const commitLoaded = useCallback((data: LoadedDirectory) => {
+    if (revokeRef.current) URL.revokeObjectURL(revokeRef.current)
+    revokeRef.current = data.audioUrl
+    setState({ status: 'loaded', data, error: null })
+  }, [])
+
+  // withInFlight wraps a load so at most ONE runs at a time. A concurrent call
+  // while one is in flight is dropped (returns immediately) — the click is
+  // ignored, never raced. isLoading is cleared in finally on every exit path.
+  const withInFlight = useCallback(async (run: () => Promise<void>) => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    setIsLoading(true)
     try {
-      const data = await loadDirectory(input)
-      if (revokeRef.current) URL.revokeObjectURL(revokeRef.current)
-      revokeRef.current = data.audioUrl
-      setState({ status: 'loaded', data, error: null })
-    } catch (e) {
-      setState({ status: 'error', data: null, error: (e as Error).message })
+      await run()
+    } finally {
+      inFlightRef.current = false
+      setIsLoading(false)
     }
   }, [])
 
-  const pickDirectory = useCallback(async () => {
-    if (!supportsFsAccess || typeof window === 'undefined' || !window.showDirectoryPicker) {
-      setState({
-        status: 'error',
-        data: null,
-        error:
-          'showDirectoryPicker is not available in this browser; use the directory-input fallback instead.',
-      })
-      return
-    }
-    setState((s) => ({ ...s, status: 'picking', error: null }))
-    try {
-      const handle = await window.showDirectoryPicker({ mode: 'read' })
-      await runLoad({ kind: 'fs-handle', handle })
-    } catch (e) {
-      // AbortError = user cancelled the picker dialog. Treat as idle.
-      if ((e as { name?: string }).name === 'AbortError') {
-        setState({ status: 'idle', data: null, error: null })
-        return
+  const runLoad = useCallback(
+    async (input: LoadInput) => {
+      setState((s) => ({ ...s, status: 'loading', error: null }))
+      try {
+        const data = await loadDirectory(input)
+        commitLoaded(data)
+      } catch (e) {
+        // A rejected load must NOT update revokeRef to any uncommitted URL.
+        setState({ status: 'error', data: null, error: (e as Error).message })
       }
-      setState({ status: 'error', data: null, error: (e as Error).message })
-    }
-  }, [runLoad, supportsFsAccess])
-
-  const loadFromFileList = useCallback(
-    async (files: File[]) => {
-      await runLoad({ kind: 'file-list', files })
     },
-    [runLoad],
+    [commitLoaded],
   )
 
-  return { ...state, pickDirectory, loadFromFileList, supportsFsAccess }
+  const pickDirectory = useCallback(
+    () =>
+      withInFlight(async () => {
+        if (!supportsFsAccess || typeof window === 'undefined' || !window.showDirectoryPicker) {
+          setState({
+            status: 'error',
+            data: null,
+            error:
+              'showDirectoryPicker is not available in this browser; use the directory-input fallback instead.',
+          })
+          return
+        }
+        setState((s) => ({ ...s, status: 'picking', error: null }))
+        try {
+          const handle = await window.showDirectoryPicker({ mode: 'read' })
+          await runLoad({ kind: 'fs-handle', handle })
+        } catch (e) {
+          // AbortError = user cancelled the picker dialog. Treat as idle.
+          if ((e as { name?: string }).name === 'AbortError') {
+            setState({ status: 'idle', data: null, error: null })
+            return
+          }
+          setState({ status: 'error', data: null, error: (e as Error).message })
+        }
+      }),
+    [runLoad, supportsFsAccess, withInFlight],
+  )
+
+  const loadFromFileList = useCallback(
+    (files: File[]) => withInFlight(() => runLoad({ kind: 'file-list', files })),
+    [runLoad, withInFlight],
+  )
+
+  // loadFromServerDir loads a whole plan by typed SERVER dir path (#70), via the
+  // server's GET /artifact route. Shares the single-in-flight guard + revoke-
+  // before-replace discipline with the picker paths.
+  const loadFromServerDir = useCallback(
+    (dir: string, serverBaseUrl: string) =>
+      withInFlight(async () => {
+        setState((s) => ({ ...s, status: 'loading', error: null }))
+        try {
+          const data = await loadFromServerDirLib(dir, {
+            serverMode: true,
+            dir,
+            serverBaseUrl,
+            fixtureBase: FIXTURE_BASE,
+          })
+          commitLoaded(data)
+        } catch (e) {
+          // A rejected load must NOT update revokeRef to any uncommitted URL.
+          setState({ status: 'error', data: null, error: (e as Error).message })
+        }
+      }),
+    [commitLoaded, withInFlight],
+  )
+
+  return {
+    ...state,
+    pickDirectory,
+    loadFromFileList,
+    loadFromServerDir,
+    isLoading,
+    supportsFsAccess,
+  }
 }

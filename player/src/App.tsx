@@ -345,6 +345,8 @@ export default function App() {
         serverMode={server.mode}
         dir={dir}
         onDirChange={setDir}
+        onLoadDir={() => loader.loadFromServerDir(dir, server.baseUrl)}
+        isLoading={loader.isLoading}
       />
 
       <main className="main">

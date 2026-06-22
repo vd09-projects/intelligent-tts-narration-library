@@ -29,6 +29,12 @@ export interface TopBarProps {
   serverMode: ServerMode
   dir: string
   onDirChange: (dir: string) => void
+  // onLoadDir loads a whole plan by the typed server dir path (#70). Server mode
+  // only. Wired to the directory loader's loadFromServerDir via App.
+  onLoadDir: () => void
+  // isLoading is true while ANY load (picker or load-by-path) is in flight. Used
+  // to disable every load trigger so at most one load runs at a time (#70).
+  isLoading: boolean
 }
 
 export function TopBar({
@@ -41,6 +47,8 @@ export function TopBar({
   serverMode,
   dir,
   onDirChange,
+  onLoadDir,
+  isLoading,
 }: TopBarProps) {
   return (
     <header className="topbar" role="banner">
@@ -63,7 +71,22 @@ export function TopBar({
               onChange={(e) => onDirChange(e.currentTarget.value)}
               aria-label="Escalate output directory (absolute path on the server host)"
               data-testid="escalate-dir-input"
-            />
+            />{' '}
+            <button
+              type="button"
+              className="load-dir-button"
+              onClick={onLoadDir}
+              disabled={dir === '' || isLoading}
+              title={
+                dir === ''
+                  ? 'Type an absolute server dir path to load its plan'
+                  : 'Load the plan at this server dir path'
+              }
+              aria-label="Load plan from the typed server directory path"
+              data-testid="load-dir-button"
+            >
+              {isLoading ? 'Loading…' : 'Load'}
+            </button>
           </label>
         )}
         <span className="voice-indicator" aria-label={`Voice: ${voice || 'none'}`}>
@@ -74,7 +97,7 @@ export function TopBar({
         <button
           type="button"
           onClick={onPickDirectory}
-          disabled={!supportsFsAccess}
+          disabled={!supportsFsAccess || isLoading}
           title={
             supportsFsAccess
               ? 'Pick a sink/persistent output directory'
@@ -87,6 +110,7 @@ export function TopBar({
           <span className="muted">or pick folder:</span>
           <input
             type="file"
+            disabled={isLoading}
             // webkitdirectory is non-standard; React passes unknown attrs to
             // the DOM, but TS doesn't know about them so we suppress the
             // typing error inline.

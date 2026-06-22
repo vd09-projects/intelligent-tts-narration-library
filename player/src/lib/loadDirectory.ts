@@ -1,5 +1,6 @@
 import type { Manifest } from '../types/manifest.ts'
 import type { NarrationPlan } from '../types/plan.ts'
+import { artifactUrl, type RefetchBaseInputs } from './refetchBase.ts'
 
 // Schema version the player was authored against. We warn-not-crash on
 // mismatch (CLAUDE.md "Schema versioning: additive-compatible within a major
@@ -79,6 +80,116 @@ export async function loadDirectory(input: LoadInput): Promise<LoadedDirectory> 
     manifest,
     audioUrl,
     source: sourceText,
+    warnings,
+  }
+}
+
+// loadFromServerDir loads a whole sink/persistent output directory by typed
+// SERVER path (issue #70), fetching {plan.json, manifest.json, audio.wav,
+// source.md?} over the escalate server's GET /artifact route instead of a
+// browser folder picker. `inputs` is the same RefetchBaseInputs the re-fetch
+// path uses; loadFromServerDir always resolves in server mode (serverMode:true,
+// the passed dir), so the bundled fixture is never reached from here.
+//
+// Strictness contract (mirrors loadDirectory + plan Decisions v2):
+//   - plan.json + manifest.json + audio.wav are REQUIRED. A non-OK HTTP status
+//     on ANY of the three throws a precise per-file Error (load aborts — the
+//     honest-error path; the caller surfaces it where the picker error renders).
+//   - JSON parse failure on plan.json / manifest.json throws a precise per-file
+//     Error too.
+//   - source.md is OPTIONAL and TOLERANT (Decision v2 resilience):
+//       200            → text
+//       404            → source:null, silent (the expected absent case)
+//       any other      → source:null PLUS a warning "source unavailable: <…>"
+//                        (non-OK-non-404, network, timeout, abort) — NEVER throws.
+//   - schema_version mismatch → warning via collectWarnings (NOT throw).
+//   - The audio blob URL is created via URL.createObjectURL ONLY AFTER plan +
+//     manifest parse succeed AND after the audio bytes are read. The byte read
+//     is the last throwable step and precedes createObjectURL, so no code
+//     between create and return can throw — there is no post-create leak window
+//     to guard (Decision v2 state-management, R3). A failure during the read
+//     leaks nothing because no URL exists yet.
+//
+// Triple-consistency caveat (Decision v1 consistency): the three required GETs
+// are independent requests; the server's per-dir mutex makes each request
+// internally consistent but the {plan,manifest,audio} TRIPLE is not atomic
+// across the three fetches. Accepted for cold loads; manifest.stale is the
+// safety net. No cross-request lock (would break the per-file route contract).
+export async function loadFromServerDir(
+  dir: string,
+  inputs: RefetchBaseInputs,
+): Promise<LoadedDirectory> {
+  // Force server-mode resolution against the typed dir regardless of the caller's
+  // current mode flag: this entry point is server-load-by-path by definition.
+  const resolved: RefetchBaseInputs = { ...inputs, serverMode: true, dir }
+  const url = (name: string) => artifactUrl(name, resolved)
+
+  // --- Required files: fetch + precise per-file abort on !res.ok. -----------
+  const planRes = await fetch(url('plan.json'), { cache: 'no-store' })
+  if (!planRes.ok) {
+    throw new Error(`failed to load plan.json: HTTP ${planRes.status}`)
+  }
+  const manifestRes = await fetch(url('manifest.json'), { cache: 'no-store' })
+  if (!manifestRes.ok) {
+    throw new Error(`failed to load manifest.json: HTTP ${manifestRes.status}`)
+  }
+  const audioRes = await fetch(url('audio.wav'), { cache: 'no-store' })
+  if (!audioRes.ok) {
+    throw new Error(`failed to load audio.wav: HTTP ${audioRes.status}`)
+  }
+
+  const planText = await planRes.text()
+  const manifestText = await manifestRes.text()
+
+  let plan: NarrationPlan
+  try {
+    plan = JSON.parse(planText) as NarrationPlan
+  } catch (e) {
+    throw new Error(`plan.json is not valid JSON: ${(e as Error).message}`, { cause: e })
+  }
+  let manifest: Manifest
+  try {
+    manifest = JSON.parse(manifestText) as Manifest
+  } catch (e) {
+    throw new Error(`manifest.json is not valid JSON: ${(e as Error).message}`, { cause: e })
+  }
+
+  // --- Optional source.md: tolerant, never throws (Decision v2 resilience). --
+  let source: string | null = null
+  let sourceWarning: string | null = null
+  try {
+    const sourceRes = await fetch(url('source.md'), { cache: 'no-store' })
+    if (sourceRes.ok) {
+      source = await sourceRes.text()
+    } else if (sourceRes.status === 404) {
+      // Expected absent case — source:null, silent.
+      source = null
+    } else {
+      // Present-but-unfetchable (e.g. 500). Surface as a warning, not a crash.
+      sourceWarning = `source unavailable: HTTP ${sourceRes.status}`
+    }
+  } catch (e) {
+    // Network / timeout / abort — still never aborts the load.
+    sourceWarning = `source unavailable: ${(e as Error).message}`
+  }
+
+  const warnings = collectWarnings(plan, manifest)
+  if (sourceWarning) warnings.push(sourceWarning)
+
+  // --- Audio blob URL LAST: create only after plan+manifest parsed. The byte
+  // read (audioRes.arrayBuffer) is the last throwable surface and runs BEFORE
+  // createObjectURL — nothing between createObjectURL and the object-literal
+  // return can throw, so there is no post-create failure window to guard (R3
+  // blob-leak: the only leak surface is a throw AFTER create, which cannot
+  // happen here). A throw during arrayBuffer() leaks nothing — no URL exists
+  // yet. The previous try/revoke wrapper was dead code and has been removed. --
+  const audioBlob = new Blob([await audioRes.arrayBuffer()], { type: 'audio/wav' })
+  const audioUrl = URL.createObjectURL(audioBlob)
+  return {
+    plan,
+    manifest,
+    audioUrl,
+    source,
     warnings,
   }
 }
