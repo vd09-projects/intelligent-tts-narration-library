@@ -147,6 +147,153 @@ func TestLevel_ListOrdinalBoundary(t *testing.T) {
 	}
 }
 
+// TestLevel_ListColonFirstItemE2E is the BLOCKING acceptance gate for issue
+// #54 (Direction 2). A bare list whose genuine first item ends in a colon,
+// arriving on the goldmark path (firstItemDemarkered=true, marker stripped off
+// item one), must voice end-to-end through levelList with the COLON-TERMINATED
+// first item counted in N (so N=3, not 2) and no ordinal shift.
+//
+// The doubled punctuation "First, Notes:." is INTENTIONAL: the colon belongs
+// to the source item text "Notes:", and levelList appends its own "." item
+// terminator after every voiced item — so "Notes:" + "." == "Notes:.". This is
+// the literal correct rendering, not a bug; the assertion pins it byte-for-byte
+// to lock the "first item is voiced, not promoted to title" behavior.
+func TestLevel_ListColonFirstItemE2E(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+	// goldmark strips the marker off item one → "Notes:" leads with no marker,
+	// firstItemDemarkered=true marks it as the de-markered first item.
+	rb := rawBlock{
+		text:                "Notes:\n- detail one\n- detail two\n",
+		hint:                hintList,
+		firstItemDemarkered: true,
+	}
+	const want = "List of 3 items. First, Notes:. Second, detail one. Third, detail two."
+	for _, lv := range []plan.Level{plan.L1, plan.L2, plan.L3} {
+		got := level(rb, plan.ClassList, lv, lex)
+		if len(got.segments) != 1 {
+			t.Fatalf("L%d: want 1 segment, got %d", lv, len(got.segments))
+		}
+		if got.segments[0].Text != want {
+			t.Errorf("L%d colon-first-item E2E mismatch:\n want %q\n  got %q", lv, want, got.segments[0].Text)
+		}
+	}
+}
+
+// TestLevel_ListColonFirstItemTable drives the splitListTitle path-gating and
+// the spoken-string rendering across the #54 cases in one table. The E2E rows
+// assert on the final Segment.Text (the contract that matters); the unit rows
+// assert splitListTitle's (title, len(items)) directly as fast localizers.
+func TestLevel_ListColonFirstItemTable(t *testing.T) {
+	t.Parallel()
+	lex := compileLexicon()
+
+	// Path-gating unit rows: splitListTitle(text, firstItemDemarkered).
+	unit := []struct {
+		name                string
+		text                string
+		firstItemDemarkered bool
+		wantTitle           string
+		wantItemCount       int
+	}{
+		{
+			// AC2 unit — goldmark path, colon-terminated first item is NOT
+			// promoted to a title; all three lines are items.
+			name:                "ac2_goldmark_colon_first_item_not_title",
+			text:                "Notes:\n- detail one\n- detail two\n",
+			firstItemDemarkered: true,
+			wantTitle:           "",
+			wantItemCount:       3,
+		},
+		{
+			// AC2-ordered — ordered-list (1.) variant of the same bug class;
+			// the de-markered colon-terminated first item still counts in N.
+			name:                "ac2_ordered_colon_first_item_not_title",
+			text:                "Notes:\n2. detail one\n3. detail two\n",
+			firstItemDemarkered: true,
+			wantTitle:           "",
+			wantItemCount:       3,
+		},
+		{
+			// AC2 contrast (path-gating lock) — SAME shape on the plaintext
+			// path (firstItemDemarkered=false): markers survive, the colon IS
+			// the title signal, so "Notes:" promotes and only 2 items remain.
+			// This is the row that proves the flag, not the text, flips behavior.
+			name:                "ac2_contrast_plaintext_colon_promotes_to_title",
+			text:                "Notes:\n- detail one\n- detail two\n",
+			firstItemDemarkered: false,
+			wantTitle:           "Notes:",
+			wantItemCount:       2,
+		},
+		{
+			// AC3 — plain bare list on the goldmark path; no title, 3 items.
+			name:                "ac3_goldmark_plain_bare_list",
+			text:                "alpha\n- beta\n- gamma\n",
+			firstItemDemarkered: true,
+			wantTitle:           "",
+			wantItemCount:       3,
+		},
+		{
+			// Legitimate plaintext titled list — non-demarkered, trailing-colon
+			// label promotes correctly; only the two real items remain.
+			name:                "plaintext_titled_list_resolves_title",
+			text:                "Shopping list:\n- milk\n- eggs\n",
+			firstItemDemarkered: false,
+			wantTitle:           "Shopping list:",
+			wantItemCount:       2,
+		},
+	}
+	for _, tc := range unit {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotTitle, gotItems := splitListTitle(tc.text, tc.firstItemDemarkered)
+			if gotTitle != tc.wantTitle {
+				t.Errorf("title mismatch: want %q, got %q", tc.wantTitle, gotTitle)
+			}
+			if len(gotItems) != tc.wantItemCount {
+				t.Errorf("item count mismatch: want %d, got %d (%q)", tc.wantItemCount, len(gotItems), gotItems)
+			}
+		})
+	}
+
+	// AC2-ordered E2E — assert the spoken string analogously to the bullet E2E,
+	// proving the ordered de-markered first item is counted and ordinals do not
+	// shift. (goldmark strips "1." off item one just as it strips "-".)
+	ordered := rawBlock{
+		text:                "Notes:\n2. detail one\n3. detail two\n",
+		hint:                hintList,
+		firstItemDemarkered: true,
+	}
+	const wantOrdered = "List of 3 items. First, Notes:. Second, detail one. Third, detail two."
+	if got := level(ordered, plan.ClassList, plan.L1, lex).segments[0].Text; got != wantOrdered {
+		t.Errorf("ordered colon-first-item E2E mismatch:\n want %q\n  got %q", wantOrdered, got)
+	}
+
+	// Marker matrix — the de-markered-first-item fix must hold regardless of
+	// which bullet marker the SECOND+ items use (-, *, +). goldmark strips the
+	// first marker; the survivors carry the *,+ variants. N stays 3.
+	for _, marker := range []string{"-", "*", "+"} {
+		t.Run("marker_matrix_"+marker, func(t *testing.T) {
+			t.Parallel()
+			text := fmt.Sprintf("Notes:\n%s detail one\n%s detail two\n", marker, marker)
+			rb := rawBlock{text: text, hint: hintList, firstItemDemarkered: true}
+			const want = "List of 3 items. First, Notes:. Second, detail one. Third, detail two."
+			if got := level(rb, plan.ClassList, plan.L1, lex).segments[0].Text; got != want {
+				t.Errorf("marker %q E2E mismatch:\n want %q\n  got %q", marker, want, got)
+			}
+		})
+	}
+
+	// AC1 divergence (no assertion). AC1 (a non-colon plaintext leading label
+	// like "Shopping list" promoted to a title) is a documented ticket
+	// divergence for #54, NOT implemented under Option B-markdown: in true
+	// markdown such a label is already its own prose block and is voiced
+	// correctly, and on the plaintext path it is indistinguishable from a
+	// marker-less first item without guessing. Resolved wontfix-by-design on
+	// the ticket (close step) — intentionally no assertion here.
+	_ = "AC1 divergence — see issue #54 close-out"
+}
+
 func TestLevel_CodeL1L2L3(t *testing.T) {
 	t.Parallel()
 	lex := compileLexicon()

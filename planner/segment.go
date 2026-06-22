@@ -42,6 +42,16 @@ type rawBlock struct {
 	// info string from the opening fence (e.g. "yaml", "go", "mermaid",
 	// or "" for an unmarked fence).
 	fenceInfo string
+	// firstItemDemarkered — planner-internal seam (NOT a plan/ schema
+	// field). True only for list blocks that came through the goldmark
+	// path, where the AST strips the list marker off the FIRST item before
+	// the block reaches levelList — so its leading line is the de-markered
+	// item one, never a title. levelList/splitListTitle read this to refuse
+	// title-promotion of that first line, keeping it counted in N (issue
+	// #54, Direction 2). The plaintext-fallback path (segmentPlaintext)
+	// leaves this zero-value false, where markers survive and the
+	// trailing-colon title heuristic is still sound.
+	firstItemDemarkered bool
 }
 
 // segment — convert a RawDocument into ordered rawBlocks.
@@ -162,6 +172,11 @@ func rawBlockFromNode(n ast.Node, src []byte) (rawBlock, bool) {
 		endLine:   endLine,
 		hint:      hint,
 		fenceInfo: fenceInfo,
+		// goldmark de-markers the first list item; mark it so splitListTitle
+		// never mistakes that de-markered item one for a title (issue #54).
+		// segmentPlaintext does NOT route through here, so its lists keep the
+		// zero-value false and the trailing-colon title heuristic still runs.
+		firstItemDemarkered: hint == hintList,
 	}, true
 }
 
