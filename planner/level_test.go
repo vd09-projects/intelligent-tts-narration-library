@@ -273,7 +273,6 @@ func TestLevel_ListColonFirstItemTable(t *testing.T) {
 	// which bullet marker the SECOND+ items use (-, *, +). goldmark strips the
 	// first marker; the survivors carry the *,+ variants. N stays 3.
 	for _, marker := range []string{"-", "*", "+"} {
-		marker := marker
 		t.Run("marker_matrix_"+marker, func(t *testing.T) {
 			t.Parallel()
 			text := fmt.Sprintf("Notes:\n%s detail one\n%s detail two\n", marker, marker)
