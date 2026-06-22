@@ -26,9 +26,10 @@ func doArtifact(t *testing.T, args serverArgs, query, origin string) *httptest.R
 	return w
 }
 
-// seedArtifactDir writes a minimal dir holding the two servable artifacts plus
-// a non-allowlisted plan.json, returning the dir. Bytes are arbitrary — the
-// route does not parse them, it streams them.
+// seedArtifactDir writes a minimal dir holding all four servable artifacts
+// (audio.wav, manifest.json, plan.json, source.md), returning the dir plus the
+// bytes the streaming route should echo back. Bytes are arbitrary — the route
+// does not parse them, it streams them.
 func seedArtifactDir(t *testing.T) (dir string, audioBytes, manifestBytes []byte) {
 	t.Helper()
 	dir = t.TempDir()
@@ -37,6 +38,7 @@ func seedArtifactDir(t *testing.T) (dir string, audioBytes, manifestBytes []byte
 	writeFileT(t, filepath.Join(dir, "audio.wav"), audioBytes)
 	writeFileT(t, filepath.Join(dir, "manifest.json"), manifestBytes)
 	writeFileT(t, filepath.Join(dir, "plan.json"), []byte(`{"schema_version":"1"}`))
+	writeFileT(t, filepath.Join(dir, "source.md"), []byte("# source\n\nbody\n"))
 	return dir, audioBytes, manifestBytes
 }
 
@@ -51,6 +53,10 @@ func TestArtifact_HappyPath_AudioAndManifest(t *testing.T) {
 	}{
 		{"audio.wav", "audio/wav", audioBytes},
 		{"manifest.json", "application/json", manifestBytes},
+		// #70 widened the allowlist: plan.json + source.md now serve from the same
+		// containment pipeline. Content-Type strings pinned from the map.
+		{"plan.json", "application/json", []byte(`{"schema_version":"1"}`)},
+		{"source.md", "text/markdown; charset=utf-8", []byte("# source\n\nbody\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,9 +116,23 @@ func TestArtifact_MissingFields(t *testing.T) {
 func TestArtifact_AllowlistRejectsNonServable(t *testing.T) {
 	dir, _, _ := seedArtifactDir(t)
 	args := defaultArgs()
-	// plan.json exists on disk but is NOT in the allowlist → missing_field, never
-	// served, never a 404 (it is a bad artifact NAME, not a missing artifact).
-	cases := []string{"plan.json", "source.md", "../plan.json", "sub/audio.wav", "..", "audio.wav.."}
+	// Names that are not in the closed allowlist, OR that carry a separator / ".."
+	// even for an allowlisted leaf, are missing_field — a bad artifact NAME, never
+	// served, never a 404 (#70: plan.json + source.md are now ALLOWLISTED leaves,
+	// so they move to the happy-path table; their traversal-decorated forms stay
+	// here with SYMMETRIC coverage alongside the audio/manifest forms).
+	cases := []string{
+		// non-allowlisted name
+		"index.html",
+		// traversal / separator forms of the four allowlisted leaves — symmetric
+		// reject net so widening the allowlist cannot open a traversal for any name.
+		"../audio.wav", "sub/audio.wav",
+		"../manifest.json", "sub/manifest.json",
+		"../plan.json", "sub/plan.json",
+		"../source.md", "sub/source.md",
+		// bare traversal tokens
+		"..", "audio.wav..",
+	}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			w := doArtifact(t, args, "dir="+dir+"&name="+name, "")
@@ -241,6 +261,28 @@ func TestArtifact_AbsentArtifact(t *testing.T) {
 	}
 }
 
+// TestArtifact_SourceMdAbsentIs404 — source.md is an ALLOWLISTED but OPTIONAL
+// artifact (#70). When the dir exists but source.md is absent, the request must
+// resolve to source_not_found 404 (EvalSymlinks ErrNotExist), NOT a 500. This is
+// the honesty-rule boundary the player relies on to treat source as optional.
+func TestArtifact_SourceMdAbsentIs404(t *testing.T) {
+	dir := t.TempDir()
+	// A complete-enough dir, but deliberately NO source.md.
+	writeFileT(t, filepath.Join(dir, "manifest.json"), []byte("{}"))
+	writeFileT(t, filepath.Join(dir, "plan.json"), []byte("{}"))
+	w := doArtifact(t, defaultArgs(), "dir="+dir+"&name=source.md", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (absent optional source.md, not 500; body %q)", w.Code, w.Body.String())
+	}
+	e := decodeErr(t, w)
+	if e.Reason != reasonSourceNotFound {
+		t.Fatalf("reason = %q, want source_not_found (NOT internal)", e.Reason)
+	}
+	if e.Reason == reasonInternal {
+		t.Fatalf("absent source.md must not surface as internal/500")
+	}
+}
+
 func TestArtifact_AbsentDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
 	w := doArtifact(t, defaultArgs(), "dir="+dir+"&name=manifest.json", "")
@@ -293,9 +335,9 @@ func TestArtifact_ReasonsFromClosedEnum(t *testing.T) {
 		reasonCancelled: true, reasonReadbackFailed: true, reasonInternal: true,
 	}
 	queries := []string{
-		"name=audio.wav",                  // missing dir
-		"dir=" + dir,                      // missing name
-		"dir=" + dir + "&name=plan.json",  // not allowlisted
+		"name=audio.wav",                      // missing dir
+		"dir=" + dir,                          // missing name
+		"dir=" + dir + "&name=index.html",     // not allowlisted
 		"dir=" + dir + "/nope&name=audio.wav", // absent
 	}
 	for _, q := range queries {

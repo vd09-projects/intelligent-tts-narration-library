@@ -15,7 +15,8 @@
 //	  200 refused         → {block, refusal}            (timing + audio_ref ABSENT, not null)
 //	  non-2xx             → ErrorResponse{reason, message}  (single envelope, always)
 //	GET  /healthz   → 200 {"status":"ok"}
-//	GET  /artifact?dir=&name=  → 200 file bytes (audio.wav | manifest.json ONLY)
+//	GET  /artifact?dir=&name=  → 200 file bytes
+//	  (audio.wav | manifest.json | plan.json | source.md ONLY)
 //	  non-2xx             → ErrorResponse{reason, message}  (same envelope as /escalate)
 //
 // # Static artifact route (#62) — re-fetch the just-patched output over HTTP
@@ -23,12 +24,15 @@
 //	After an in-place escalate the React player must re-read the patched
 //	artifacts (audio.wav, manifest.json) so downstream offsets + audio reflect
 //	the patched outDir — but in server mode that outDir is an arbitrary path the
-//	user typed, NOT the bundled fixture. GET /artifact serves exactly those two
-//	files out of exactly that one user-supplied dir so the player can resolve its
-//	re-fetch base against the served dir instead of the fixture origin.
+//	user typed, NOT the bundled fixture. GET /artifact serves those artifacts out
+//	of exactly that one user-supplied dir so the player can resolve its re-fetch
+//	base against the served dir instead of the fixture origin. The served set was
+//	widened (issue #70) to also include plan.json + source.md so the player can
+//	load a whole plan by typed dir path (not just re-fetch after an escalate).
 //
-//	Containment guarantee: the route serves ONLY {manifest.json, audio.wav} and
-//	ONLY from within the requested dir. The served path is resolved with
+//	Containment guarantee: the route serves ONLY the four allowlisted names
+//	{manifest.json, audio.wav, plan.json, source.md} and ONLY from within the
+//	requested dir. The served path is resolved with
 //	filepath.EvalSymlinks and confirmed to stay inside the (also symlink-resolved)
 //	dir via a filepath.Rel boundary check — NOT a raw string-prefix check, so a
 //	sibling dir sharing a name prefix (…/base vs …/base-evil) cannot bypass it,
@@ -486,17 +490,24 @@ func escalateHandler(args serverArgs) http.Handler {
 }
 
 // artifactAllowlist is the closed set of filenames GET /artifact will serve.
-// Exact-match only — a request for anything else (incl. plan.json, source.md, a
-// path containing a separator, or "..") is a missing_field rejection. This is
-// the first containment gate, before any filesystem touch.
+// Exact-match only — a request for anything else (a name not in this map, a path
+// containing a separator, or "..") is a missing_field rejection. This is the
+// first containment gate, before any filesystem touch. Widened by #70 to add
+// plan.json + source.md so the player can load a whole plan by typed dir path;
+// the downstream containment pipeline treats the name as an opaque string
+// (verified name-agnostic), so widening this map is the entire surface change.
 var artifactAllowlist = map[string]string{
 	"audio.wav":     "audio/wav",
 	"manifest.json": "application/json",
+	"plan.json":     "application/json",
+	"source.md":     "text/markdown; charset=utf-8",
 }
 
 // artifactHandler serves GET /artifact?dir=&name= — the static re-fetch route
-// (#62). It serves ONLY {manifest.json, audio.wav} and ONLY from inside the
-// requested dir, resolving symlinks and confirming containment via a
+// (#62), widened by #70 to also serve plan.json + source.md. It serves ONLY the
+// four allowlisted names {manifest.json, audio.wav, plan.json, source.md} and
+// ONLY from inside the requested dir, resolving symlinks and confirming
+// containment via a
 // filepath.Rel boundary check (not a raw string prefix). Errors map onto the
 // existing closed reason enum only — no new tokens. It takes the per-dir mutex
 // READ side (the same mutex /escalate writers hold) so a re-fetch mid-patch sees
@@ -524,7 +535,7 @@ func artifactHandler(w http.ResponseWriter, r *http.Request) {
 	contentType, ok := artifactAllowlist[name]
 	if !ok {
 		writeError(w, http.StatusBadRequest, reasonMissingField,
-			fmt.Sprintf("name must be one of audio.wav or manifest.json (got %q)", name))
+			fmt.Sprintf("name must be one of audio.wav, manifest.json, plan.json, or source.md (got %q)", name))
 		return
 	}
 	// Defence in depth: even though the allowlist is exact-match, reject any name
