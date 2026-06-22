@@ -55,7 +55,8 @@ player/
 ├── src/
 │   ├── main.tsx, App.tsx, styles.css, vite-env.d.ts
 │   ├── types/        plan.ts (mirrors Go plan/), manifest.ts, audioFormat.ts
-│   ├── lib/          findActiveBlock.ts, escalateCommand.ts, loadDirectory.ts
+│   ├── lib/          findActiveBlock.ts, escalateCommand.ts, loadDirectory.ts,
+│   │                 refetchBase.ts (#62 server-mode re-fetch URL resolver)
 │   ├── hooks/        useFixture.ts, useDirectoryLoader.ts, usePlayback.ts
 │   └── components/   TopBar.tsx, BlockList.tsx, BlockRow.tsx,
 │                     SourcePane.tsx, RefusalBadge.tsx, StaleBadge.tsx,
@@ -80,6 +81,18 @@ player/
   Go schema in `plan/` and `sink/persistent/manifest.go`. Keep them in
   sync when the Go schema grows (mismatch surfaces as a warning, not a
   crash — additive-compatible).
+- **Server-mode re-fetch resolution (#62).** After an in-place escalate the
+  player must re-read the patched `audio.wav` + `manifest.json` so downstream
+  offsets + audio reflect the just-patched dir. In **server mode** that dir is
+  an arbitrary path the user typed, so the re-fetch resolves against the
+  escalate server's `GET /artifact?dir=&name=` route (`src/lib/refetchBase.ts`),
+  not the bundled fixture origin. In **fixture mode** it stays on
+  `FIXTURE_BASE`. The resolver is a pure function of `(serverMode, dir,
+  serverBaseUrl, fixtureBase)`; `App` reads `serverMode` + `dir` from live refs
+  at call time so a dir typed after the initial render is honored (no stale
+  closure). Trade-off: a failed re-fetch keeps the just-committed patch and
+  flags `staleDownstream` rather than rolling back — the audio/offsets may lag
+  one patch behind, but the patch is never lost.
 
 ## Acceptance criteria coverage (issue #18)
 

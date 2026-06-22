@@ -16,6 +16,22 @@ decisions:
     tags: [code-l2, intelligence, honesty-rule, refuse-too-large, trim, planner, issue-60]
     path: tradeoff/2026-06-22-code-l2-overlong-reply-trim-to-first-sentence.md
     summary: "Issue #60 enforces the CodeUserL2 one-sentence/~30-word cap on code-L2 adapter replies. DECISION (Option A): for an over-long reply, TRIM to the first sentence (the adapter's own words cut at a clean terminator seam = honest), with the 30-word count as a HARD ceiling that triggers REFUSAL (RefuseTooLarge) only when even the first sentence overruns. Rejected (b) refusing the whole reply whenever it exceeds the cap (loses voiceable honest content) and (c) mid-sentence truncation (fabrication — violates the honesty rule). Enforcement at the single callIntelligence choke point in planner/planner.go, guarded ClassCode && L2, reusing the existing RefuseTooLarge sentinel. Sub-decision: first-sentence scan requires whitespace/EOF after the terminator (keeps 'v1.5.0' intact) and accepts early-cut on abbreviations like 'e.g.' as honest over-trimming; standalone helper, deliberately NOT routed through splitProse (its proseMaxChars/2 size floor would defeat the trim). Extends 2026-06-22-code-semantic-gist-l2-only; applies the refuse-sentinel convention from 2026-06-20-mcpsampling-refuse-sentinel-token. Revisit if adapters reliably honor the budget or a second class needs the same trim."
+  - id: 2026-06-22-artifact-route-serves-live-dir-resolves-refetch
+    title: "Read-only GET /artifact route serves the live escalated dir; player re-fetch resolves against it"
+    date: 2026-06-22
+    status: accepted
+    category: architecture
+    tags: [player, escalate, server-mode, artifact-route, live-dir, path-traversal, allowlist, EvalSymlinks, loopback, CORS, issue-62]
+    path: architecture/2026-06-22-artifact-route-serves-live-dir-resolves-refetch.md
+    summary: "Issue #62 added a read-only GET /artifact?dir=&name= route to cmd/narrate-server that statically serves only {manifest.json, audio.wav} from the escalated dir. Containment is allowlist-before-join (name must be one of two permitted filenames) + filepath.EvalSymlinks + filepath.Rel boundary check — deliberately NOT a raw string-prefix comparison. It rides the existing loopback bind + pinned CORS, so no new exposure. The player resolves its re-fetch base against the live dir via a pure resolver reading effect-synced refs at call time, so repointAudio/reloadManifest now point at the user-supplied dir instead of FIXTURE_BASE. Supersedes the prior FIXTURE_BASE-relative re-fetch limitation."
+  - id: 2026-06-22-artifact-read-side-per-dir-mutex
+    title: "Read-side per-dir mutex in /artifact keyed like the escalate writer, over accepting a torn-read window"
+    date: 2026-06-22
+    status: accepted
+    category: concurrency
+    tags: [persistent-sink, commitPatch, atomic-rename, torn-read, per-dir-mutex, filepath-abs, artifact-route, escalate, issue-62]
+    path: concurrency/2026-06-22-artifact-read-side-per-dir-mutex.md
+    summary: "internal/sink/persistent commitPatch writes plan.json/manifest.json/audio.wav each via atomic tmp+rename, but renames them sequentially (audio LAST), so a concurrent reader can observe a torn cross-file state (new manifest + old audio). DECISION: the /artifact handler holds a read-side per-dir mutex keyed on filepath.Abs(dir) — the SAME key /escalate's writer holds — rather than accepting the cross-file observation window as debt. Reader and writer contend on the same per-dir lock, guaranteeing a consistent {plan,manifest,audio} triple. Underlying sequential-rename non-atomicity remains; the read-side lock compensates. Revisit if commitPatch is ever made cross-file atomic."
   - id: 2026-06-22-planner-fanout-first-error-wins-errgroup
     title: "First-error-wins via errgroup, not errors.Join, in planner fan-out"
     date: 2026-06-22
@@ -75,7 +91,7 @@ decisions:
   - id: 2026-06-22-server-mode-refetch-resolves-against-fixture-base
     title: "Server-mode re-fetch resolves against FIXTURE_BASE, not an arbitrary server dir (phase-one limitation)"
     date: 2026-06-22
-    status: revisit-later
+    status: superseded
     category: tradeoff
     tags: [player, escalate, server-mode, repointAudio, reloadManifest, fixture-base, phase-one-limitation, deferred, issue-50]
     path: tradeoff/2026-06-22-server-mode-refetch-resolves-against-fixture-base.md
