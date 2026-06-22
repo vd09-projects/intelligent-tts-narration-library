@@ -238,8 +238,13 @@ describe('Escalate integration — server mode', () => {
     await user.click(screen.getByTestId('escalate-b2-L3'))
     await waitFor(() => expect(stub.state.audioFetches).toBeGreaterThan(audioFetchesBefore))
 
-    // The re-fetch URL was cache-busted.
-    const calledCacheBust = stub.fn.mock.calls.some((c) => String(c[0]).includes('audio.wav?ts='))
+    // The re-fetch URL was cache-busted. In server mode the audio.wav re-fetch
+    // resolves to the #62 /artifact route, so the cache-bust rides as `&ts=`
+    // (the URL already carries ?dir=…&name=audio.wav); assert both parts.
+    const calledCacheBust = stub.fn.mock.calls.some((c) => {
+      const u = String(c[0])
+      return u.includes('name=audio.wav') && /[?&]ts=/.test(u)
+    })
     expect(calledCacheBust).toBe(true)
   })
 

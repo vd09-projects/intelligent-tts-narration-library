@@ -94,21 +94,26 @@ export interface ManifestReload {
   warnings: string[]
 }
 
-// reloadManifest re-fetches manifest.json from `base` (a directory URL prefix,
-// e.g. the fixture base "/fixtures/sample") and re-parses it. It deliberately
-// does NOT touch plan.json or audio.wav — the patch flow keeps the existing
-// blob URL and only re-points audio when the patched block is playing.
+// reloadManifest re-fetches manifest.json from `manifestUrl` (a fully-formed
+// URL — fixture: "/fixtures/sample/manifest.json"; server mode: the #62
+// "<base>/artifact?dir=…&name=manifest.json" route) and re-parses it. It
+// deliberately does NOT touch plan.json or audio.wav — the patch flow keeps the
+// existing blob URL and only re-points audio when the patched block is playing.
+//
+// The URL is resolved by the caller (App, via lib/refetchBase.artifactUrl) so
+// this helper stays origin-agnostic — it just fetches + parses whatever URL it
+// is handed (#62: re-fetch resolves against the live escalated dir, not a
+// hardwired base).
 //
 // The plan is needed only to recompute schema-mismatch warnings against the
 // fresh manifest; it is not re-read. Throws on HTTP failure or invalid JSON so
 // the caller can keep the just-committed patch and flag staleDownstream rather
 // than rolling back (plan d8).
 export async function reloadManifest(
-  base: string,
+  manifestUrl: string,
   plan: NarrationPlan,
 ): Promise<ManifestReload> {
-  const url = `${base.replace(/\/$/, '')}/manifest.json`
-  const res = await fetch(url, { cache: 'no-store' })
+  const res = await fetch(manifestUrl, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error(`re-fetch manifest.json failed: HTTP ${res.status}`)
   }
