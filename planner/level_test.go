@@ -1,10 +1,12 @@
 package planner
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 )
 
@@ -436,5 +438,232 @@ func TestLevel_OversizedCodeSplitsOnDecls(t *testing.T) {
 	got := level(rb, plan.ClassCode, plan.L1, lex)
 	if len(got.subBlocks) < 2 {
 		t.Errorf("oversized code should split, got %d sub-blocks", len(got.subBlocks))
+	}
+}
+
+// nWords builds a single sentence (period-terminated) with exactly n
+// whitespace-separated words, so the cap-boundary fixtures are
+// self-evidently correct rather than hand-counted.
+func nWords(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = "w"
+	}
+	return strings.Join(parts, " ") + "."
+}
+
+// TestFirstSentenceWithinCap — the standalone code-L2 enforcement helper
+// (issue #60). Locks the trim-to-first-sentence + hard-word-cap behavior:
+// compliant pass-through, multi-sentence trim, the exactly-cap / cap+1
+// boundary (pins `>` not `>=`), terminator-less single-candidate handling,
+// empty/whitespace non-panicking refusal, and the documented abbreviation
+// early-cut tradeoff. No size floor — short multi-sentence input still
+// trims (the splitProse path would not).
+func TestFirstSentenceWithinCap(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		text       string
+		wantCapped string
+		wantOK     bool
+	}{
+		{
+			name:       "compliant_passthrough_byte_identical",
+			text:       "Sorts the slice in place using quicksort.",
+			wantCapped: "Sorts the slice in place using quicksort.",
+			wantOK:     true,
+		},
+		{
+			name:       "overlong_multi_sentence_trimmed_to_first",
+			text:       "Parses the config file. Then it validates each key. Finally it returns the struct.",
+			wantCapped: "Parses the config file.",
+			wantOK:     true,
+		},
+		{
+			name:       "exactly_cap_words_voiced",
+			text:       nWords(codeL2MaxWords),
+			wantCapped: nWords(codeL2MaxWords),
+			wantOK:     true,
+		},
+		{
+			name:   "cap_plus_one_words_single_sentence_refused",
+			text:   nWords(codeL2MaxWords + 1),
+			wantOK: false,
+		},
+		{
+			name:       "no_terminator_within_cap_voiced",
+			text:       "Registers the route handler on the mux",
+			wantCapped: "Registers the route handler on the mux",
+			wantOK:     true,
+		},
+		{
+			name:   "no_terminator_over_cap_refused",
+			text:   strings.TrimSuffix(nWords(codeL2MaxWords+1), "."),
+			wantOK: false,
+		},
+		{
+			name:   "empty_refused_no_panic",
+			text:   "",
+			wantOK: false,
+		},
+		{
+			name:   "whitespace_only_refused_no_panic",
+			text:   "   \n\t  ",
+			wantOK: false,
+		},
+		{
+			// Accepted tradeoff (plan Risks): the terminator predicate fires
+			// at the period after "e.g" because it is followed by a space, so
+			// the candidate trims early to "e.g." Over-trimming is honest —
+			// still the adapter's own words — and lower-harm than over-voicing.
+			name:       "abbreviation_early_cut_documented_tradeoff",
+			text:       "e.g. foo bar.",
+			wantCapped: "e.g.",
+			wantOK:     true,
+		},
+		{
+			// Whitespace-after-terminator is required, so a version string is
+			// NOT a cut point (guards the decimal/version edge case).
+			name:       "version_string_not_a_cut_point",
+			text:       "Pins the dep to v1.5.0 exactly.",
+			wantCapped: "Pins the dep to v1.5.0 exactly.",
+			wantOK:     true,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			capped, ok := firstSentenceWithinCap(tc.text, codeL2MaxWords)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (capped=%q)", ok, tc.wantOK, capped)
+			}
+			if ok && capped != tc.wantCapped {
+				t.Errorf("capped mismatch:\n want %q\n  got %q", tc.wantCapped, capped)
+			}
+			if !ok && capped != "" {
+				t.Errorf("ok=false must return empty capped, got %q", capped)
+			}
+		})
+	}
+}
+
+// TestCallIntelligence_CodeL2CapGuard — the choke-point guard in
+// callIntelligence (issue #60). Confirms the cap is enforced ONLY for
+// ClassCode at L2: a compliant reply passes through byte-identical, an
+// over-cap code-L2 reply becomes a RefuseTooLarge refusal (Spoken=true,
+// SourceMap populated — honesty rule), and non-code classes plus code at
+// L1/L3 are UNTOUCHED (the raw reply survives verbatim, no refusal).
+func TestCallIntelligence_CodeL2CapGuard(t *testing.T) {
+	t.Parallel()
+	overCap := nWords(codeL2MaxWords + 1)
+	multi := "Parses the config file. Then it validates each key."
+	sm := plan.SourceMap{StartLine: 1, EndLine: 4}
+
+	cases := []struct {
+		name string
+		cls  plan.Class
+		lvl  plan.Level
+		// reply is the adapter's scripted Text.
+		reply string
+		// wantRefused → expect Status=refused with RefuseTooLarge.
+		wantRefused bool
+		// wantText → expected Segment.Text when voiced (ignored if refused).
+		wantText string
+	}{
+		{
+			name:        "code_L2_overcap_refused",
+			cls:         plan.ClassCode,
+			lvl:         plan.L2,
+			reply:       overCap,
+			wantRefused: true,
+		},
+		{
+			name:     "code_L2_multi_sentence_trimmed",
+			cls:      plan.ClassCode,
+			lvl:      plan.L2,
+			reply:    multi,
+			wantText: "Parses the config file.",
+		},
+		{
+			name:     "code_L2_compliant_passthrough",
+			cls:      plan.ClassCode,
+			lvl:      plan.L2,
+			reply:    "Sorts the slice in place.",
+			wantText: "Sorts the slice in place.",
+		},
+		{
+			// Non-code class at L2 is untouched even when over-cap.
+			name:     "prose_L2_untouched",
+			cls:      plan.ClassProse,
+			lvl:      plan.L2,
+			reply:    overCap,
+			wantText: overCap,
+		},
+		{
+			// Code at L1 is untouched even when over-cap.
+			name:     "code_L1_untouched",
+			cls:      plan.ClassCode,
+			lvl:      plan.L1,
+			reply:    overCap,
+			wantText: overCap,
+		},
+		{
+			// Code at L3 is untouched even when over-cap.
+			name:     "code_L3_untouched",
+			cls:      plan.ClassCode,
+			lvl:      plan.L3,
+			reply:    overCap,
+			wantText: overCap,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
+				{Text: tc.reply, Model: "scripted@test"},
+			}}
+			rb := rawBlock{text: "irrelevant raw source", startLine: 1, endLine: 4}
+			blk, _, err := callIntelligence(
+				context.Background(), rb, tc.cls, tc.lvl, sm, levelResult{}, intel,
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantRefused {
+				if blk.Status != plan.StatusRefused {
+					t.Fatalf("status = %q, want refused", blk.Status)
+				}
+				if blk.Refusal == nil {
+					t.Fatal("refused block must carry a Refusal")
+				}
+				if blk.Refusal.Reason != plan.RefuseTooLarge {
+					t.Errorf("refusal reason = %q, want %q", blk.Refusal.Reason, plan.RefuseTooLarge)
+				}
+				if !blk.Refusal.Spoken {
+					t.Error("refusal must be Spoken (honesty rule)")
+				}
+				if blk.Refusal.SourceMap != sm {
+					t.Errorf("refusal SourceMap = %+v, want %+v", blk.Refusal.SourceMap, sm)
+				}
+				if len(blk.Segments) != 0 {
+					t.Errorf("refused block must have no segments, got %d", len(blk.Segments))
+				}
+				return
+			}
+			if blk.Status != plan.StatusVoiced {
+				t.Fatalf("status = %q, want voiced", blk.Status)
+			}
+			if len(blk.Segments) != 1 {
+				t.Fatalf("voiced block must have one segment, got %d", len(blk.Segments))
+			}
+			if blk.Segments[0].Text != tc.wantText {
+				t.Errorf("segment text mismatch:\n want %q\n  got %q", tc.wantText, blk.Segments[0].Text)
+			}
+		})
 	}
 }
