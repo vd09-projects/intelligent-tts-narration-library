@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-22-code-l2-overlong-reply-trim-to-first-sentence
+    title: "Over-long code-L2 reply: trim to first sentence, refuse only when the first sentence overruns"
+    date: 2026-06-22
+    status: accepted
+    category: tradeoff
+    tags: [code-l2, intelligence, honesty-rule, refuse-too-large, trim, planner, issue-60]
+    path: tradeoff/2026-06-22-code-l2-overlong-reply-trim-to-first-sentence.md
+    summary: "Issue #60 enforces the CodeUserL2 one-sentence/~30-word cap on code-L2 adapter replies. DECISION (Option A): for an over-long reply, TRIM to the first sentence (the adapter's own words cut at a clean terminator seam = honest), with the 30-word count as a HARD ceiling that triggers REFUSAL (RefuseTooLarge) only when even the first sentence overruns. Rejected (b) refusing the whole reply whenever it exceeds the cap (loses voiceable honest content) and (c) mid-sentence truncation (fabrication — violates the honesty rule). Enforcement at the single callIntelligence choke point in planner/planner.go, guarded ClassCode && L2, reusing the existing RefuseTooLarge sentinel. Sub-decision: first-sentence scan requires whitespace/EOF after the terminator (keeps 'v1.5.0' intact) and accepts early-cut on abbreviations like 'e.g.' as honest over-trimming; standalone helper, deliberately NOT routed through splitProse (its proseMaxChars/2 size floor would defeat the trim). Extends 2026-06-22-code-semantic-gist-l2-only; applies the refuse-sentinel convention from 2026-06-20-mcpsampling-refuse-sentinel-token. Revisit if adapters reliably honor the budget or a second class needs the same trim."
   - id: 2026-06-22-artifact-route-serves-live-dir-resolves-refetch
     title: "Read-only GET /artifact route serves the live escalated dir; player re-fetch resolves against it"
     date: 2026-06-22

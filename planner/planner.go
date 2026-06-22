@@ -324,33 +324,37 @@ func callIntelligence(
 		return plan.Block{}, nil, fmt.Errorf("planner: intelligence at line %d: %w", rb.startLine, err)
 	}
 	if res.Refused {
-		blk := plan.Block{
-			Class:     cls,
-			Level:     target,
-			Status:    plan.StatusRefused,
-			SourceMap: sm,
-			Refusal: &plan.Refusal{
-				Reason:    plan.RefuseTooLarge,
-				Message:   refusalMessageFromAdapter(res.RefusalNote, sm),
-				Spoken:    true,
-				SourceMap: sm,
-			},
-			Provenance: plan.Provenance{
-				VoicedBy:      "intelligence",
-				Deterministic: false,
-				Model:         res.Model,
-				LevelAsked:    target,
-			},
-		}
-		return blk, nil, nil
+		return intelRefusalBlock(cls, target, sm, refusalMessageFromAdapter(res.RefusalNote, sm), res.Model), nil, nil
 	}
+
+	// Code-L2 cap enforcement — the single choke point where an adapter
+	// reply becomes Segment.Text. The CodeUserL2 prompt advertises "one
+	// sentence, at most 30 words"; that instruction is advisory until
+	// enforced here. Guarded to ClassCode && L2 only, so every other class
+	// and every other level passes through byte-identical. Both the
+	// anthropic and mcpsampling adapters route through this point, so both
+	// get the enforcement for free — no adapter code touched.
+	//
+	// Honesty rule: we either speak the adapter's own words (trimmed at a
+	// clean sentence seam) or we refuse — never truncate mid-sentence
+	// (fabrication). An over-cap reply is a too-large-for-level condition,
+	// hence RefuseTooLarge (no new sentinel).
+	voicedText := res.Text
+	if cls == plan.ClassCode && target == plan.L2 {
+		capped, ok := firstSentenceWithinCap(res.Text, codeL2MaxWords)
+		if !ok {
+			return intelRefusalBlock(cls, target, sm, refusalMessageFromAdapter(res.RefusalNote, sm), res.Model), nil, nil
+		}
+		voicedText = capped
+	}
+
 	blk := plan.Block{
 		Class:     cls,
 		Level:     target,
 		Status:    plan.StatusVoiced,
 		SourceMap: sm,
 		Segments: []plan.Segment{
-			{ID: "s1", Kind: plan.SegmentKindSpeech, Text: res.Text},
+			{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voicedText},
 		},
 		Provenance: plan.Provenance{
 			VoicedBy:      "intelligence",
@@ -360,6 +364,32 @@ func callIntelligence(
 		},
 	}
 	return blk, nil, nil
+}
+
+// intelRefusalBlock — build the honesty-rule refusal block for an
+// intelligence-path block (adapter refused, or code-L2 reply exceeded the
+// one-sentence/word cap). Both refusal sites share this so Status, the
+// RefuseTooLarge reason, Spoken=true, and the populated SourceMap stay
+// identical on both paths.
+func intelRefusalBlock(cls plan.Class, target plan.Level, sm plan.SourceMap, message, model string) plan.Block {
+	return plan.Block{
+		Class:     cls,
+		Level:     target,
+		Status:    plan.StatusRefused,
+		SourceMap: sm,
+		Refusal: &plan.Refusal{
+			Reason:    plan.RefuseTooLarge,
+			Message:   message,
+			Spoken:    true,
+			SourceMap: sm,
+		},
+		Provenance: plan.Provenance{
+			VoicedBy:      "intelligence",
+			Deterministic: false,
+			Model:         model,
+			LevelAsked:    target,
+		},
+	}
 }
 
 func refusalMessageFromAdapter(note string, sm plan.SourceMap) string {

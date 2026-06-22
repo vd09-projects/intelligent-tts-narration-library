@@ -309,3 +309,28 @@ scopes:
       [revisit-later] FIXTURE_BASE phase-one-limitation decision. Plan persisted draft
       — awaiting user approval before sindri consumes. Issue-numbered naming continues
       the convention.
+  - slug: intelligence-code-l2-wordcap-60
+    title: enforce one-sentence/~30-word cap on code-L2 adapter replies (issue #60)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #60 (enforce the advertised CodeUserL2
+      "one sentence, at most 30 words" cap on code-L2 intelligence-adapter
+      replies). Today CodeUserL2 (internal/intelligencetmpl/tmpl.go:113) only
+      instructs the adapter; nothing enforces it, so an over-long reply lands
+      verbatim in Segment.Text — the constraint is advisory. Plan adds the
+      enforcement at the single generic choke point in planner/planner.go
+      callIntelligence (line 347, where res.Text becomes Segment.Text for BOTH
+      the anthropic + mcpsampling adapters), guarded code-L2-only. Core decision
+      (candidate 2026-06-22-code-l2-overlong-reply-trim-to-sentence): trim to the
+      first sentence (adapter's own words = honest) with the word cap as a hard
+      ceiling -> refuse via the existing res.Refused path when even the first
+      sentence over-runs, never truncate mid-sentence (= borderline fabrication).
+      Follow-on to code-semantic-gist-l2-48 (which introduced CodeUserL2);
+      distinct slug because this is the enforcement feature on top of that gist
+      build, not the gist build itself. intelligence- prefix marks the
+      intelligence-reply enforcement surface; wordcap qualifier captures the crux;
+      issue-numbered suffix continues the convention. Planned via mimir task depth,
+      no overlays triggered (pure-function internal planner change, no public-API /
+      migration / concurrency / perf surface). AC3 reframed as a ticket divergence
+      (no // TODO marker exists in tmpl.go to remove — nothing to remove). Plan
+      persisted draft — awaiting user approval before sindri consumes.

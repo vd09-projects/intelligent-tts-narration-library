@@ -943,6 +943,64 @@ func splitProse(rb rawBlock) []rawBlock {
 	return chunksToBlocks(chunks, rb)
 }
 
+// codeL2MaxWords — the hard word ceiling for a code-class L2 adapter
+// reply. MANDATORY: this MUST track the "at most 30 words" literal in the
+// CodeUserL2 prompt template (internal/intelligencetmpl/tmpl.go, the
+// CodeUserL2 const). This comment is the only link between the prompt's
+// advertised cap and the value enforced here — if the prompt literal
+// changes, change this constant in lockstep.
+const codeL2MaxWords = 30
+
+// firstSentenceWithinCap enforces the code-L2 framing on an adapter reply:
+// one sentence, at most maxWords words. It is a STANDALONE first-sentence
+// scan — deliberately NOT routed through splitProse, which applies a
+// proseMaxChars/2 size floor and returns nil for short multi-sentence
+// input (that floor would defeat the trim, leaving the whole reply intact).
+//
+// Behavior:
+//   - Scans left-to-right for the first qualifying sentence terminator
+//     (`.`, `!`, or `?` immediately followed by whitespace or end-of-string)
+//     and cuts there. Requiring whitespace/EOF after the terminator keeps
+//     "v1.5.0" intact; the accepted tradeoff is that "e.g. foo" cuts early
+//     at "e.g." — over-trimming is honest (still the adapter's own words),
+//     and lower-harm than over-voicing.
+//   - A terminator-less reply is treated as ONE candidate sentence (LLMs
+//     routinely omit trailing punctuation); it is not the splitProse
+//     "unsplittable → nil" path.
+//   - The (trimmed) candidate is word-counted via strings.Fields. The
+//     comparison is strict greater-than (len(fields) > maxWords), so a
+//     reply of exactly maxWords words passes.
+//
+// Returns the trimmed candidate sentence and ok=true when it is voiceable
+// under the cap. ok=false means "not voiceable under the cap → the caller
+// MUST refuse"; it covers both the over-cap case AND empty/whitespace-only
+// input (nothing voiceable). The capped string is empty when ok=false.
+// Never truncates mid-sentence (that would be fabrication).
+func firstSentenceWithinCap(text string, maxWords int) (capped string, ok bool) {
+	// First-qualifying-terminator scan. No size floor.
+	end := len(text)
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if c == '.' || c == '!' || c == '?' {
+			next := i + 1
+			if next >= len(text) || text[next] == ' ' || text[next] == '\n' || text[next] == '\t' || text[next] == '\r' {
+				end = next
+				break
+			}
+		}
+	}
+	candidate := strings.TrimSpace(text[:end])
+	if candidate == "" {
+		// Empty / whitespace-only (or a terminator with nothing before it):
+		// nothing voiceable → caller refuses.
+		return "", false
+	}
+	if len(strings.Fields(candidate)) > maxWords {
+		return "", false
+	}
+	return candidate, true
+}
+
 // splitCode — split at lines beginning with a top-level decl keyword.
 func splitCode(rb rawBlock) []rawBlock {
 	return splitOnLineMatch(rb, func(line string) bool {
