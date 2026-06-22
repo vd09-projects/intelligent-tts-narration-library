@@ -31,6 +31,12 @@ func TestSpeakManualSmoke(t *testing.T) {
 		t.Fatalf("resolve sample doc: %v", err)
 	}
 
+	// runSpeak builds its pipeline with sherpa's default BinaryPath
+	// ("./scripts/kokoro"), resolved against the working directory. The test
+	// binary runs from cmd/narrate-mcp/, so chdir to the repo root makes the
+	// wrapper script (and its venv + models) resolvable.
+	t.Chdir(repoRoot)
+
 	resp, err := runSpeak(context.Background(), speakArgs{
 		Source: docPath,
 		Level:  1,
