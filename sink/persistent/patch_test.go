@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
@@ -184,6 +185,33 @@ func TestPatchBlock_FreshBlock(t *testing.T) {
 	}
 	if !bytes.Equal(blockSlice(t, outDir, 1), fresh) {
 		t.Error("b1 bytes are not the freshly rendered audio")
+	}
+}
+
+// TestPatchBlock_AudioPerm0644 — the patched audio.wav must land 0644, not the
+// 0600 os.CreateTemp default of stageAudioTmp. We deliberately chmod the seeded
+// audio.wav to 0600 first so the assertion proves the patch path RE-SETS 0644
+// (it would otherwise inherit nothing — rename replaces the file). (#70 bugfix.)
+func TestPatchBlock_AudioPerm0644(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix file-mode semantics")
+	}
+	outDir, p, _ := seededOutDir(t)
+	audioPath := filepath.Join(outDir, audioFilename)
+	if err := os.Chmod(audioPath, 0o600); err != nil {
+		t.Fatalf("pre-chmod seed audio: %v", err)
+	}
+
+	if _, err := PatchBlock(context.Background(), outDir, p, rerender(t, "b1", framePCM(200, 0xC0)), "b1"); err != nil {
+		t.Fatalf("PatchBlock: %v", err)
+	}
+
+	info, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatalf("stat audio.wav: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("patched audio.wav mode = %04o, want 0644 (patch path must not leave 0600)", got)
 	}
 }
 

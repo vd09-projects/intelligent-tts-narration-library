@@ -230,6 +230,13 @@ func writeAudio(path string, format plan.AudioFormat, segments []wavSegment) (re
 		_ = tmp.Close()
 		return err
 	}
+	// Promote 0600 (os.CreateTemp default) to 0644 so audio.wav is world-readable,
+	// matching plan.json/manifest.json (atomicWriteFile, 0644). Done before Close
+	// + Rename so the canonical file lands with the right mode atomically.
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod tmp audio %s: %w", tmpPath, err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close tmp audio %s: %w", tmpPath, err)
 	}

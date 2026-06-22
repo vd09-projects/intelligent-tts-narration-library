@@ -569,6 +569,14 @@ func stageAudioTmp(outDir string, format plan.AudioFormat, segments []wavSegment
 		_ = os.Remove(tmpPath)
 		return "", err
 	}
+	// Promote 0600 (os.CreateTemp default) to 0644 so the patched audio.wav stays
+	// world-readable, matching plan.json/manifest.json and its JSON sibling
+	// stageTmp. Without this the patch path silently re-created audio.wav at 0600.
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("sink/persistent: patch chmod tmp audio %s: %w", tmpPath, err)
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("sink/persistent: patch close tmp audio %s: %w", tmpPath, err)

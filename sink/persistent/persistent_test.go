@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -145,6 +146,30 @@ func TestConsume_FreshWrite(t *testing.T) {
 	}
 	if m.Stale {
 		t.Error("fresh-write manifest should not be marked Stale=true")
+	}
+}
+
+// TestConsume_AudioPerm0644 — audio.wav must land world-readable (0644), not the
+// 0600 os.CreateTemp default. The tmp+rename path now chmods before close so the
+// canonical file matches plan.json/manifest.json (#70 perm bugfix).
+func TestConsume_AudioPerm0644(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix file-mode semantics")
+	}
+	p, res := twoBlockPlan(t)
+	outDir := t.TempDir()
+	s := New(outDir, WithVoice("af_bella"))
+
+	if _, err := s.Consume(context.Background(), p, res); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(outDir, audioFilename))
+	if err != nil {
+		t.Fatalf("stat %s: %v", audioFilename, err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("audio.wav mode = %04o, want 0644 (must not stay at the 0600 tmp default)", got)
 	}
 }
 
