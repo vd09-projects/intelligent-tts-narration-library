@@ -807,6 +807,96 @@ func TestRunSpeak_SourceArg_WiresFileAdapter(t *testing.T) {
 	}
 }
 
+// ── Issue #73 (listen-mode): code-L2 floor + whole-response buffering ──
+
+// TestNewPipeline_SetsListenCodeMinLevelFloor — the production newPipeline
+// factory must set the listen-mode code floor (plan.L2) on
+// PipelineDefaults so every speak call requests code at the L2 floor. We
+// type-assert the returned Narrator to the concrete *pipeline.Pipeline and
+// inspect Defaults — this pins the composition-root wiring of the
+// planner-read field WITHOUT a new speakArgs field. Asserts the document
+// Level (from args.Level) and the floor are independent knobs.
+func TestNewPipeline_SetsListenCodeMinLevelFloor(t *testing.T) {
+	t.Parallel()
+	// Production factory (this test does NOT install a stub).
+	n := newPipeline("/tmp/out", speakArgs{Level: 1}, file.New(), nil)
+	pl, ok := n.(*pipeline.Pipeline)
+	if !ok {
+		t.Fatalf("production newPipeline must build *pipeline.Pipeline, got %T", n)
+	}
+	if pl.Defaults.CodeMinLevel != plan.L2 {
+		t.Errorf("listen-mode code floor: want L2 on PipelineDefaults, got L%d", pl.Defaults.CodeMinLevel)
+	}
+	if listenCodeMinLevel != plan.L2 {
+		t.Errorf("listenCodeMinLevel constant drifted: want L2, got L%d", listenCodeMinLevel)
+	}
+	// The document-wide Level and the code floor are distinct knobs: a
+	// level-1 call still floors code at L2 (the doc Level stays L1).
+	if pl.Defaults.Level != plan.L1 {
+		t.Errorf("document Level must track args.Level (L1), got L%d", pl.Defaults.Level)
+	}
+}
+
+// TestRunSpeak_RenderError_MapsToToolErrorAndCleansTempDir — MANDATORY
+// (issue #73, step 6 / S2). A render/pipeline failure on the
+// newPipeline/speak seam must:
+//   - be classified exactly ONCE through internal/errclass (no partial
+//     success receipt — a failed call returns the error, never a receipt),
+//   - surface as a tool error the SDK renders with IsError=true (the
+//     handler returns it via the error return; we assert that contract at
+//     the handler boundary),
+//   - leave the ephemeral temp dir cleaned up.
+//
+// We drive the full speakHandler -> runSpeak path with a stub narrator
+// that errors, confirming the handler propagates the classified error
+// (SDK -> IsError=true) and the response is the zero value (no leaked
+// partial receipt).
+func TestRunSpeak_RenderError_MapsToToolErrorAndCleansTempDir(t *testing.T) {
+	// Cannot t.Parallel() — mutates package-level newPipeline var.
+	stub := &stubNarrator{err: errors.New("kokoro subprocess crashed mid-render")}
+	restore := withStubPipeline(t, stub)
+	defer restore()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "sample-*.md")
+	if err != nil {
+		t.Fatalf("create temp source: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	deps := runDeps{run: runSpeak}
+	h := speakHandler(deps)
+
+	// CallToolResult is nil and the error is non-nil — the SDK surfaces a
+	// non-nil handler error as IsError=true content. Asserting err != nil
+	// here IS the IsError=true contract at this boundary.
+	res, resp, err := h(context.Background(), nil, speakArgs{Source: tmpFile.Name()})
+	if err == nil {
+		t.Fatal("want a tool error (SDK -> IsError=true) on render failure, got nil")
+	}
+	if res != nil {
+		t.Errorf("handler must not return a CallToolResult alongside the error, got %+v", res)
+	}
+	// No partial-success receipt may leak on the error path.
+	if resp != (speakResponse{}) {
+		t.Errorf("error path must return the zero speakResponse, got %+v", resp)
+	}
+	// Single classification through errclass: internal_error prefix, and
+	// the original render error stays reachable via errors.Is (one wrap).
+	if !strings.HasPrefix(err.Error(), "internal_error: pipeline failure") {
+		t.Errorf("render error must classify (errclass) to internal_error, got %q", err.Error())
+	}
+	if !errors.Is(err, stub.err) {
+		t.Errorf("classified error must wrap the original render error (errors.Is); got %v", err)
+	}
+	// Temp dir cleaned up even though the pipeline errored.
+	if stub.gotOutDir == "" {
+		t.Fatal("stub never captured the outDir")
+	}
+	if _, statErr := os.Stat(stub.gotOutDir); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("ephemeral temp dir must be removed after the render error; got stat err %v", statErr)
+	}
+}
+
 // TestInputAdapterAndRef — direct unit test on the helper. Covers all
 // three branches: text, source, neither (defensive — validate() catches
 // it upstream, but the helper must surface a sensible error if reached

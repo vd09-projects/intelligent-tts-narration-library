@@ -172,6 +172,102 @@ func TestPipeline_HappyPath_NilIntelligence(t *testing.T) {
 	}
 }
 
+// mixedProseCodeDoc — a short prose paragraph followed by a small Go code
+// block, so the planner segments it into one prose + one code block. Used
+// to prove the CodeMinLevel floor reaches the planner via PipelineDefaults
+// and lifts ONLY the code block.
+func mixedProseCodeDoc() adapter.RawDocument {
+	body := "A short paragraph.\n\n" + "```go\nfunc factorial(n int) int {\n\treturn n\n}\n```\n"
+	return adapter.RawDocument{
+		Source: plan.SourceRef{
+			Kind:        plan.SourceKindFile,
+			URI:         "/tmp/mixed.md",
+			ContentHash: "mixed-hash",
+			Adapter:     "file@test",
+		},
+		Bytes: []byte(body),
+		OffsetMap: []adapter.OffsetSpan{{
+			StartByte: 0, EndByte: len(body),
+			Origin: plan.SourceMap{Kind: plan.SourceKindLineRange, StartLine: 1, EndLine: 7},
+		}},
+	}
+}
+
+// TestPipeline_CodeMinLevelFloor_ReachesPlanner — issue #73: PipelineDefaults.
+// CodeMinLevel is forwarded into planner.Request and applied as a code-only
+// floor. With document Level L1 + CodeMinLevel L2, the renderer-captured plan
+// must show the code block at L2 (lifted) and the prose block at L1
+// (untouched). This is the composition-root → planner wiring proof for the
+// listen-mode floor; it also confirms no durable-sink coupling was added
+// (still the same ephemeral whole-doc path).
+func TestPipeline_CodeMinLevelFloor_ReachesPlanner(t *testing.T) {
+	t.Parallel()
+	ad := &fakeAdapter{doc: mixedProseCodeDoc()}
+	rd := &fakeRenderer{res: render.RenderResult{
+		Timeline: plan.Timeline{Blocks: []plan.BlockTiming{{BlockID: "b001", EndMs: 1000, AudioRef: "b001.wav"}}},
+	}}
+	sk := &fakeSink{receipt: ephemeralReceipt()}
+
+	p := pipeline.New(ad, nil, rd, sk, pipeline.PipelineDefaults{
+		Level: plan.L1, OutDir: "/tmp/out", Locale: "en", CodeMinLevel: plan.L2,
+	})
+
+	if _, err := p.Narrate(context.Background(),
+		plan.SourceRef{Kind: plan.SourceKindFile, URI: "/tmp/mixed.md"},
+		pipeline.NarrateRequest{},
+	); err != nil {
+		t.Fatalf("Narrate: %v", err)
+	}
+
+	var prose, code *plan.Block
+	for i := range rd.gotPlan.Blocks {
+		switch rd.gotPlan.Blocks[i].Class {
+		case plan.ClassProse:
+			prose = &rd.gotPlan.Blocks[i]
+		case plan.ClassCode:
+			code = &rd.gotPlan.Blocks[i]
+		}
+	}
+	if prose == nil || code == nil {
+		t.Fatalf("want one prose + one code block in planned output, got %+v", rd.gotPlan.Blocks)
+	}
+	if code.Level != plan.L2 {
+		t.Errorf("code block must lift to the L2 floor via PipelineDefaults, got L%d", code.Level)
+	}
+	if prose.Level != plan.L1 {
+		t.Errorf("prose block must stay at the requested L1 (no floor bleed), got L%d", prose.Level)
+	}
+}
+
+// TestPipeline_CodeMinLevelZero_NoFloor — the counter-metric: with
+// CodeMinLevel unset (zero), the code block resolves at the document level
+// exactly as before #73 — the pass-through is a no-op when off.
+func TestPipeline_CodeMinLevelZero_NoFloor(t *testing.T) {
+	t.Parallel()
+	ad := &fakeAdapter{doc: mixedProseCodeDoc()}
+	rd := &fakeRenderer{res: render.RenderResult{
+		Timeline: plan.Timeline{Blocks: []plan.BlockTiming{{BlockID: "b001", EndMs: 1000, AudioRef: "b001.wav"}}},
+	}}
+	sk := &fakeSink{receipt: ephemeralReceipt()}
+
+	p := pipeline.New(ad, nil, rd, sk, pipeline.PipelineDefaults{
+		Level: plan.L1, OutDir: "/tmp/out", Locale: "en", // CodeMinLevel left zero
+	})
+
+	if _, err := p.Narrate(context.Background(),
+		plan.SourceRef{Kind: plan.SourceKindFile, URI: "/tmp/mixed.md"},
+		pipeline.NarrateRequest{},
+	); err != nil {
+		t.Fatalf("Narrate: %v", err)
+	}
+
+	for i := range rd.gotPlan.Blocks {
+		if rd.gotPlan.Blocks[i].Class == plan.ClassCode && rd.gotPlan.Blocks[i].Level != plan.L1 {
+			t.Errorf("with no floor, code block must stay at document L1, got L%d", rd.gotPlan.Blocks[i].Level)
+		}
+	}
+}
+
 func TestPipeline_AdapterError_StopsPipeline(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("boom: stat failed")

@@ -32,9 +32,22 @@ const SchemaVersion = "1.0"
 // emitted by Plan: "b001", "b002", …) to a per-block level — used by
 // the escalation flow (design doc §4). A nil/empty map means "use
 // Level for every block".
+//
+// CodeMinLevel is an additive declarative FLOOR applied to ClassCode
+// blocks only (issue #73, listen-mode). When set to a valid level, every
+// code block resolves to max(effectiveLevel, CodeMinLevel): an L1 target
+// lifts to the floor, but an explicit L3 request (document Level or an
+// Overrides entry) survives — it is a floor, never a hard set. A zero /
+// invalid CodeMinLevel is a no-op, so existing callers that leave the
+// field unset get byte-identical behavior to before #73. This is pure
+// declarative data the planner reads during its structural pass; it adds
+// no I/O, no edge knowledge, and no policy branch beyond the level
+// comparison (deps_test.go stays green). The composition root sets it via
+// pipeline.PipelineDefaults — the planner never learns where it came from.
 type Request struct {
-	Level     plan.Level
-	Overrides map[string]plan.Level
+	Level        plan.Level
+	Overrides    map[string]plan.Level
+	CodeMinLevel plan.Level
 }
 
 // Clock + plan-id seams are no longer package globals. They are threaded
@@ -265,6 +278,7 @@ func structuralPass(
 	cls := classify(rb)
 	sm := rawBlockSourceMap(rb, doc)
 	target := effectiveLevel(req, fmt.Sprintf("b%03d", *idx))
+	target = applyCodeFloor(cls, target, req.CodeMinLevel)
 
 	levelOut := level(rb, cls, target, lex)
 
@@ -406,4 +420,19 @@ func effectiveLevel(req Request, blockID string) plan.Level {
 		}
 	}
 	return req.Level
+}
+
+// applyCodeFloor raises a ClassCode block's resolved target to floor when
+// floor is set and higher than the already-resolved level (issue #73,
+// listen-mode). It is a FLOOR, not a set: an L1 code target lifts to the
+// floor (e.g. L2), but an explicit L3 request survives because
+// max(L3, L2) == L3. A zero / invalid floor is a no-op, and every
+// non-code class passes through untouched — the floor never bleeds into
+// prose/heading/list/table/config/diagram. Pure comparison: no I/O, no
+// edge knowledge, no policy branch beyond the level max.
+func applyCodeFloor(cls plan.Class, target, floor plan.Level) plan.Level {
+	if cls == plan.ClassCode && floor.IsValid() && floor > target {
+		return floor
+	}
+	return target
 }

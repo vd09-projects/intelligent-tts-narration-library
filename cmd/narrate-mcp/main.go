@@ -229,6 +229,16 @@ type runDeps struct {
 // for text path). Threading it through the seam lets unit tests assert
 // which adapter was wired, and keeps the production composition single-
 // sourced inside this hook.
+// listenCodeMinLevel — the code-class level FLOOR every speak call requests
+// (issue #73, listen-mode). A Claude Code user listening to a large
+// assistant response wants code voiced as a structural gist (L2), not the
+// bare L1 line count. Set as a floor on PipelineDefaults: code lifts to L2,
+// but an explicit L3 listen request survives (max(L3, L2) == L3); prose and
+// other classes are untouched. This is composition-root configuration of a
+// planner-read declarative field — NOT a new speakArgs field. applyDefaults
+// / validate keep their document-wide Level semantics unchanged.
+const listenCodeMinLevel = plan.L2
+
 var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
 	return pipeline.New(
 		input,
@@ -236,9 +246,10 @@ var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter
 		sherpa.New(sherpa.EngineConfig{}),
 		ephemeral.New(),
 		pipeline.PipelineDefaults{
-			Level:  plan.Level(args.Level),
-			OutDir: outDir,
-			Locale: "en",
+			Level:        plan.Level(args.Level),
+			OutDir:       outDir,
+			Locale:       "en",
+			CodeMinLevel: listenCodeMinLevel,
 		},
 	)
 }
@@ -466,9 +477,18 @@ func newServer(deps runDeps) *mcp.Server {
 		Name:    "narrate-mcp",
 		Version: "0.1.0",
 	}, nil)
+	// Whole-response buffering convention (issue #73, listen-mode): the
+	// MCP host MUST buffer the ENTIRE assistant response and hand it to
+	// speak as a single `text` (or `source`) input. The planner needs the
+	// whole document to decide voicing (no streaming — see CLAUDE.md
+	// non-goals); partial / streamed / chunk-per-call invocations are out
+	// of contract and will be planned as independent fragments, not one
+	// narration. "As it arrives" is reconciled by buffering to completion,
+	// then calling speak once. Stated in the Description so MCP clients see
+	// it in the tool list, and mirrored in the README.
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "speak",
-		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Returns a SinkReceipt with planned duration and the temp dir the renderer used. Refusals stay inside the plan (honesty rule) — the call still succeeds.",
+		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a SinkReceipt with planned duration and the temp dir the renderer used. Refusals stay inside the plan (honesty rule) — the call still succeeds.",
 	}, speakHandler(deps))
 	return server
 }

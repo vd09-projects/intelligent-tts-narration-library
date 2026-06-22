@@ -146,10 +146,19 @@ type Pipeline struct {
 // NarrateRequest.LevelOverrides.
 // OutDir is required — the renderer writes per-block WAVs there.
 // Locale is recorded into plan.PlanDefaults.Locale; phase one is always "en".
+//
+// CodeMinLevel is a pass-through floor (issue #73, listen-mode) the
+// pipeline forwards verbatim into planner.Request.CodeMinLevel. When set
+// to a valid level, code blocks resolve to at least that level (a floor,
+// not a set — an explicit L3 request survives). Zero/invalid means "no
+// floor", preserving today's behavior for every caller that does not set
+// it. The composition root (cmd/narrate-mcp) sets it; the pipeline only
+// relays it — it is engine-neutral and never persisted to plan.PlanDefaults.
 type PipelineDefaults struct {
-	Level  plan.Level
-	OutDir string
-	Locale string
+	Level        plan.Level
+	OutDir       string
+	Locale       string
+	CodeMinLevel plan.Level
 }
 
 // NarrateRequest — per-call knobs.
@@ -263,8 +272,9 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 	}
 
 	narrationPlan, err := planner.Plan(ctx, doc, planner.Request{
-		Level:     p.Defaults.Level,
-		Overrides: req.LevelOverrides,
+		Level:        p.Defaults.Level,
+		Overrides:    req.LevelOverrides,
+		CodeMinLevel: p.Defaults.CodeMinLevel,
 	}, p.Intelligence)
 	if err != nil {
 		return NarrateResult{}, fmt.Errorf("pipeline: planner: %w", err)

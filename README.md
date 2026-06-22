@@ -85,6 +85,12 @@ Phase-one caveats: per-block re-render works against the ephemeral sink only. Th
 
 Tool family: `narrate.*` — `speak` is the canonical entry point. Future tools belong under the same server.
 
+### Listen to a Claude Code response (whole-response buffering convention)
+
+To *listen* to a large assistant response instead of reading it, the MCP host must **buffer the entire response and hand it to `speak` as one `text` input**. The planner needs the whole document to decide voicing — there is no streaming (a phase-one non-goal). Partial, streamed, or chunk-per-call invocations are **out of contract**: each call is planned as an independent fragment, not one continuous narration. "As it arrives" is reconciled by buffering to completion, then calling `speak` once.
+
+In listen-mode, **code blocks are voiced at a Level-2 floor** — a structural gist (count + declarations, or a one-line semantic gist when an intelligence adapter is wired) rather than the bare L1 line count. It is a *floor*, not a hard set: a code block still rises to L3 if you request `level=3`. This floor is composition-root policy on `cmd/narrate-mcp` (a planner-read declarative field via `pipeline.PipelineDefaults`); it is not a `speak` argument, and it does not change the document-wide `level` arg's meaning. Prose and other classes are voiced at the requested `level` unchanged.
+
 Start the server (mostly useful for the `mcp` CLI or local development):
 
 ```sh
@@ -99,7 +105,7 @@ The server logs to stderr and runs until stdin EOF or Ctrl-C (both clean shutdow
 |---|---|---|---|---|
 | `source` | one of source/text | — | path | File path to the markdown document. |
 | `text` | one of source/text | — | string | Inline markdown text. Routed through the in-memory `adapter/mcptext` (ticket #17); the composition root assembles the URI as `mcp://inline/<sha256-hex-of-text>` and the adapter cross-checks the hash on read. |
-| `level` | no | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. |
+| `level` | no | `1` | `1` / `2` / `3` | Document-wide per-block leveling target: 1 = gist, 2 = summary, 3 = detail. Code blocks observe a Level-2 floor in listen-mode (see above); raising `level` to `3` lifts code (and everything else) to L3. |
 | `sink` | no | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` returns a tool error in phase one. |
 | `gender` | no | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. |
 
@@ -174,7 +180,8 @@ This runs `runSpeak` against `docs/samples/sample.md` in-process (bypassing the 
 ### Known limitations
 
 - `sink=persistent` is not implemented (phase two).
-- No intelligence adapter wired in this release — the planner uses the deterministic + degraded path; prose under ~120 words is read verbatim, larger prose is refused honestly.
+- No intelligence adapter wired in this release — the planner uses the deterministic + degraded path; prose under ~120 words is read verbatim, larger prose is refused honestly. With the listen-mode Level-2 code floor and no adapter, code blocks are voiced at a deterministic count + declarations gist with `status=degraded` (honest, not refused) — quieter than an AI gist but never fabricated.
+- Local-only means secrets get read aloud — and with listen-mode this now extends to secrets embedded in LLM-output code blocks voiced at the L2 floor. Deliberate phase-one deferral, awareness only, not a design driver.
 
 ## Running the tests
 
