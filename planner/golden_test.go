@@ -55,6 +55,9 @@ func goldenCases() []goldenCase {
 		{name: "table_l1", inputFile: "table_l1.md", level: plan.L1, intel: nil},
 		{name: "diagram_l1", inputFile: "diagram_l1.md", level: plan.L1, intel: nil},
 		{name: "list_l1", inputFile: "list_l1.md", level: plan.L1, intel: nil},
+		// #54 Direction 2 — bare list whose de-markered first item ends in a
+		// colon ("Notes:") must count in N (3, not 2) and not shift ordinals.
+		{name: "list_colon_first_item_l1", inputFile: "list_colon_first_item_l1.md", level: plan.L1, intel: nil},
 		{name: "refused_bare_image", inputFile: "refused_bare_image.md", level: plan.L1, intel: nil},
 		{name: "mixed_doc", inputFile: "mixed_doc.md", level: plan.L1, intel: nil},
 	}

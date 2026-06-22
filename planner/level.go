@@ -179,7 +179,7 @@ func ordinalCue(n int) string {
 // ("-", "*", "+", or digit-period); indented continuation lines fold into
 // their parent item.
 func levelList(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
-	title, items := splitListTitle(rb.text)
+	title, items := splitListTitle(rb.text, rb.firstItemDemarkered)
 
 	var spoken strings.Builder
 	if title != "" {
@@ -231,18 +231,24 @@ func listTitlePreamble(title string) string {
 // bullet list). The title is NOT counted as an item; the returned items
 // slice holds only real list items.
 //
-// The trailing-colon requirement is load-bearing, not cosmetic. The
-// goldmark segmenter strips the marker off the FIRST list item (a bare
-// "- alpha\n- beta" arrives as "alpha\n- beta"), so a leading non-marker
-// line is ambiguous: it could be a real title OR the de-markered first
-// item. The colon is the only reliable label signal that disambiguates the
-// two — without it we would mis-read item one as a title and drop it. (A
-// non-colon title is therefore voiced as a bare list; see discovered
-// followups, tracked: #54.)
+// The trailing-colon requirement is load-bearing, not cosmetic, on the
+// plaintext-fallback path (firstItemDemarkered == false), where list markers
+// survive intact: there a leading non-marker line is ambiguous (a real title
+// OR a marker-less first line) and the colon is the only reliable label
+// signal that disambiguates the two.
+//
+// firstItemDemarkered carries the goldmark seam (set by the segmenter, see
+// rawBlock.firstItemDemarkered): when true the leading line is provably the
+// AST-stripped first item, NEVER a title, so the colon title branch is
+// skipped entirely — the whole block goes to extractListItems and the
+// colon-terminated first item is counted in N. This makes issue #54's
+// Direction 2 (a de-markered colon-terminated first item mis-promoted to a
+// title, undercounting N and shifting every ordinalCue) impossible by
+// construction on the markdown path.
 //
 // Returns ("", items) for a bare list (no titled label) so levelList takes
 // the generated "List of N items." preamble path.
-func splitListTitle(text string) (string, []string) {
+func splitListTitle(text string, firstItemDemarkered bool) (string, []string) {
 	lines := strings.Split(text, "\n")
 	for i, ln := range lines {
 		trimmed := strings.TrimSpace(ln)
@@ -252,16 +258,18 @@ func splitListTitle(text string) (string, []string) {
 		if isListMarkerLine(trimmed) {
 			break // first non-blank line is already a marker → bare list.
 		}
-		if strings.HasSuffix(trimmed, ":") {
-			// Titled list: this label line is the preamble; the remaining
-			// lines are the real items.
+		if !firstItemDemarkered && strings.HasSuffix(trimmed, ":") {
+			// Plaintext-fallback titled list: markers survive, so a trailing
+			// colon is the disambiguating label signal. This label line is the
+			// preamble; the remaining lines are the real items.
 			return trimmed, extractListItems(strings.Join(lines[i+1:], "\n"))
 		}
-		// LIMITATION (tracked: #54): a non-colon leading line (e.g. "Shopping
-		// list") cannot be told apart from the de-markered first item, so it
-		// is voiced as item one rather than a title. Lifting this needs the
-		// segmenter to preserve the first item's marker (or pass a title seam)
-		// — out of scope for this text-only diff.
+		// Direction 2 (a colon-terminated de-markered first item mis-promoted
+		// to a title) is now fixed by the firstItemDemarkered seam carried from
+		// the segmenter — on the goldmark path the first line is never
+		// title-promoted. The only residual is the plaintext non-colon leading
+		// title (AC1), a ticket divergence (#54): in true markdown that label
+		// is already its own prose block and is voiced correctly.
 		break // leading non-marker, non-label line → treat whole block as bare.
 	}
 	return "", extractListItems(text)

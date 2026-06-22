@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-22-list-title-detection-firstitemdemarkered-seam
+    title: "Issue #54 colon-gated list-title detection resolved via upstream firstItemDemarkered seam; AC1 taken as documented divergence"
+    date: 2026-06-22
+    status: accepted
+    category: planner
+    tags: [planner, level.go, segment.go, list-voicing, honesty-rule, issue-54]
+    path: planner/2026-06-22-list-title-detection-firstitemdemarkered-seam.md
+    summary: "Issue #54. splitListTitle (planner/level.go) used a single signal — a trailing colon on the first non-marker line — to decide if a list has a leading title, but goldmark strips the first item's marker so that line is ambiguous (real title vs de-markered item one). DECISION (Option B-markdown): the segmenter sets a planner-internal firstItemDemarkered flag on rawBlock (set in rawBlockFromNode as hint == hintList), threaded into splitListTitle; when true the colon title branch is skipped and the colon-terminated first item is counted in N. This kills Direction 2 (AC2 — a bare list whose genuine first item ends in a colon mis-promoted to a title) by construction on the goldmark path — exact, not heuristic; AC3/AC4/AC5 fall out. No plan/ schema change, no planner I/O, honesty rule preserved. KEY RECORDED DECISION — AC1 (non-colon leading label as preamble) taken as wontfix-by-design divergence: in true markdown that title is already voiced correctly as its own top-level prose block (goldmark doesn't fold a preceding label paragraph into the list), and on the plaintext-fallback path it's indistinguishable from a marker-less first item without guessing, which would violate the honesty rule. Supersedes 2026-06-21-colon-gated-list-title-detection-goldmark (resolves the false positive it knowingly accepted). Latent debt (accepted): the trailing-colon branch is retained for the plaintext-fallback shape (firstItemDemarkered == false), of uncertain reachability. Rejected: Option A (narrow the colon heuristic via marker-stripped asymmetry — a heuristic explaining a heuristic; AC1 relaxation risky); Option B-plaintext titled-seam segmenter change (fold adjacent label into list — deferred, re-opens the top-level-walk tradeoff). Revisit if literal AC1 is ever wanted or the plaintext-fallback colon branch becomes reachable."
   - id: 2026-06-22-code-l2-overlong-reply-trim-to-first-sentence
     title: "Over-long code-L2 reply: trim to first sentence, refuse only when the first sentence overruns"
     date: 2026-06-22
@@ -196,7 +204,7 @@ decisions:
   - id: 2026-06-21-colon-gated-list-title-detection-goldmark
     title: "Colon-gated list title detection under goldmark marker stripping"
     date: 2026-06-21
-    status: accepted
+    status: superseded
     category: tradeoff
     tags: [list, title-detection, goldmark, heuristic, false-positive, planner, ticket-45]
     path: tradeoff/2026-06-21-colon-gated-list-title-detection-goldmark.md

@@ -3,7 +3,7 @@
 | Field    | Value            |
 |----------|------------------|
 | Date     | 2026-06-21       |
-| Status   | accepted         |
+| Status   | superseded       |
 | Category | tradeoff         |
 | Tags     | list, title-detection, goldmark, heuristic, false-positive, planner, ticket-45 |
 
@@ -52,6 +52,7 @@ ending in a colon are far more common than list items ending in a colon.
 ## Related decisions
 
 - [List preamble: titled reuses source, bare generates "List of N items."](../convention/2026-06-21-list-preamble-titled-reuses-source-bare-generates.md) — the rule that consumes this title signal.
+- [Issue #54 colon-gated list-title detection resolved via upstream firstItemDemarkered seam](../planner/2026-06-22-list-title-detection-firstitemdemarkered-seam.md) — **supersedes** this decision; resolves the accepted false-positive direction by construction via the firstItemDemarkered seam.
 
 ## Revisit trigger
 
