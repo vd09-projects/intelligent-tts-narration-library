@@ -334,3 +334,29 @@ scopes:
       migration / concurrency / perf surface). AC3 reframed as a ticket divergence
       (no // TODO marker exists in tmpl.go to remove — nothing to remove). Plan
       persisted draft — awaiting user approval before sindri consumes.
+  - slug: errclass-drop-mcpsampling-58
+    title: drop dead mcpsampling branches + concrete import from internal/errclass (issue #58)
+    created: 2026-06-22
+    reasoning: |
+      Plan cycle for GitHub issue #58 (drop the two dead mcpsampling.Err*
+      ladder branches (precedence 4-5: ErrNoSamplingClient,
+      ErrUnexpectedContentKind) and the intelligence/mcpsampling import from
+      internal/errclass). Both branches return ClassInternal — identical to the
+      precedence-6 default arm — so they are pure no-ops with zero
+      classification effect; their sole reason to exist was to justify importing
+      the concrete mcpsampling backend into the shared classifier, which
+      violates the only-pipeline/cmd-know-concrete-backends invariant. Removal
+      restores that invariant. Byte-identical refactor proven by the existing
+      cmd/narrate-mcp + cmd/narrate-server behavior oracles (no new assertions);
+      supersedes the 2026-06-21-errclass-imports-mcpsampling-one-classifier-place
+      decision on dead-branch grounds (NOT the originally-anticipated
+      cycle/layering trigger), landing on Option B's outcome for the sentinels
+      while "one classifier per root" still holds. Distinct slug from
+      errclass-extract-51 (the base extraction that introduced the import) — this
+      is a follow-on cleanup on the same package, so an explicit drop-mcpsampling
+      qualifier rather than reusing the issue-51 scope. Slug pre-supplied +
+      pre-approved by user in orchestration prompt. Planned via mimir task depth,
+      no overlays triggered (internal-only no-op-branch removal, no public API /
+      migration / concurrency / perf surface). Plan persisted draft (awaiting
+      user approval before sindri consumes). Issue-numbered naming continues the
+      convention.

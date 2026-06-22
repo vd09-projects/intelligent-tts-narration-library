@@ -11,15 +11,11 @@
 // duplicated across the two roots (the // DUP marker in cmd/narrate-server
 // pointed here as the "3rd consumer lands, extract now" trigger, #51).
 //
-// Dependency note (intentional coupling): this CLASSIFICATION package imports
-// intelligence/mcpsampling solely to recognise that package's two adapter
-// sentinels (ErrNoSamplingClient, ErrUnexpectedContentKind) and classify them
-// as ClassInternal. That is a deliberate, named edge: errclass knows about two
-// concrete adapter sentinels so the classification stays in ONE place rather
-// than being re-duplicated at the MCP root. Future maintainers: this is the
-// latent coupling — errclass -> intelligence/mcpsampling — recorded so the edge
-// is understood, not discovered. There is no import cycle: mcpsampling imports
-// only plan/, intelligence/, and the MCP SDK; it never reaches into internal/.
+// errclass imports NO concrete backend. It classifies all unrecognised internal
+// faults — including adapter sentinels such as mcpsampling's — via the safe
+// default arm, so the "only pipeline/ and cmd/ know concrete backends"
+// invariant holds here (#58). Sentinel-specific wire text stays at each cmd
+// root, which is allowed to know its backends.
 package errclass
 
 import (
@@ -27,8 +23,6 @@ import (
 	"errors"
 	"io/fs"
 	"strconv"
-
-	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 )
 
 // Class is the closed category of a pipeline/patch error, as decided by
@@ -48,8 +42,8 @@ type Class int
 
 const (
 	// ClassInternal: server cannot fulfil the request regardless of how the
-	// caller asks (render/sink fault, missing sampling client, non-text
-	// sampling reply, any unrecognised error). Zero value = safe default.
+	// caller asks (render/sink fault, any unrecognised error). Zero value =
+	// safe default.
 	ClassInternal Class = iota
 	// ClassCaller: caller could fix it by changing the request (source not
 	// found, source permission denied).
@@ -78,14 +72,17 @@ func (c Class) String() string {
 // and returns a Class. It does NOT wrap, consume, or re-format the error — the
 // caller keeps the original err and applies its own per-root wire mapping.
 //
-// Precedence (order-significant): cancel > caller (fs) > internal
-// (sampling sentinels + default). The ladder:
+// Precedence (order-significant): cancel > caller (fs) > internal (default).
+// The ladder:
 //  1. context.Canceled || context.DeadlineExceeded -> ClassCancelled
 //  2. fs.ErrNotExist                                -> ClassCaller
 //  3. fs.ErrPermission                              -> ClassCaller
-//  4. mcpsampling.ErrNoSamplingClient               -> ClassInternal
-//  5. mcpsampling.ErrUnexpectedContentKind          -> ClassInternal
-//  6. default (incl. nil)                            -> ClassInternal
+//  4. default (incl. nil + any unrecognised fault)  -> ClassInternal
+//
+// Adapter sentinels (e.g. mcpsampling.Err*) carry no dedicated branch: they are
+// unrecognised here and fall to the default ClassInternal arm. Each cmd root
+// re-checks them for wire text within its ClassInternal handling — errclass
+// stays free of concrete backends (#58).
 //
 // nil never reaches Classify in production: both roots guard non-nil before
 // calling (MCP keeps its nil -> nil guard; the server only classifies a
@@ -97,9 +94,6 @@ func Classify(err error) Class {
 		return ClassCancelled
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, fs.ErrPermission):
 		return ClassCaller
-	case errors.Is(err, mcpsampling.ErrNoSamplingClient),
-		errors.Is(err, mcpsampling.ErrUnexpectedContentKind):
-		return ClassInternal
 	default:
 		return ClassInternal
 	}
