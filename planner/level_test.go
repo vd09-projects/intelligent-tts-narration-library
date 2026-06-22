@@ -112,10 +112,10 @@ func TestLevel_ListEmptyTitled(t *testing.T) {
 func TestLevel_ListSingleItem(t *testing.T) {
 	t.Parallel()
 	lex := compileLexicon()
-	// Bare single item. Preamble pluralization ("1 items") is consciously
-	// left as-is (out of scope per the plan).
+	// Bare single item. N=1 is the only singular case — the preamble agrees in
+	// number ("1 item"); every other N (including N=0) stays plural ("items").
 	bare := level(rawBlock{text: "- alpha\n", hint: hintList}, plan.ClassList, plan.L1, lex)
-	if got, want := bare.segments[0].Text, "List of 1 items. First, alpha."; got != want {
+	if got, want := bare.segments[0].Text, "List of 1 item. First, alpha."; got != want {
 		t.Errorf("single bare item mismatch:\n want %q\n  got %q", want, got)
 	}
 	// Titled single item.
@@ -327,7 +327,7 @@ func TestCodeL2_GateAndDegradeByteIdentical(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("```go\n")
 	b.WriteString("func process() {\n")
-	for i := 0; i < codeGistMaxLines+5; i++ {
+	for i := range codeGistMaxLines + 5 {
 		fmt.Fprintf(&b, "\tx := %d\n", i)
 	}
 	b.WriteString("}\n")
@@ -534,7 +534,6 @@ func TestFirstSentenceWithinCap(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			capped, ok := firstSentenceWithinCap(tc.text, codeL2MaxWords)
@@ -621,7 +620,6 @@ func TestCallIntelligence_CodeL2CapGuard(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{

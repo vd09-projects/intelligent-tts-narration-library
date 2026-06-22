@@ -185,7 +185,11 @@ func levelList(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 	if title != "" {
 		spoken.WriteString(listTitlePreamble(voice(title, lex)))
 	} else {
-		fmt.Fprintf(&spoken, "List of %d items.", len(items))
+		noun := "items"
+		if len(items) == 1 {
+			noun = "item"
+		}
+		fmt.Fprintf(&spoken, "List of %d %s.", len(items), noun)
 	}
 	for i, item := range items {
 		// ordinalCue is 1-based; the loop index is 0-based → pass i+1.
