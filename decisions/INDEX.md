@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-23-code-min-level-floor-on-planner-request
+    title: "Code blocks default to L2 in listen-mode via an additive CodeMinLevel floor on planner.Request"
+    date: 2026-06-23
+    status: accepted
+    category: architecture
+    tags: [code-min-level, listen-mode, planner-request, pipeline-defaults, per-block-leveling, floor-field, api-contract, schema-neutral, issue-73, classcode]
+    path: architecture/2026-06-23-code-min-level-floor-on-planner-request.md
+    summary: "Issue #73 Part A implementation (distinct from the #72/#74 listen-not-read ADR). Code-blocks-default-to-L2 in listen-mode is expressed as an additive declarative FLOOR field `CodeMinLevel plan.Level` on `planner.Request`, read inside the existing structural pass as `target = max(effectiveLevel, CodeMinLevel)` for ClassCode only, and surfaced via `pipeline.PipelineDefaults` set by `cmd/narrate-mcp` newPipeline. WHY a floor not a hard-set: an explicit L3 listen request must survive (max keeps the higher), and the zero value is a no-op preserving zero drift for non-listen callers. WHY on planner.Request not plan.PlanDefaults: the ephemeral primary path needs no persisted round-trip, keeping the on-wire plan.json schema untouched and engine-neutral; and because block IDs/classes are assigned INSIDE Plan, a per-class floor must be a planner-read field, not composition-root Overrides resolution (which is block-ID-keyed and runs at the wrong layer). REJECTED a general `map[plan.Class]plan.Level` per-class override map as speculative generality — a single CodeMinLevel covers all of #73; revisit if a future ticket needs per-class floors for diagram/table. Resolves the open pin from `primary-listen-path-decoupled-from-durable-sink` on where the L2 listen-mode default lives. Standing honesty boundary reaffirmed (reuse of existing #48 behavior, not a new decision): code-L2-no-adapter = degraded, adapter-refuses = refused."
   - id: 2026-06-23-terminal-listen-not-read-is-ephemeral-afplay-audio-only
     title: "Terminal 'listen, not read' is the existing speak → ephemeral sink → afplay path (audio-only, no UI)"
     date: 2026-06-23

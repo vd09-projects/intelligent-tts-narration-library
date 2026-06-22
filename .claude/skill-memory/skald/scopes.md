@@ -360,3 +360,44 @@ scopes:
       migration / concurrency / perf surface). Plan persisted draft (awaiting
       user approval before sindri consumes). Issue-numbered naming continues the
       convention.
+  - slug: narrate-claude-code-mcp-listen
+    title: narrate Claude Code response over MCP (listen-not-read) — block highlight, pause/play, code-as-L2, loading state
+    created: 2026-06-22
+    reasoning: |
+      Architecture-depth ADR cycle for the listen-not-read feature (implementation
+      issue #73). Bounded analysis (no shipped product code) on how to wire the MCP
+      `speak` path so a user can LISTEN to a large Claude Code response block-by-block:
+      persistent current-block highlight, pause/play, code blocks voiced at L2 only
+      (honesty fallback to deterministic when no adapter), and a visible loading
+      indicator while TTS generates. Recommends Option B — playback state lives in
+      the existing React player fed by a sink/persistent outDir, with the MCP host
+      buffering the COMPLETE response and handing it to the pipeline as one whole
+      input (reconciles "as it arrives" against the no-streaming non-goal). The
+      library emits nothing new: block-level Timeline/manifest.json keyed by block_id
+      plus the whole audio.wav blob is already the UI contract. Reuses player +
+      escalate/spinner (#50), cmd/narrate-server escalate endpoint (#49/#62), code-L2
+      path (#48/#60), and the anthropic adapter (#32) — net new is only the
+      buffer-then-render-then-point-player glue. Flags the stale mark3labs/mcp-go
+      ticket reference vs the official modelcontextprotocol/go-sdk v1.5.0 (CLAUDE.md
+      source of truth) and confirms this work forces no further SDK finalization.
+      Honors all five prior decisions (whole-blob playback unit, usePlayback
+      block-id-signature reset, code-L2-only AI gist, rAF block-transition-only
+      state writes, receipt-only speak envelope). Slug pre-supplied + pre-approved
+      via --scope in the orchestration prompt; feature-descriptive (not issue-
+      numbered) since this ADR precedes and unblocks #73 rather than implementing it.
+      Planned via mimir architecture depth, no overlays force-activated (bounded
+      analysis, no shipped code). Plan persisted draft (awaiting user approval).
+  - slug: narrate-mcp-listen-impl-73
+    title: Implement Claude Code MCP narration listen path (issue #73, Part A)
+    created: 2026-06-23
+    reasoning: |
+      Task-level implementation breakdown for GitHub issue #73, the build that
+      the approved narrate-claude-code-mcp-listen v3 ADR unblocks. Part A
+      (primary) only: whole-response buffering convention, code-class -> L2 plan
+      default expressed via pipeline/PipelineDefaults (no new MCP arg), honesty
+      fallback + error-path proofs, and the stale mark3labs/mcp-go -> official
+      modelcontextprotocol/go-sdk v1.5.0 reference correction. Part B (React
+      player visual companion) deferred to a separate follow-up issue per the
+      decoupling standing order. Separate impl scope (not the architecture scope)
+      to keep planner-architecture.md and the build artifact cleanly split.
+      Slug pre-supplied via --scope; issue-numbered to mark it as the impl of #73.
