@@ -327,7 +327,7 @@ func TestCodeL2_GateAndDegradeByteIdentical(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("```go\n")
 	b.WriteString("func process() {\n")
-	for i := 0; i < codeGistMaxLines+5; i++ {
+	for i := range codeGistMaxLines + 5 {
 		fmt.Fprintf(&b, "\tx := %d\n", i)
 	}
 	b.WriteString("}\n")
@@ -534,7 +534,6 @@ func TestFirstSentenceWithinCap(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			capped, ok := firstSentenceWithinCap(tc.text, codeL2MaxWords)
@@ -621,7 +620,6 @@ func TestCallIntelligence_CodeL2CapGuard(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			intel := &scriptedIntel{replies: []intelligence.IntelligenceResult{
