@@ -8,6 +8,38 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-23-terminal-listen-not-read-is-ephemeral-afplay-audio-only
+    title: "Terminal 'listen, not read' is the existing speak → ephemeral sink → afplay path (audio-only, no UI)"
+    date: 2026-06-23
+    status: accepted
+    category: architecture
+    tags: [mcp, speak, ephemeral-sink, afplay, listen-not-read, terminal, ticket-72, issue-73, v3-adr]
+    path: architecture/2026-06-23-terminal-listen-not-read-is-ephemeral-afplay-audio-only.md
+    summary: "Ticket #72 v2→v3 ADR correction. The primary terminal 'listen, not read' path is the EXISTING speak → sink/ephemeral → afplay path: audio out of the speakers, no UI, already shipped. Verified (file:line): cmd/narrate-mcp wires ephemeral.New() which shells out to afplay and plays each per-block WAV before returning a receipt-only envelope and deleting its temp dir; the MCP host only renders the receipt as text — the narrate-mcp process plays the sound itself. SUPERSEDES the v2 approach that made cmd/narrate-server + persistent outDir + React browser player the listen path (over-engineered: nothing in Go auto-opens a browser; the player is hand-launched). Two-surface friction and render-failure-spinner machinery re-scoped to the optional visual path only; terminal path has no spinner/no browser tab; failures are normal MCP tool errors. Partial-playback-then-error is defined behavior for #73; on this path a refusal is heard not seen."
+  - id: 2026-06-23-react-player-optional-reuses-existing-player-50
+    title: "React player is optional and reuses the existing player (#50) — no new UI"
+    date: 2026-06-23
+    status: accepted
+    category: architecture
+    tags: [react-player, visual-companion, narrate-server, issue-50, opt-in, reuse, ticket-72, issue-73, v3-adr]
+    path: architecture/2026-06-23-react-player-optional-reuses-existing-player-50.md
+    summary: "Ticket #72 v3 ADR. Optional visual sync (on-screen block highlight + transport + escalation + spinner) reuses the EXISTING React reference player from issue #50; NO new UI is built. It is a separate, opt-in, hand-launched path (player + cmd/narrate-server against a durable persistent outDir), not part of the primary terminal flow and not auto-opened (narrate-server only prints its URL to stderr; player launched via pnpm dev). The render-failure-spinner machinery and two-surface friction apply only to this optional path. Pin on #73: exact Makefile target vs underlying pnpm dev (Makefile:103)."
+  - id: 2026-06-23-primary-listen-path-decoupled-from-durable-sink
+    title: "Keep the primary listen path decoupled from any durable sink (standing guardrail)"
+    date: 2026-06-23
+    status: accepted
+    category: tradeoff
+    tags: [guardrail, decoupling, persistent-sink, ephemeral-sink, speak, sink-lifetime, two-invocations, ticket-72, issue-73, v3-adr]
+    path: tradeoff/2026-06-23-primary-listen-path-decoupled-from-durable-sink.md
+    summary: "Ticket #72 v3 ADR. The single highest-value guardrail for #73 (CORROBORATED: Dependency & Coupling + Tech Debt Sentinel). The primary terminal narration path (speak → ephemeral → afplay) STAYS DECOUPLED from the persistent/durable sink. A visual companion that needs persisted artifacts is a SEPARATE --sink persistent invocation, NOT a tee off the speak call — 'two paths, one render core'. This is a standing order constraining follow-up #73 so an implementer does not re-introduce sink-lifetime coupling. Keeps speak's ephemeral 'play then delete temp dir' lifetime intact; out_dir on the receipt is a debug-window field clients must not depend on. Open pin for #73: where the L2 listen-mode default lives (speakArgs/PipelineDefaults vs caller-passed level)."
+  - id: 2026-06-23-mcp-sdk-discrepancy-note-for-73
+    title: "MCP SDK discrepancy note — ticket says mark3labs/mcp-go, project uses official go-sdk (open question for #73)"
+    date: 2026-06-23
+    status: revisit-later
+    category: library-choice
+    tags: [mcp-sdk, mark3labs, modelcontextprotocol-go-sdk, discrepancy, note, open-question, ticket-72, issue-73, v3-adr]
+    path: library-choice/2026-06-23-mcp-sdk-discrepancy-note-for-73.md
+    summary: "Ticket #72 v3 ADR review. NOTE / open question for follow-up #73 (not an action now; the ADR ships no code): the originating ticket text refers to MCP SDK mark3labs/mcp-go, but the project actually uses the OFFICIAL github.com/modelcontextprotocol/go-sdk v1.5.0 (the SDK whose transitive requirement bumped the Go minimum to 1.25 in #12). #73 should treat the official go-sdk as authoritative and correct/disregard the ticket's mark3labs/mcp-go reference. Recorded so #73 inherits the context and an implementer does not pull the wrong SDK. Status revisit-later: close once #73 confirms the SDK choice."
   - id: 2026-06-22-list-title-detection-firstitemdemarkered-seam
     title: "Issue #54 colon-gated list-title detection resolved via upstream firstItemDemarkered seam; AC1 taken as documented divergence"
     date: 2026-06-22
