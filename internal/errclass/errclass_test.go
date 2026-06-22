@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"testing"
-
-	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 )
 
-// TestClassify exercises every ladder branch, one row per sentinel, plus the
-// wrap-traversal, nil, and unknown cases. errclass owns CATEGORY only — the
-// per-root wire mapping (text prefixes / HTTP status) is tested by the cmd
-// behavior-oracle tests, not here.
+// TestClassify exercises every ladder branch — cancel, the fs caller sentinels,
+// wrap-traversal, nil, and the default internal arm. errclass owns CATEGORY
+// only — the per-root wire mapping (text prefixes / HTTP status) is tested by
+// the cmd behavior-oracle tests, not here. Adapter sentinels (mcpsampling.Err*)
+// are deliberately NOT rowed here: they land on the default ClassInternal arm
+// (no dedicated branch), and the cmd MCP/server tests assert their end-to-end
+// wire behaviour (#58).
 func TestClassify(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -31,11 +32,8 @@ func TestClassify(t *testing.T) {
 		// Wrapped error proves errors.Is traversal through a %w chain.
 		{"wrapped fs.ErrNotExist", fmt.Errorf("ctx: %w", fs.ErrNotExist), ClassCaller},
 
-		// Internal bucket (precedence 4-5) — the mcpsampling sentinels.
-		{"mcpsampling.ErrNoSamplingClient", mcpsampling.ErrNoSamplingClient, ClassInternal},
-		{"mcpsampling.ErrUnexpectedContentKind", mcpsampling.ErrUnexpectedContentKind, ClassInternal},
-
-		// Default / safe-fallback (precedence 6).
+		// Default / safe-fallback (precedence 4). Any unrecognised error —
+		// including adapter sentinels like mcpsampling's — lands here.
 		{"unknown error -> internal", errors.New("disk on fire"), ClassInternal},
 		// nil never reaches Classify in production (both roots guard non-nil);
 		// documented defined-but-unreached behaviour.
@@ -43,7 +41,6 @@ func TestClassify(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := Classify(tc.in); got != tc.want {

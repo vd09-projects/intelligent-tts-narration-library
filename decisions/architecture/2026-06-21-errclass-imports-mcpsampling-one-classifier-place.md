@@ -1,9 +1,17 @@
 # errclass imports intelligence/mcpsampling so all shared classification lives in one place (Option A)
 
+> **SUPERSEDED (2026-06-22, issue #58).** The two `mcpsampling` sentinel branches this decision added to `errclass.Classify` (`ErrNoSamplingClient`, `ErrUnexpectedContentKind`) were discovered to be **DEAD**: both returned `ClassInternal`, which is identical to the default arm (`ClassInternal` is the iota zero value / fail-safe default). The branches therefore produced zero classification benefit, and the import `internal/errclass -> intelligence/mcpsampling` was pure cost. Issue #58 removed both branches and the import, restoring the "only `pipeline/` and `cmd/` know concrete backends" invariant.
+>
+> **New basis for supersession (NOT the pre-authorized trigger).** This is superseded on **dead-branch grounds**, NOT the originally-anticipated "cross-package import cycle or layering-lint flag" revisit trigger that this decision pre-authorized below. No cycle and no layering flag ever appeared; the branches were simply no-ops.
+>
+> **Relationship to the original Options.** The outcome coincides with the originally-**rejected Option B** for the two sentinels (no concrete adapter import in `errclass`) — but for a different reason than Option B contemplated: not to avoid a coupling cost, but because the branches were dead. Crucially, Option B's stated con (re-duplicating sampling-sentinel logic at the MCP root, leaving two classifiers) does **NOT** materialize here: there is nothing to re-handle, because the sentinels classify to `ClassInternal` via the default arm exactly as before. The original "all shared classification lives in one place" standing order therefore **still holds** — classification remains in one place; #58 removed only a no-op branch, not a classification fact.
+>
+> See: issue #58.
+
 | Field    | Value            |
 |----------|------------------|
 | Date     | 2026-06-21       |
-| Status   | accepted         |
+| Status   | superseded       |
 | Category | architecture     |
 | Tags     | internal/errclass, intelligence/mcpsampling, error-classification, import-coupling, layering, dedup, issue-51 |
 
@@ -39,7 +47,10 @@ The latent coupling is documented as a **named edge** in the `errclass.go` packa
 ## Related decisions
 
 - [MCP error classifier caller-vs-internal split](../convention/2026-06-19-mcp-error-classifier-caller-vs-internal-split.md) — the original per-root split that #51 consolidates into errclass; this decision is the consolidation's architectural commitment.
+- **Superseded by issue #58 (2026-06-22)** — the two sentinel branches were found to be dead (both `ClassInternal`, identical to the default arm). #58 removed the branches and the `errclass -> intelligence/mcpsampling` import. See the SUPERSEDED note at the top of this file.
 
 ## Revisit trigger
 
-If a cross-package import cycle appears (e.g. `intelligence/mcpsampling` gaining an `internal/` dependency) or a layering rule starts flagging `errclass -> intelligence/mcpsampling`, fall back to Option B for the two sampling sentinels only.
+~~If a cross-package import cycle appears (e.g. `intelligence/mcpsampling` gaining an `internal/` dependency) or a layering rule starts flagging `errclass -> intelligence/mcpsampling`, fall back to Option B for the two sampling sentinels only.~~
+
+**Moot — this trigger never fired.** Issue #58 superseded this decision on dead-branch grounds before any cycle or layering flag appeared. The import no longer exists, so there is nothing left to revisit on the original trigger.

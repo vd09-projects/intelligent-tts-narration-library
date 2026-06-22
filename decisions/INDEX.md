@@ -139,11 +139,12 @@ decisions:
   - id: 2026-06-21-errclass-imports-mcpsampling-one-classifier-place
     title: "errclass imports intelligence/mcpsampling so all shared classification lives in one place (Option A)"
     date: 2026-06-21
-    status: accepted
+    status: superseded
+    superseded_by: issue-58
     category: architecture
-    tags: [internal/errclass, intelligence/mcpsampling, error-classification, import-coupling, layering, dedup, issue-51]
+    tags: [internal/errclass, intelligence/mcpsampling, error-classification, import-coupling, layering, dedup, issue-51, issue-58]
     path: architecture/2026-06-21-errclass-imports-mcpsampling-one-classifier-place.md
-    summary: "Task #51 consolidated the duplicated caller-vs-internal-vs-cancel ladder (the // DUP marker) into internal/errclass. DECISION (Option A): errclass imports intelligence/mcpsampling solely to recognize its two adapter sentinels (ErrNoSamplingClient, ErrUnexpectedContentKind) and classify both as ClassInternal — keeping ALL shared classification in ONE place, honoring the prior fact that sampling sentinels route to internal. Rejected Option B (omit the sentinels, re-handle them at the MCP root): re-duplicates the very logic #51 consolidates and leaves MCP with two classifiers. P1 verified no import cycle (mcpsampling imports only plan/, intelligence/, MCP SDK; never reaches internal/) and no layering-lint flag. The latent coupling errclass -> intelligence/mcpsampling is documented as a named edge in the errclass.go package doc. Revisit (fall back to Option B for the two sentinels) if a cycle or layering flag appears."
+    summary: "SUPERSEDED by issue #58 (2026-06-22) on DEAD-BRANCH grounds — NOT the pre-authorized cycle/layering-flag trigger (which never fired). Original (Option A): errclass imported intelligence/mcpsampling to recognize its two adapter sentinels (ErrNoSamplingClient, ErrUnexpectedContentKind) and classify both as ClassInternal, keeping ALL shared classification in ONE place; rejected Option B (omit the sentinels, re-handle at the MCP root). #58 discovered both sentinel branches were DEAD: each returned ClassInternal, identical to the default arm (ClassInternal is the fail-safe zero value), so the import was pure cost with zero classification benefit. #58 removed both branches and the import, restoring the 'only pipeline/ and cmd/ know concrete backends' invariant. Outcome coincides with the originally-rejected Option B (no concrete import in errclass) but for a different reason (dead branches, not coupling cost); Option B's 're-duplicate at MCP root / two classifiers' con does NOT materialize (the sentinels still classify to ClassInternal via the default arm). The 'all shared classification lives in one place' standing order STILL HOLDS — classification stays in one place; only a no-op branch was removed."
   - id: 2026-06-21-errclass-class-omits-isvalid-internal-return-type
     title: "errclass.Class deliberately omits IsValid() (closed internal return type), keeps only String()"
     date: 2026-06-21
