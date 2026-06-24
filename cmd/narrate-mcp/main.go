@@ -354,7 +354,7 @@ func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.S
 
 	// Success path only: project the rendered plan's already-computed roster
 	// into the after-the-fact transcript. Refusals are data here, not errors.
-	// TODO: cap transcript size on very large speak responses — unbounded today
+	// TODO(#86): cap transcript size on very large speak responses — unbounded today
 	return speakResponse{
 		Receipt:    receiptFromSink(receipt.SinkReceipt, outDir),
 		Transcript: transcriptFromResult(receipt),
