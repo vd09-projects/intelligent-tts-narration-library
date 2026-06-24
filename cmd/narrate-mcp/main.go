@@ -16,10 +16,17 @@
 //
 // Decisions baked in (harvested from the build-session plan + review):
 //
-//	Decision (v1) — convention: accepted. Tool response envelope is
-//	  receipt-only for v1: {"receipt": {blocks_played, total_duration_ms,
-//	  out_dir}}. A `plan` envelope can be added additively later under the
-//	  CLAUDE.md schema_version rule.
+//	Decision (v1) — convention: accepted, extended by issue #78. The tool
+//	  response envelope began receipt-only: {"receipt": {blocks_played,
+//	  total_duration_ms, out_dir}}. Issue #78 (ADR #77 Channel 1) adds an
+//	  additive `transcript` array sibling to `receipt`: the after-the-fact,
+//	  block-granularity spoken transcript (verbatim text + level + status +
+//	  per-block duration + refusal reason for refused blocks). The transcript
+//	  reaches the client through two channels (ADR #77 D3): structuredContent
+//	  (auto-populated from the typed return) and a duplicate serialized-JSON
+//	  TextContent block (survives the CLI's one-line collapse). `receipt`
+//	  fields are unchanged; no plan.json schema field is added (the transcript
+//	  is a receipt-side projection of already-computed plan data).
 //	Decision (v2) — convention: accepted. Pipeline errors are classified
 //	  caller-error (fs.ErrNotExist, fs.ErrPermission, validation, text-arg,
 //	  sink=persistent) vs internal-error (renderer/sink failure). The
@@ -57,6 +64,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -185,10 +193,37 @@ type speakReceipt struct {
 	OutDir          string `json:"out_dir"            jsonschema:"renderer's per-call temp dir (deleted on return)"`
 }
 
-// speakResponse — wraps speakReceipt under the `receipt` key, leaving room
-// for additive future fields (e.g. `plan`) under the schema_version rule.
+// transcriptEntry — one block's row in the after-the-fact spoken transcript
+// (issue #78, ADR #77 Channel 1). Projects already-computed plan data: the
+// verbatim spoken words, per-block level + status, planned per-block duration,
+// and — for refused/degraded blocks — the honesty-rule refusal reason+message.
+//
+// Block-granularity only (CLAUDE.md invariant; ADR #77 D5): no per-word, per-
+// segment, or per-char offsets. RefusalReason / RefusalMessage are omitempty —
+// absent on voiced/degraded-without-refusal blocks. DurationMs is the planned
+// duration (EndMs - StartMs) from the block's timeline row, 0 when the block
+// had no row (e.g. refused / not rendered).
+type transcriptEntry struct {
+	BlockID        string `json:"block_id"                 jsonschema:"stable block id from the narration plan"`
+	Order          int    `json:"order"                    jsonschema:"block position in the document (plan order)"`
+	Level          int    `json:"level"                    jsonschema:"leveling depth the block was voiced at: 1 (gist) | 2 (summary) | 3 (detail)"`
+	Status         string `json:"status"                   jsonschema:"block outcome: voiced | degraded | refused"`
+	SpokenText     string `json:"spoken_text"              jsonschema:"verbatim words spoken for this block (single-space join of segment text); empty for a refused block that only spoke a notice"`
+	DurationMs     int    `json:"duration_ms"              jsonschema:"planned per-block duration in milliseconds (block-granularity only); 0 when the block had no timeline row"`
+	RefusalReason  string `json:"refusal_reason,omitempty"  jsonschema:"why the block was refused (honesty rule); present only on refused blocks"`
+	RefusalMessage string `json:"refusal_message,omitempty" jsonschema:"the short spoken refusal notice; present only on refused blocks"`
+}
+
+// speakResponse — wraps speakReceipt under the `receipt` key and the per-block
+// spoken transcript under `transcript` (sibling, additive — issue #78). The
+// `receipt` shape is untouched (counter-metric). Additive future fields stay
+// admissible under the schema_version rule.
 type speakResponse struct {
 	Receipt speakReceipt `json:"receipt"`
+	// Transcript is the after-the-fact, block-granularity spoken transcript,
+	// in plan order. Present on the success path only (built after Narrate
+	// returns a nil error); an error return carries no transcript.
+	Transcript []transcriptEntry `json:"transcript" jsonschema:"after-the-fact per-block spoken transcript in plan order: verbatim text, level, status, duration, and refusal reason for refused blocks"`
 }
 
 // runDeps — IO + behavior seams injected by tests. Production wires
@@ -310,11 +345,19 @@ func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.S
 		Voice: genderToVoice[args.Gender],
 	})
 	if err != nil {
+		// Error path: propagate unchanged, attach NO transcript. The
+		// transcript is success-path-only (issue #78) — it is built solely
+		// from a plan that rendered end-to-end. Errors stop the pipeline;
+		// refusals are data and arrive on the success path below.
 		return speakResponse{}, classifyPipelineErr(err)
 	}
 
+	// Success path only: project the rendered plan's already-computed roster
+	// into the after-the-fact transcript. Refusals are data here, not errors.
+	// TODO(#86): cap transcript size on very large speak responses — unbounded today
 	return speakResponse{
-		Receipt: receiptFromSink(receipt.SinkReceipt, outDir),
+		Receipt:    receiptFromSink(receipt.SinkReceipt, outDir),
+		Transcript: transcriptFromResult(receipt),
 	}, nil
 }
 
@@ -382,6 +425,33 @@ func receiptFromSink(r sink.SinkReceipt, outDir string) speakReceipt {
 	}
 }
 
+// transcriptFromResult projects the pipeline's per-block roster
+// (NarrateResult.BlockSummaries — populated in plan order, with SpokenText /
+// RefusalReason / RefusalMessage / DurationMs already filled by the pipeline)
+// into the MCP transcript wire shape. Sibling to receiptFromSink and
+// independently testable. Refusal fields are carried only when present
+// (refusal-is-data); voiced/degraded blocks leave them empty so the omitempty
+// JSON tags drop them. Caller invokes this on the success path only.
+func transcriptFromResult(r pipeline.NarrateResult) []transcriptEntry {
+	if len(r.BlockSummaries) == 0 {
+		return nil
+	}
+	out := make([]transcriptEntry, 0, len(r.BlockSummaries))
+	for _, b := range r.BlockSummaries {
+		out = append(out, transcriptEntry{
+			BlockID:        b.ID,
+			Order:          b.Order,
+			Level:          int(b.Level),
+			Status:         string(b.Status),
+			SpokenText:     b.SpokenText,
+			DurationMs:     b.DurationMs,
+			RefusalReason:  string(b.RefusalReason),
+			RefusalMessage: b.RefusalMessage,
+		})
+	}
+	return out
+}
+
 // classifyPipelineErr — caller-error vs internal-error split, per
 // Decision v2. The split rule: anything the caller could fix by changing
 // the request maps to caller-error (and the wire message begins
@@ -441,6 +511,24 @@ func classifyPipelineErr(err error) error {
 // pipeline.New knowing about MCP sessions. Threading happens before
 // deps.run so the runSpeak → newPipeline → Narrate path sees the
 // SamplingClient on the ctx.Value chain.
+//
+// Issue #78 (ADR #77 D3) — dual-channel result. On the success path the
+// handler returns the same speakResponse (receipt + transcript) through TWO
+// independent SDK mechanisms:
+//
+//   - StructuredContent — auto-populated by the go-sdk from the typed `Out`
+//     return value (`resp`). We do NOT set it ourselves; returning the typed
+//     resp is enough. This is the machine-readable channel.
+//   - Content — set MANUALLY to a single TextContent carrying the serialized
+//     speakResponse JSON. Because we now return a non-nil *CallToolResult with
+//     Content already set, the SDK's auto-population of Content from `Out` is
+//     bypassed (it only fires when Content is unset). This duplicate blob
+//     survives the Claude Code CLI's one-line tool-result collapse and is
+//     readable on ctrl+o.
+//
+// Both channels carry the FULL speakResponse so the human-readable blob and the
+// structured value never diverge in substance. Attached on the success path
+// only — an error return still propagates with a nil result and no transcript.
 func speakHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, speakArgs) (*mcp.CallToolResult, speakResponse, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args speakArgs) (*mcp.CallToolResult, speakResponse, error) {
 		if args.Intelligence == "mcpsampling" && req != nil && req.Session != nil {
@@ -448,9 +536,29 @@ func speakHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, spea
 		}
 		resp, err := deps.run(ctx, args)
 		if err != nil {
+			// Error path: nil result, zero resp, error propagated. No
+			// transcript attached (success-path-only, issue #78). The SDK
+			// surfaces the error as IsError=true content.
 			return nil, speakResponse{}, err
 		}
-		return nil, resp, nil
+
+		// Success path: build the duplicate serialized-JSON Content blob
+		// (Channel-1 D3). Marshal the FULL speakResponse so the TextContent and
+		// the auto-populated StructuredContent stay substance-equal.
+		blob, mErr := json.Marshal(resp)
+		if mErr != nil {
+			// Marshaling our own well-typed response should never fail; if it
+			// does it is an internal fault, surfaced as a tool error.
+			return nil, speakResponse{}, fmt.Errorf("internal_error: marshal speak response: %w", mErr)
+		}
+		result := &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(blob)},
+			},
+		}
+		// Return the non-nil result (manual Content) AND the typed resp as Out
+		// (StructuredContent auto-populated from it). Two channels, one source.
+		return result, resp, nil
 	}
 }
 
@@ -488,7 +596,7 @@ func newServer(deps runDeps) *mcp.Server {
 	// it in the tool list, and mirrored in the README.
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "speak",
-		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a SinkReceipt with planned duration and the temp dir the renderer used. Refusals stay inside the plan (honesty rule) — the call still succeeds.",
+		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a `receipt` (planned duration + temp dir the renderer used) AND an after-the-fact per-block `transcript`: the verbatim spoken text, level, status, per-block duration, and — for refused blocks — the refusal reason. The transcript is block-granularity only (no word-level timing) and is present both in structuredContent and as a duplicate serialized-JSON text block (expand with ctrl+o). Refusals stay inside the plan (honesty rule) — the call still succeeds with refused blocks listed in the transcript.",
 	}, speakHandler(deps))
 	return server
 }
