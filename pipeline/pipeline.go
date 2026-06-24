@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
@@ -45,13 +46,34 @@ var ErrBlockNotFound = errors.New("pipeline: block not found")
 //
 // StartLine / EndLine come from the block's SourceMap when SourceKindLineRange
 // applies; zero when the source map has no line range (e.g. screenshot OCR).
+//
+// SpokenText is the verbatim words this block speaks — the single-space join
+// of every non-empty Segment.Text in segment order (pause / empty segments
+// contribute nothing). It mirrors what the renderer voices, so a listener can
+// read back what was said. Populated by summarizeBlocks (pre-render; pure).
+//
+// RefusalReason / RefusalMessage are non-empty only when the block was refused
+// (Block.Refusal != nil). They carry the honesty-rule refusal as data onto the
+// roster so a consumer can surface "skipped X because Y" without re-walking the
+// plan. Empty on voiced / degraded blocks.
+//
+// DurationMs is the per-block planned duration (EndMs - StartMs from the
+// matching BlockTiming, by BlockID). It is NOT set by summarizeBlocks — that
+// pass runs before the renderer produces a Timeline. It is filled in a separate
+// post-render pass (joinTimelineDurations) inside Narrate, after Render returns.
+// Blocks with no timing row (e.g. refused / not rendered) stay 0.
 type BlockSummary struct {
-	ID        string
-	Class     plan.Class
-	Level     plan.Level
-	Status    plan.Status
-	StartLine int
-	EndLine   int
+	ID             string
+	Order          int
+	Class          plan.Class
+	Level          plan.Level
+	Status         plan.Status
+	StartLine      int
+	EndLine        int
+	SpokenText     string
+	RefusalReason  plan.RefusalReason
+	RefusalMessage string
+	DurationMs     int
 }
 
 // BlockHashMismatch is non-nil on NarrateResult only when
@@ -293,6 +315,11 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 			return NarrateResult{}, fmt.Errorf("pipeline: renderer: %w", err)
 		}
 
+		// Post-render projection (BLOCKING-2): the timeline only exists now,
+		// after Render. Join per-block durations onto the roster summarizeBlocks
+		// produced before render. Refused / unrendered blocks keep DurationMs 0.
+		joinTimelineDurations(summaries, result.Timeline)
+
 		receipt, err := p.Sink.Consume(ctx, narrationPlan, result)
 		out := NarrateResult{
 			SinkReceipt:         receipt,
@@ -354,6 +381,11 @@ func (p *Pipeline) Narrate(ctx context.Context, ref plan.SourceRef, req NarrateR
 		Timeline: plan.Timeline{Blocks: []plan.BlockTiming{br.Timing}},
 	}
 
+	// Post-render projection (BLOCKING-2): join the single re-rendered block's
+	// duration onto the full roster. Only the targeted block has a timing row,
+	// so the rest stay 0 — the re-render does not re-time the other blocks.
+	joinTimelineDurations(out.BlockSummaries, subResult.Timeline)
+
 	receipt, err := p.Sink.Consume(ctx, subPlan, subResult)
 	out.SinkReceipt = receipt
 	if err != nil {
@@ -382,7 +414,11 @@ func filterDiagnosticsForBlock(in []plan.Diagnostic, blockID string) []plan.Diag
 }
 
 // summarizeBlocks builds the per-block roster from the latest plan. Pure;
-// safe to call before or after rendering.
+// safe to call before or after rendering. Enumerates TOP-LEVEL blocks only —
+// it does NOT recurse into Block.SubBlocks (the transcript projection mirrors
+// this exactly). DurationMs is left zero here; it is a post-render concern
+// filled by joinTimelineDurations (the timeline does not exist yet at the call
+// site, ~pipeline Narrate before Render).
 func summarizeBlocks(blocks []plan.Block) []BlockSummary {
 	if len(blocks) == 0 {
 		return nil
@@ -390,13 +426,70 @@ func summarizeBlocks(blocks []plan.Block) []BlockSummary {
 	out := make([]BlockSummary, 0, len(blocks))
 	for _, b := range blocks {
 		out = append(out, BlockSummary{
-			ID:        b.ID,
-			Class:     b.Class,
-			Level:     b.Level,
-			Status:    b.Status,
-			StartLine: b.SourceMap.StartLine,
-			EndLine:   b.SourceMap.EndLine,
+			ID:             b.ID,
+			Order:          b.Order,
+			Class:          b.Class,
+			Level:          b.Level,
+			Status:         b.Status,
+			StartLine:      b.SourceMap.StartLine,
+			EndLine:        b.SourceMap.EndLine,
+			SpokenText:     spokenTextOf(b),
+			RefusalReason:  refusalReasonOf(b),
+			RefusalMessage: refusalMessageOf(b),
 		})
 	}
 	return out
+}
+
+// spokenTextOf joins a block's spoken words: the single-space join of every
+// non-empty Segment.Text in segment order. Pause / empty-text segments
+// contribute nothing (they have no words). Mirrors what the renderer voices.
+func spokenTextOf(b plan.Block) string {
+	parts := make([]string, 0, len(b.Segments))
+	for _, s := range b.Segments {
+		if s.Text == "" {
+			continue
+		}
+		parts = append(parts, s.Text)
+	}
+	return strings.Join(parts, " ")
+}
+
+// refusalReasonOf returns the block's refusal reason, empty unless the block
+// carries a Refusal (Status == StatusRefused per the schema invariant).
+func refusalReasonOf(b plan.Block) plan.RefusalReason {
+	if b.Refusal == nil {
+		return ""
+	}
+	return b.Refusal.Reason
+}
+
+// refusalMessageOf returns the block's refusal message, empty unless the block
+// carries a Refusal.
+func refusalMessageOf(b plan.Block) string {
+	if b.Refusal == nil {
+		return ""
+	}
+	return b.Refusal.Message
+}
+
+// joinTimelineDurations is the SEPARATE post-render projection pass (NOT part
+// of summarizeBlocks, which runs before a Timeline exists). It walks the
+// already-built roster and sets each BlockSummary.DurationMs to EndMs - StartMs
+// from the matching BlockTiming, keyed by BlockID. Blocks with no timing row
+// (e.g. refused / not rendered) keep DurationMs == 0. Mutates summaries in
+// place; safe on a nil/empty timeline (every duration stays 0).
+func joinTimelineDurations(summaries []BlockSummary, tl plan.Timeline) {
+	if len(summaries) == 0 || len(tl.Blocks) == 0 {
+		return
+	}
+	durByID := make(map[string]int, len(tl.Blocks))
+	for _, bt := range tl.Blocks {
+		durByID[bt.BlockID] = bt.EndMs - bt.StartMs
+	}
+	for i := range summaries {
+		if d, ok := durByID[summaries[i].ID]; ok {
+			summaries[i].DurationMs = d
+		}
+	}
 }

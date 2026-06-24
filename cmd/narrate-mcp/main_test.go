@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -235,7 +236,7 @@ func TestSpeakHandler_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("want nil err, got %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("want %+v, got %+v", want, got)
 	}
 }
@@ -877,7 +878,7 @@ func TestRunSpeak_RenderError_MapsToToolErrorAndCleansTempDir(t *testing.T) {
 		t.Errorf("handler must not return a CallToolResult alongside the error, got %+v", res)
 	}
 	// No partial-success receipt may leak on the error path.
-	if resp != (speakResponse{}) {
+	if !reflect.DeepEqual(resp, speakResponse{}) {
 		t.Errorf("error path must return the zero speakResponse, got %+v", resp)
 	}
 	// Single classification through errclass: internal_error prefix, and

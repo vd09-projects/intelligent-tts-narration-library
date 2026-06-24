@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "plan_id": "01J0ABCDXYZ0000000000000ZZ",
+  "created_at": "2026-06-25T10:00:00Z",
+  "source": {
+    "kind": "mcp_text",
+    "uri": "mcp://inline/deadbeef",
+    "content_hash": "sha256:deadbeef",
+    "adapter": "mcptext@0.1"
+  },
+  "defaults": {
+    "level": 2,
+    "locale": "en"
+  },
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 1,
+      "class": "config",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 3,
+        "raw_excerpt": "spec:\n  replicas: 3"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "A Kubernetes Deployment."
+        },
+        {
+          "id": "s2",
+          "kind": "pause",
+          "pause_ms": 200
+        },
+        {
+          "id": "s3",
+          "kind": "speech",
+          "text": "Replicas set to three."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true
+      }
+    },
+    {
+      "id": "b002",
+      "order": 2,
+      "class": "prose",
+      "level": 2,
+      "status": "degraded",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 5,
+        "end_line": 7,
+        "raw_excerpt": "This service handles auth."
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "This service handles authentication for the cluster."
+        }
+      ],
+      "provenance": {
+        "voiced_by": "verbatim",
+        "deterministic": true,
+        "level_asked": 2
+      }
+    },
+    {
+      "id": "b003",
+      "order": 3,
+      "class": "unknown",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 9,
+        "end_line": 9,
+        "raw_excerpt": "![throughput chart](bench.png)"
+      },
+      "segments": [
+        {
+          "id": "s1",
+          "kind": "speech",
+          "text": "There's a chart here that isn't voiced — check the source, line 9."
+        }
+      ],
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "There's a chart here that isn't voiced — check the source, line 9.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 9,
+          "end_line": 9
+        }
+      },
+      "provenance": {
+        "voiced_by": "planner",
+        "deterministic": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "plan_id": "01J0ABCDXYZ0000000000000ZZ",
+  "format": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "encoding": "wav"
+  },
+  "blocks": [
+    {
+      "block_id": "b001",
+      "start_ms": 0,
+      "end_ms": 1500,
+      "audio_ref": "b001.wav"
+    },
+    {
+      "block_id": "b002",
+      "start_ms": 1500,
+      "end_ms": 4200,
+      "audio_ref": "b002.wav"
+    }
+  ]
+}
