@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-25-listen-transport-keypress-loop-not-tui
+    title: "LISTEN-path terminal transport: minimal raw-mode keypress loop, not a full-screen TUI; honest \"Stop / Replay block\", not \"Pause\""
+    date: 2026-06-25
+    status: accepted
+    category: architecture
+    tags: [listen-path, cmd-narrate, transport-ui, keypress-loop, tui, bubbletea, tview, tcell, x-term, raw-mode, afplay, honesty-rule, sigstop-sigcont, pseudo-pause, phase-one-weight-discipline, issue-79, issue-77]
+    path: architecture/2026-06-25-listen-transport-keypress-loop-not-tui.md
+    summary: "Issue #79 (rune analysis — a design, not code) designs the LISTEN-path terminal playback transport for the standalone cmd/narrate CONTROLLER (owns its tty, drives serial afplay, holds the temp dir) — NOT the ADR #80 Channel-2 observer, and cmd/narrate-mcp gains no cross-call state/daemon. Three coupled picks. FORK A (form): minimal raw-mode KEYPRESS LOOP (stdlib + golang.org/x/term, ~1 new module), NOT a full-screen TUI — phase-one weight discipline is the deciding axis since all three candidates are pure-Go/no-CGo; rejected tview+tcell (~8 build modules) and charm.land/bubbletea/v2 (~16 build / 21 full — heaviest, and its v2 import path churned off github to charm.land). Reconsider a TUI only on search/filter/scrollback. FORK B (input): raw-mode SINGLE-KEY via x/term (n/b/space/g/q), NOT line-prompt — the raw-mode restore hazard collapses into the same SIGINT handler temp-dir cleanup already needs. HONESTY CALL: ship 'Stop / Replay block' (stop afplay + replay-block-from-start), NOT a bare 'Pause' — afplay has no runtime pause/seek/position IPC (all start-time params), so implying mid-block resume violates the CLAUDE.md honesty rule. SIGSTOP/SIGCONT is a genuine OS mid-block pause on Darwin and could earn a true 'Pause' — GATED on a by-ear test that the SIGCONT resume seam (CoreAudio buffer state) is audibly clean (single open item). Resilience (probe-verified): one SIGINT/SIGTERM handler does term.Restore + Kill&Wait the afplay child (Process.Kill is async; reap before next afplay so no overlap) + os.RemoveAll the once-per-session temp dir (idempotent); Go's default signal disposition skips deferred cleanup so the handler is mandatory; prefer exec.Cmd.WaitDelay over a hand-rolled grace. Contract binds real plan/ names: Block.ID, Block.Segments[].Text (plural), Block.Level, Block.Status (voiced/degraded/refused), BlockTiming{BlockID,StartMs,EndMs,AudioRef}; StartMs/EndMs are display-only; refused/zero-duration blocks shown in transcript but skipped for navigation; navigation plays whole segment files, never sub-block seeks. Evidence-graded source: research/listen-transport-ui-issue-79/report.md (v1); deliverable: docs/design/listen-transport-ui.md."
   - id: 2026-06-24-playback-observability-control-model-issue-77
     title: "ADR: Playback observability & control model (issue #77)"
     date: 2026-06-24

@@ -278,3 +278,17 @@ Added verifier sources (re-research 2026-06-24):
   window as a platform-appropriate option.
 - If streaming / real-time narration is added (phase-two non-goal), transport control
   architecture needs a full re-analysis.
+
+## Addendum — 2026-06-25 (from the #79 design session)
+
+> **bubbletea v2 dependency-weight + import-path correction.** This ADR's same-terminal-TUI
+> rejection (see *Rejected options*) and the Revisit triggers reference a pure-Go TUI
+> (bubbletea/tview/tcell) as the heavier alternative. The #79 transport-UI research
+> (`research/listen-transport-ui-issue-79/report.md`, claim 1) surfaced two corrections for
+> any future TUI reconsideration: (1) bubbletea **v2's import path moved** — it no longer
+> resolves at `github.com/charmbracelet/bubbletea/v2` (that path fails with *"module declares
+> its path as: charm.land/bubbletea/v2"*); the real v2 module path is **`charm.land/bubbletea/v2`**.
+> (2) Its dependency weight is **~16 build-relevant modules / 21 in `go list -m all`** — the
+> heaviest of the candidates (tview+tcell ≈ 8; a stdlib + `golang.org/x/term` keypress loop ≈ 1).
+> This does not change any decision in this ADR; it only corrects the figures so a later TUI
+> reconsideration starts from the right path and weight.
