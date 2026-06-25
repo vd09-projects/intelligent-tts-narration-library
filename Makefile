@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -24,6 +24,7 @@ help:
 	@echo "  run-detail             — narrate \$$SAMPLE at level 3, male voice"
 	@echo "  run-male               — narrate \$$SAMPLE at level 1, male voice"
 	@echo "  run-persistent         — narrate \$$SAMPLE via persistent sink → \$$OUT"
+	@echo "  run-listen             — interactive raw-mode transport over \$$SAMPLE (n/b/space/g/q; needs a tty + afplay)"
 	@echo "  run-mcp                — start the MCP stdio server (Ctrl-C to stop)"
 	@echo "  run-server             — start the localhost HTTP escalate server on \$$ADDR (Ctrl-C to stop)"
 	@echo "  sanity                 — go build + check scripts/kokoro present"
@@ -85,6 +86,12 @@ run-persistent:
 	@mkdir -p $(OUT)
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(OUT)
 	@echo "Wrote audio.wav + plan.json + manifest.json to $(OUT)"
+
+# Interactive: renders the whole doc then hands you single-key block transport
+# (n next, b back, space Stop/Replay block, g go-to, q quit). Requires an
+# interactive terminal and afplay (macOS, phase one); refuses on a piped stdin.
+run-listen:
+	go run ./cmd/narrate --file $(SAMPLE) --listen
 
 run-mcp:
 	go run ./cmd/narrate-mcp
