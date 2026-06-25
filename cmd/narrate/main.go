@@ -106,6 +106,13 @@ type flagSet struct {
 	// existing nil-adapter degraded-or-refused path; "anthropic" wires
 	// the direct-API adapter from intelligence/anthropic. Per issue #15.
 	Intelligence string
+	// Listen routes the run into the raw-mode keypress transport controller
+	// (issue #83): render the whole plan, then drive afplay one block at a
+	// time in response to single keys (n/b/space/g/q). Listen mode is
+	// inherently ephemeral and interactive — validate() rejects it combined
+	// with --block (single-block re-render) or --sink=persistent (durable
+	// write). Per issue #83.
+	Listen bool
 }
 
 // The minimal pipeline surface runNarrate needs is pipeline.Narrator
@@ -286,6 +293,7 @@ func newRootCmd(deps runDeps) *cobra.Command {
 	cmd.Flags().StringVar(&args.ExpectedContentHash, "expected-content-hash", "", "warn on stderr if the document content_hash differs from this value (only meaningful with --block)")
 	cmd.Flags().StringVar(&args.Out, "out", "", "output directory (required when --sink=persistent; rejected with --sink=ephemeral)")
 	cmd.Flags().StringVar(&args.Intelligence, "intelligence", "none", "intelligence adapter: none | anthropic (anthropic requires "+anthropicAPIKeyEnv+")")
+	cmd.Flags().BoolVar(&args.Listen, "listen", false, "interactive raw-mode transport: render the whole doc, then step blocks with single keys (n next, b back, space Stop/Replay block, g go-to, q quit). Ephemeral only; rejected with --block or --sink=persistent")
 
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
@@ -355,6 +363,19 @@ func (a flagSet) validate() error {
 	if a.Intelligence == "anthropic" && os.Getenv(anthropicAPIKeyEnv) == "" {
 		return fmt.Errorf("--intelligence=anthropic requires %s to be set", anthropicAPIKeyEnv)
 	}
+	// Issue #83 — wire --listen mutual exclusions:
+	//   --listen is an interactive, ephemeral, whole-document transport. It is
+	//   incompatible with --block (a single-block re-render — there is nothing
+	//   to step through) and with --sink=persistent (a durable write — the
+	//   listen path is decoupled from the durable sink by design). Both are
+	//   caller-correctable input, so they are flag-validation errors (exit 2),
+	//   same precedent as the other --sink/--block guards above.
+	if a.Listen && a.Block != "" {
+		return fmt.Errorf("--listen cannot be combined with --block (listen steps the whole document; --block re-renders one block)")
+	}
+	if a.Listen && a.Sink == "persistent" {
+		return fmt.Errorf("--listen cannot be combined with --sink=persistent (listen is ephemeral and decoupled from the durable sink)")
+	}
 	return nil
 }
 
@@ -390,8 +411,25 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 	defer func() {
 		// Best-effort cleanup; a leftover dir is annoying, not fatal, so
 		// we do not propagate the error.
+		//
+		// Issue #83 — the listen path transfers temp-dir removal ownership to
+		// the listen loop (which removes it exactly once in its cleanup, after
+		// reaping the afplay child). Suppress this defer for that path so the
+		// dir is not double-owned.
+		if args.Listen {
+			return
+		}
 		_ = os.RemoveAll(outDir)
 	}()
+
+	// Issue #83 — listen-path branch. Renders the whole plan into a capturing
+	// sink (decoupled from the durable sink), installs the single SIGINT/SIGTERM
+	// handler, enters raw mode, and drives the keypress transport loop. It owns
+	// the temp-dir removal (suppressed above). validate() has already rejected
+	// --listen combined with --block or --sink=persistent.
+	if args.Listen {
+		return runListenMode(ctx, args, outDir, stdout, stderr)
+	}
 
 	// Build the pipeline. F2 fix: on a --block invocation, the document
 	// default level must stay at L1 so the planner does NOT re-plan every
