@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-26-afplay-sigstop-sigcont-no-true-pause
+    title: "afplay SIGSTOP/SIGCONT cannot deliver a true Pause; honest Stop/Replay block stands"
+    date: 2026-06-26
+    status: accepted
+    category: architecture
+    tags: [listen-path, cmd-narrate, afplay, sigstop, sigcont, pseudo-pause, true-pause, coreaudiod, audioqueue, honesty-rule, by-ear-verify, issue-84, issue-79, issue-83]
+    path: architecture/2026-06-26-afplay-sigstop-sigcont-no-true-pause.md
+    summary: "Issue #84 by-ear /verify spike resolves the #79 revisit trigger (would the afplay SIGCONT resume seam be clean enough to promote Stop/Replay to a true Pause?). Answer NEGATIVE: SIGSTOP on the afplay PID does not pause audible playback at all. afplay front-loads the whole block PCM into the CoreAudio AudioQueue; coreaudiod (separate, un-frozen daemon) drains it to completion while the afplay process sits frozen (state T). Measured: freezing afplay 6-8s added only ~0.2-0.4s of wall-clock over baseline at 10s AND 60s clip lengths (a real pause would add ~the full freeze window). SIGSTOP freezes the wrong process. DECISION: keep honest Stop/Replay (#83); do NOT file the promote-to-Pause follow-up (falsified); a true Pause needs the deferred sherpa-onnx-go CGo renderer's AudioQueuePause, not OS signals. Probes + report under research/afplay-sigcont-pause-seam-84/."
   - id: 2026-06-26-channel2-mechanism-jsonl-tail-over-mcp-progress
     title: "Channel-2 live observer mechanism: append-only JSONL + tail -f, not MCP notifications/progress"
     date: 2026-06-26
