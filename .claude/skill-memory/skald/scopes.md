@@ -401,3 +401,54 @@ scopes:
       decoupling standing order. Separate impl scope (not the architecture scope)
       to keep planner-architecture.md and the build artifact cleanly split.
       Slug pre-supplied via --scope; issue-numbered to mark it as the impl of #73.
+  - slug: mcp-speak-transcript-78
+    title: surface the spoken transcript from the MCP speak path (observability) — issue #78
+    created: 2026-06-24
+    reasoning: |
+      Plan cycle for GitHub issue #78 (surface the verbatim spoken transcript +
+      per-block level + refused/degraded status from the MCP speak path —
+      cmd/narrate-mcp -> ephemeral sink -> afplay — which today returns a
+      receipt-only envelope {blocks_played, total_duration_ms, out_dir} and
+      discards the spoken text already computed in the rendered plan). The
+      observability half of the playback gap; the design is already decided by
+      ADR #77 (Playback observability & control model) — this is the scoped
+      Channel-1 implementation ticket: an after-the-fact MCP receipt transcript
+      in structuredContent + a duplicate serialized-JSON TextContent block (D3),
+      block-granularity only (D5), no live progress (v1.5.0 calls synchronous).
+      mcp-speak- prefix marks the MCP speak surface under change; transcript
+      qualifier captures the crux; issue-numbered suffix continues the
+      convention. Slug pre-supplied + pre-approved via --scope in the
+      orchestration prompt. Planned via mimir task depth with the
+      public-api-change overlay (the MCP speak tool result shape + pipeline
+      NarrateResult/BlockSummary Go API are real consumer contracts; change is
+      additive/minor). The mimir observability overlay was correctly NOT
+      activated (it is in never_overlays — a production-telemetry overlay,
+      irrelevant to "expose already-computed plan data on a receipt", and
+      CLAUDE.md bars monitoring). Plan persisted draft (awaiting user approval
+      before sindri consumes). Issue-numbered naming continues the convention.
+  - slug: listen-transport-controller-83
+    title: Listen-path keypress-loop transport controller for cmd/narrate (#83)
+    created: 2026-06-25
+    reasoning: |
+      Plan cycle for GitHub issue #83 (cmd/narrate — add a raw-mode single-key
+      transport loop so a listener can step next/back, replay, jump, and quit a
+      block-by-block narration, with one SIGINT/SIGTERM handler owning the
+      cooked-tty restore + afplay reap + once-per-session temp-dir removal).
+      Lives entirely in the cmd/narrate composition root; planner/ + plan/ stay
+      I/O-free. Design pre-accepted (decision 2026-06-25-listen-transport-
+      keypress-loop-not-tui — keypress loop, not a full TUI). 7 ordered steps:
+      1–3 parallel foundations (play seam mirroring sink/ephemeral
+      playWithAfplay with exec.Cmd.WaitDelay, navigable-block index, raw-mode
+      sync.Once guard), 4–6 integrate (keypress state machine, single signal
+      handler, --listen cobra wire + mutually-exclusive validate vs
+      --block/--sink=persistent), 7 Makefile/manual harness. Planned via mimir
+      task depth with the concurrency overlay (shared afplay-child handle, tty
+      raw/cooked state, single-owner temp-dir RemoveAll — at-most-one-child
+      reap-before-spawn + idempotent restore from deferred AND handler).
+      Honesty rule literal: controls labeled "Stop / Replay block", never
+      "Pause". Listen path kept decoupled from the durable sink. listen-
+      transport- prefix marks the new cmd/narrate transport surface; controller
+      qualifier captures the crux; issue-numbered suffix continues the
+      convention. Slug pre-supplied + pre-approved via --scope in the
+      orchestration prompt. Plan pre-produced externally by mimir, persisted
+      draft (awaiting user approval before sindri consumes).
