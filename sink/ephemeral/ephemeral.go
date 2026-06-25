@@ -66,6 +66,51 @@ type Sink struct {
 
 	// PerBlockTimeout caps a single afplay invocation. Zero → 60 s.
 	PerBlockTimeout time.Duration
+
+	// observer is the optional per-block emit seam (issue #81, ADR #77 D5
+	// Channel 2). Nil = off (no-op). When set, Consume calls it once per
+	// timeline block, in plan order, BEFORE that block's blocking play()
+	// (and once with Playing:false for an empty-AudioRef block) — so a
+	// decoupled user-launched observer can show live, during-playback
+	// progress the after-the-fact Channel-1 receipt structurally cannot.
+	// Set via WithBlockObserver.
+	observer BlockObserver
+}
+
+// BlockObserver is the shape of the per-block progress emit seam (issue
+// #81). Named (mirroring the playFunc idiom) so the Option signature reads
+// clearly and nil-checks have a name. Implementations must be cheap and
+// non-blocking: Consume calls it inline on the playback path, fire-and-
+// forget — it never returns an error and never alters control flow.
+type BlockObserver func(BlockProgress)
+
+// BlockProgress is the per-block event the sink hands a BlockObserver. It
+// carries ONLY what Consume holds in its loop: the current BlockTiming, the
+// block's Level + Status (read from the plan.NarrationPlan Consume already
+// receives — correlated 1:1 by BlockID, since render emits one BlockTiming
+// per top-level Block in plan order; see render.go), the 1-based Order and
+// Total, and Playing.
+//
+// Playing means strictly "this block has rendered audio being sent to
+// afplay" = Timing.AudioRef != "". It is INDEPENDENT of Status and derived
+// only from the timeline, so it reports what the renderer actually produced:
+//   - voiced / degraded block → has a WAV → Playing:true.
+//   - refused block → the renderer voiced its Refusal.Message into a WAV
+//     (see render/sherpa spokenTextFor), so a refused block normally
+//     Playing:true too — Status (refused) carries the honesty signal, not
+//     Playing.
+//   - all-pause / empty-voiced block → no WAV (AudioRef "") → Playing:false.
+//
+// Carries NO source or spoken text BY DESIGN (issue #81 / CLAUDE.md
+// "local-only means secrets get read aloud") — only structural metadata, so
+// the Channel-2 side channel never widens the secret-leak surface.
+type BlockProgress struct {
+	Timing  plan.BlockTiming
+	Level   plan.Level
+	Status  plan.Status
+	Order   int // 1-based position in the timeline.
+	Total   int // len(timeline.Blocks).
+	Playing bool
 }
 
 // Compile-time assertion: Sink implements sink.OutputSink.
@@ -84,6 +129,16 @@ func WithAfplayPath(path string) Option {
 // negative values are treated as "use default".
 func WithPerBlockTimeout(d time.Duration) Option {
 	return func(s *Sink) { s.PerBlockTimeout = d }
+}
+
+// WithBlockObserver installs the per-block progress emit seam (issue #81,
+// ADR #77 D5 Channel 2). A nil observer leaves the feature off (the Consume
+// path is byte-for-byte unchanged), mirroring the play-seam idiom. The
+// concrete observer — JSONL marshaling, scratch-file lifecycle — lives at
+// the composition root (cmd/narrate-mcp), not here: the sink stays import-
+// clean (plan + render + sink + stdlib) and knows nothing of Channel 2.
+func WithBlockObserver(o BlockObserver) Option {
+	return func(s *Sink) { s.observer = o }
 }
 
 // New constructs a Sink with the supplied options applied over the
@@ -124,7 +179,7 @@ var play playFunc = playWithAfplay
 // On afplay error the receipt reports state up to (and not including) the
 // failed block, and the wrapped error names the offending block id. On
 // ctx cancel the receipt similarly reports the partial state.
-func (s *Sink) Consume(ctx context.Context, _ plan.NarrationPlan, res render.RenderResult) (sink.SinkReceipt, error) {
+func (s *Sink) Consume(ctx context.Context, p plan.NarrationPlan, res render.RenderResult) (sink.SinkReceipt, error) {
 	binary := s.AfplayPath
 	if binary == "" {
 		binary = defaultAfplayPath
@@ -134,8 +189,23 @@ func (s *Sink) Consume(ctx context.Context, _ plan.NarrationPlan, res render.Ren
 		perBlock = DefaultPerBlockTimeout
 	}
 
+	// Level/Status lookup for the observer seam — built only when an
+	// observer is wired (off-path stays allocation-free and byte-identical).
+	// Keyed by Block.ID, which BlockTiming.BlockID matches 1:1 in plan order
+	// (render emits one timing row per top-level Block; see render.go). The
+	// plan param was historically discarded here; the observer is the first
+	// consumer that needs its Level/Status.
+	var meta map[string]plan.Block
+	if s.observer != nil {
+		meta = make(map[string]plan.Block, len(p.Blocks))
+		for _, b := range p.Blocks {
+			meta[b.ID] = b
+		}
+	}
+	total := len(res.Timeline.Blocks)
+
 	var receipt sink.SinkReceipt
-	for _, blk := range res.Timeline.Blocks {
+	for i, blk := range res.Timeline.Blocks {
 		// Short-circuit on already-cancelled context before doing any
 		// per-block work; honors the "ctx cancel propagates" invariant
 		// for the edge case where the caller cancelled between blocks.
@@ -144,6 +214,23 @@ func (s *Sink) Consume(ctx context.Context, _ plan.NarrationPlan, res render.Ren
 		}
 
 		planned := int64(blk.EndMs - blk.StartMs)
+
+		// Live Channel-2 emit (issue #81): once per block, in plan order,
+		// BEFORE the blocking play()/skip below — fire-and-forget, nil-safe,
+		// never alters the receipt or control flow. A missing meta entry
+		// (BlockTiming with no matching plan Block — should not happen given
+		// the 1:1 invariant) emits zero Level/Status rather than fabricating.
+		if s.observer != nil {
+			b := meta[blk.BlockID]
+			s.observer(BlockProgress{
+				Timing:  blk,
+				Level:   b.Level,
+				Status:  b.Status,
+				Order:   i + 1,
+				Total:   total,
+				Playing: blk.AudioRef != "",
+			})
+		}
 
 		if blk.AudioRef == "" {
 			// All-pause / no-speech block. No subprocess. Plan duration

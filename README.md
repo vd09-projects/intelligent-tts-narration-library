@@ -177,6 +177,36 @@ make test-mcp-manual
 
 This runs `runSpeak` against `docs/samples/sample.md` in-process (bypassing the stdio transport), plays audio via afplay, and asserts the receipt shape. Listener confirms the bare-image refusal by ear, same as `make test-manual`.
 
+### Live observer (Channel 2)
+
+The `transcript` in the tool response is the *after-the-fact* per-block record (ADR #77 Channel 1) — it is only assembled once the last block has finished playing, because `speak` blocks on afplay per block. To watch progress **while audio is still playing**, launch the decoupled, read-only `cmd/narrate-observe` binary in a **second terminal** (ADR #77 Channel 2). The `speak` handler appends one JSONL line per block to an ephemeral scratch file before each blocking play; the observer tails it and renders `[3/9] L2 voiced 4.2s > b3` lines live.
+
+Opt in on the **writer** (the `speak` server) via environment, in precedence order:
+
+| Variable | Effect |
+| --- | --- |
+| `NARRATE_OBSERVE_FILE=/path/x.jsonl` | Emit to this exact path. Highest precedence. |
+| `NARRATE_OBSERVE=1` (`true`/`yes`/`on`) | Emit to an auto-created `/tmp/narrate-observe-*.jsonl` temp file. |
+| *(unset, or `0`/`false`)* | Off — the speak response is byte-for-byte unchanged. |
+
+The **observer** (reader) discovers its target by the same precedence: `-f <path>` flag > `NARRATE_OBSERVE_FILE` > newest matching `/tmp/narrate-observe-*.jsonl`. It runs until **Ctrl-C** — it keeps tailing for the next `speak` run and does not self-exit when one ends.
+
+Two-terminal manual flow:
+
+```sh
+# Terminal 1 — start tailing (defaults to -f /tmp/narrate-observe-manual.jsonl)
+make run-observe
+
+# Terminal 2 — speak the sample doc, emitting live to the same file
+make run-observe-manual
+```
+
+Design notes:
+
+- **Decoupled by construction.** Enabling the observer only writes the side file; the `speak` response (receipt + transcript, both channels) stays `bytes.Equal` to the observer-off baseline. A scratch open/write failure prints **one** line to STDERR and goes silent — it never errors the `speak` call (observability must not break playback).
+- **No secrets on the wire.** Each JSONL line carries only structural metadata — `block_id`, `order`/`total`, `level`, `status`, `planned_duration_ms`, `playing` — never source or spoken text (CLAUDE.md "local-only means secrets get read aloud"). The scratch file is created `0600` (owner-only).
+- **Ephemeral.** The scratch file lives under `/tmp` (deliberately, not `$TMPDIR`, so the observer's newest-file glob works), is left for the OS to reap, and is never under the renderer's `out_dir` or teed into a durable sink.
+
 ### Known limitations
 
 - `sink=persistent` is not implemented (phase two).

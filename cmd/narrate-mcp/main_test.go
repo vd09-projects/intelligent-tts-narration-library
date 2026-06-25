@@ -32,6 +32,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
 )
 
 func TestSpeakArgs_ApplyDefaults(t *testing.T) {
@@ -337,7 +338,7 @@ func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipe
 func withStubPipeline(t *testing.T, stub *stubNarrator) func() {
 	t.Helper()
 	orig := newPipeline
-	newPipeline = func(outDir string, _ speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
+	newPipeline = func(outDir string, _ speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter, _ ephemeral.BlockObserver) pipeline.Narrator {
 		stub.gotOutDir = outDir
 		stub.gotInput = input
 		stub.gotIntel = intel
@@ -820,7 +821,7 @@ func TestRunSpeak_SourceArg_WiresFileAdapter(t *testing.T) {
 func TestNewPipeline_SetsListenCodeMinLevelFloor(t *testing.T) {
 	t.Parallel()
 	// Production factory (this test does NOT install a stub).
-	n := newPipeline("/tmp/out", speakArgs{Level: 1}, file.New(), nil)
+	n := newPipeline("/tmp/out", speakArgs{Level: 1}, file.New(), nil, nil)
 	pl, ok := n.(*pipeline.Pipeline)
 	if !ok {
 		t.Fatalf("production newPipeline must build *pipeline.Pipeline, got %T", n)

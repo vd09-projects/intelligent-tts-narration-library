@@ -274,12 +274,12 @@ type runDeps struct {
 // / validate keep their document-wide Level semantics unchanged.
 const listenCodeMinLevel = plan.L2
 
-var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
+var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter, observer ephemeral.BlockObserver) pipeline.Narrator {
 	return pipeline.New(
 		input,
 		intel,
 		sherpa.New(sherpa.EngineConfig{}),
-		ephemeral.New(),
+		ephemeral.New(ephemeral.WithBlockObserver(observer)),
 		pipeline.PipelineDefaults{
 			Level:        plan.Level(args.Level),
 			OutDir:       outDir,
@@ -338,8 +338,16 @@ func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.S
 		_ = os.RemoveAll(outDir)
 	}()
 
+	// Channel-2 live observer (issue #81). Off unless opted in via env; a nil
+	// observer leaves the sink path byte-identical. The scratch file is NOT
+	// under outDir — it is ephemeral but user-facing, reaped by the OS, never
+	// teed into a durable sink. STDERR (not the speak response) is the only
+	// place a scratch failure ever surfaces, so the response stays decoupled.
+	observer, closeObserve := newBlockObserver(os.Stderr)
+	defer closeObserve()
+
 	intel := buildIntelligence(args, cache)
-	pl := newPipeline(outDir, args, input, intel)
+	pl := newPipeline(outDir, args, input, intel, observer)
 
 	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
 		Voice: genderToVoice[args.Gender],
