@@ -1,7 +1,8 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
+OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
 PLAYER_FIXTURE_DIR ?= player/public/fixtures/sample
@@ -26,6 +27,8 @@ help:
 	@echo "  run-persistent         — narrate \$$SAMPLE via persistent sink → \$$OUT"
 	@echo "  run-listen             — interactive raw-mode transport over \$$SAMPLE (n/b/space/g/q; needs a tty + afplay)"
 	@echo "  run-mcp                — start the MCP stdio server (Ctrl-C to stop)"
+	@echo "  run-observe            — tail the Channel-2 live observer (-f \$$OBSERVE_FILE, else newest /tmp glob; Ctrl-C to stop)"
+	@echo "  run-observe-manual     — 2-terminal live observer smoke: speak \$$SAMPLE emitting to \$$OBSERVE_FILE (real Kokoro + afplay)"
 	@echo "  run-server             — start the localhost HTTP escalate server on \$$ADDR (Ctrl-C to stop)"
 	@echo "  sanity                 — go build + check scripts/kokoro present"
 	@echo "  clean                  — go clean -testcache"
@@ -95,6 +98,21 @@ run-listen:
 
 run-mcp:
 	go run ./cmd/narrate-mcp
+
+# Channel-2 live observer (issue #81). Terminal 2: tail the scratch file the
+# speak handler writes per block. Defaults to -f $(OBSERVE_FILE); drop it to
+# fall back to the newest /tmp/narrate-observe-*.jsonl (e.g. an auto-temp run).
+run-observe:
+	go run ./cmd/narrate-observe -f $(OBSERVE_FILE)
+
+# Two-terminal manual flow for the live observer:
+#   Terminal 1:  make run-observe                 # starts tailing $(OBSERVE_FILE)
+#   Terminal 2:  make run-observe-manual          # speaks $(SAMPLE), emitting live
+# The speak side runs the real Kokoro + afplay manual smoke with
+# NARRATE_OBSERVE_FILE pointed at $(OBSERVE_FILE), so terminal 1 prints one
+# progress line per block WHILE audio plays.
+run-observe-manual:
+	NARRATE_OBSERVE_FILE=$(OBSERVE_FILE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
 
 run-server:
 	go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN)

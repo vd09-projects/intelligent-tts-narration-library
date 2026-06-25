@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-26-channel2-mechanism-jsonl-tail-over-mcp-progress
+    title: "Channel-2 live observer mechanism: append-only JSONL + tail -f, not MCP notifications/progress"
+    date: 2026-06-26
+    status: accepted
+    category: architecture
+    tags: [observability, channel-2, jsonl, tail, mcp-progress, notifyprogress, decoupled-observer, narrate-observe, issue-81, issue-77]
+    path: architecture/2026-06-26-channel2-mechanism-jsonl-tail-over-mcp-progress.md
+    summary: "Issue #81 builds ADR #77 D5 Channel 2 (a user-launched 2nd-terminal live observer). Mechanism DECISION: append-only JSONL + tail -f is the DEFAULT, beating native MCP notifications/progress (Session.NotifyProgress, go-sdk v1.5.0) for THIS surface — JSONL surfaces to a USER in a 2nd terminal (the D5 requirement), zero deps, ephemeral /tmp no durable coupling, live (emitted before each blocking play()); NotifyProgress surfaces to the MCP CLIENT not a human terminal and is invisible without client progressToken cooperation. NotifyProgress is DEFERRED not rejected — add additively alongside JSONL (same BlockEvent shape, guarded by the schema/v wire discriminator) when a real MCP-client UI wants progress. cmd/narrate-observe is the tail reader; opt-in via NARRATE_OBSERVE_FILE > NARRATE_OBSERVE truthy > off; off keeps the speak response byte-identical; no source/spoken text on the wire (secret-leak avoidance); 0600 scratch file."
+  - id: 2026-06-26-observer-seam-sink-reads-plan-param
+    title: "Observer seam placement: the sink reads Level/Status from the plan param it already receives, not a cmd-side BlockSummary closure"
+    date: 2026-06-26
+    status: accepted
+    category: architecture
+    tags: [observer-seam, sink-ephemeral, composition-root, blocksummary, liveness, import-wall, sub-blocks, issue-81, issue-77, plan-v2-deviation]
+    path: architecture/2026-06-26-observer-seam-sink-reads-plan-param.md
+    summary: "Issue #81 observer seam placement. The mimir plan v2 specified sink/ephemeral stay roster-free emitting only BlockTiming, with a cmd/narrate-mcp closure enriching Level/Status from pipeline.BlockSummary (justified by BlockSummary flattening oversized-split sub-blocks). Step 0 verification FALSIFIED this: (1) the closure is unbuildable — BlockSummaries exist only AFTER Narrate returns but the observer must be wired into the sink BEFORE Narrate runs; (2) the sub-block rationale is moot phase one — no producer populates Block.SubBlocks and render/sherpa emits one BlockTiming per top-level Block in plan order, so Timeline.Blocks and plan.Blocks are 1:1 co-ordered. DECISION: the sink reads Level/Status from the plan.NarrationPlan param it ALREADY receives (historically discarded), correlated 1:1 by BlockID, zero-Level/Status fallback on a miss (never fabricated); cmd owns only the concrete JSONL marshal + scratch lifecycle. Keeps liveness AND import-cleanliness (plan/ already imported; import set unchanged, now guarded by sink/ephemeral/deps_test.go). Playing is derived purely from AudioRef != empty — a refused block whose Refusal.Message is voiced is Playing:true (the plan's 'refused implies Playing:false' truth table was wrong; caught in review). Deviates from approved plan v2; surfaced + recorded."
   - id: 2026-06-25-listen-transport-keypress-loop-not-tui
     title: "LISTEN-path terminal transport: minimal raw-mode keypress loop, not a full-screen TUI; honest \"Stop / Replay block\", not \"Pause\""
     date: 2026-06-25

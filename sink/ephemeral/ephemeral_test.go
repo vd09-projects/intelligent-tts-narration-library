@@ -370,6 +370,83 @@ func TestPlayWithAfplay_MissingBinary(t *testing.T) {
 	}
 }
 
+// TestSink_Consume_BlockObserver — the issue #81 Channel-2 emit seam.
+// Asserts: one emit per timeline block in plan order; the Playing truth
+// table (AudioRef != ""); Level/Status enriched from the plan param, keyed
+// 1:1 by BlockID; refused + pause blocks emit Playing:false carrying their
+// real Status; and emit-count == block-count (no double-emit on the empty-
+// AudioRef branch).
+func TestSink_Consume_BlockObserver(t *testing.T) {
+	withStubPlay(t, func(context.Context, string, string, time.Duration) error { return nil })
+
+	// Four blocks spanning the truth table. Playing is derived purely from
+	// AudioRef, so it mirrors what the renderer emits — NOT Status:
+	//   b1 voiced+audio   → Playing:true
+	//   b2 degraded+audio → Playing:true
+	//   b3 refused+audio  → Playing:true (the renderer voiced Refusal.Message
+	//                       into a WAV; Status:refused is the honesty signal,
+	//                       not Playing — see render/sherpa spokenTextFor)
+	//   b4 voiced+no-audio (all-pause/empty) → Playing:false
+	res := render.RenderResult{
+		Audio: render.AudioStream{Dir: "/tmp/audio"},
+		Timeline: plan.Timeline{
+			Blocks: []plan.BlockTiming{
+				{BlockID: "b1", StartMs: 0, EndMs: 1000, AudioRef: "b1.wav"},
+				{BlockID: "b2", StartMs: 1000, EndMs: 2200, AudioRef: "b2.wav"},
+				{BlockID: "b3", StartMs: 2200, EndMs: 3300, AudioRef: "b3.wav"},
+				{BlockID: "b4", StartMs: 3300, EndMs: 3300, AudioRef: ""},
+			},
+		},
+		Format: render.DefaultFormat(),
+	}
+	np := plan.NarrationPlan{
+		Blocks: []plan.Block{
+			{ID: "b1", Level: plan.L2, Status: plan.StatusVoiced},
+			{ID: "b2", Level: plan.L3, Status: plan.StatusDegraded},
+			{ID: "b3", Level: plan.L1, Status: plan.StatusRefused},
+			{ID: "b4", Level: plan.L1, Status: plan.StatusVoiced},
+		},
+	}
+
+	var got []BlockProgress
+	s := New(WithBlockObserver(func(p BlockProgress) { got = append(got, p) }))
+	if _, err := s.Consume(context.Background(), np, res); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+
+	want := []BlockProgress{
+		{Timing: res.Timeline.Blocks[0], Level: plan.L2, Status: plan.StatusVoiced, Order: 1, Total: 4, Playing: true},
+		{Timing: res.Timeline.Blocks[1], Level: plan.L3, Status: plan.StatusDegraded, Order: 2, Total: 4, Playing: true},
+		{Timing: res.Timeline.Blocks[2], Level: plan.L1, Status: plan.StatusRefused, Order: 3, Total: 4, Playing: true},
+		{Timing: res.Timeline.Blocks[3], Level: plan.L1, Status: plan.StatusVoiced, Order: 4, Total: 4, Playing: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("emit count: got %d, want %d (one per block, no double-emit)", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("emit[%d]: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestSink_Consume_NoObserver_IsNoOp — without WithBlockObserver the sink is
+// the unmodified player: the off-path must not panic and must produce the
+// same receipt it always did (the byte-identity counter-metric is asserted
+// end-to-end in cmd/narrate-mcp; this is the sink-local guard).
+func TestSink_Consume_NoObserver_IsNoOp(t *testing.T) {
+	withStubPlay(t, func(context.Context, string, string, time.Duration) error { return nil })
+
+	s := New() // no observer Option
+	rec, err := s.Consume(context.Background(), plan.NarrationPlan{}, threeBlockResult())
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if rec.BlocksPlayed != 2 || rec.TotalDurationMs != 2500 {
+		t.Errorf("off-path receipt drifted: got %+v, want {BlocksPlayed:2, TotalDurationMs:2500}", rec)
+	}
+}
+
 // cancelKey is the context key the ctx-cancel table case uses to fish
 // the cancel func out and trigger cancellation mid-call.
 type cancelKey struct{}

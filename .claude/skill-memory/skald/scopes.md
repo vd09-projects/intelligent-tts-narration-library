@@ -452,3 +452,30 @@ scopes:
       convention. Slug pre-supplied + pre-approved via --scope in the
       orchestration prompt. Plan pre-produced externally by mimir, persisted
       draft (awaiting user approval before sindri consumes).
+  - slug: narrate-observe-jsonl-tail-81
+    title: cmd/narrate-observe decoupled observer — JSONL tail-f live view (#81, ADR #77 D5 Channel 2)
+    created: 2026-06-25
+    reasoning: |
+      Plan cycle for GitHub issue #81 (ADR #77 D5 Channel 2: a user-launched,
+      read-only cmd/narrate-observe binary that tail -f's an ephemeral per-call
+      JSONL scratch file the synchronous speak handler writes one line per block
+      to — a live 2nd-terminal block-by-block playback view the after-the-fact
+      Channel 1 receipt structurally cannot give). Wiring only: an injectable
+      per-block emit seam in sink/ephemeral (WithBlockObserver Option +
+      BlockEvent, defined purely over plan/render data, zero Channel-2 knowledge,
+      nil-safe off-by-default), a concrete JSONL writer at the cmd/narrate-mcp
+      composition root, and a ~30-line dumb reader. JSONL append + tail -f chosen
+      as the DEFAULT Channel-2 mechanism over MCP NotifyProgress (surfaces to a
+      human terminal vs the MCP client; zero deps; ephemeral /tmp no durable
+      coupling) — decision mark to harvest: channel-mechanism accepted (JSONL
+      default, NotifyProgress additive-later). Follow-on to mcp-speak-transcript-78
+      (the Channel-1 receipt half of the same ADR #77 playback gap); distinct
+      slug because this is the Channel-2 live-observer build, not the Channel-1
+      transcript. narrate-observe- prefix marks the new observer surface; jsonl-tail
+      qualifier captures the chosen mechanism/crux; issue-numbered suffix continues
+      the convention. Slug pre-supplied + pre-approved via --scope in the
+      orchestration prompt. Planned via mimir task depth with the public-api-change
+      overlay (new WithBlockObserver Option + BlockEvent + JSONL wire contract +
+      cmd/narrate-observe binary are real consumer surfaces). Plan pre-produced
+      externally by mimir, persisted draft (awaiting user approval before the
+      implementation skill consumes).
