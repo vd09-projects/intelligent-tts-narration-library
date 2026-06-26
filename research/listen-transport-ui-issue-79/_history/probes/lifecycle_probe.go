@@ -3,11 +3,13 @@
 //   - MkdirTemp once (claim 8)
 //   - spawn a child (stands in for afplay), Kill async + Wait to reap (claim 7)
 //   - signal handler does RemoveAll + kill-child on SIGINT (claim 4)
+//
 // Modes:
-//   handler  : install signal handler, spawn child, wait for SIGINT, clean, exit 0
-//   nohandler: rely on a defer RemoveAll, spawn child, wait for SIGINT (defer skipped)
-//   reap     : demonstrate Kill is async -> Wait reaps; second Start has no overlap
-//   removeall: demonstrate RemoveAll idempotent on missing path
+//
+//	handler  : install signal handler, spawn child, wait for SIGINT, clean, exit 0
+//	nohandler: rely on a defer RemoveAll, spawn child, wait for SIGINT (defer skipped)
+//	reap     : demonstrate Kill is async -> Wait reaps; second Start has no overlap
+//	removeall: demonstrate RemoveAll idempotent on missing path
 package main
 
 import (

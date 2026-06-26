@@ -47,11 +47,11 @@ var DefaultLexicon = Lexicon{
 	"||": "or",
 
 	// Common system paths.
-	"/etc/hosts":      "etc hosts",
-	"/usr/local/bin":  "user local bin",
-	"~/.ssh/config":   "home dot ssh config",
-	"/var/log":        "var log",
-	"/dev/null":       "dev null",
+	"/etc/hosts":     "etc hosts",
+	"/usr/local/bin": "user local bin",
+	"~/.ssh/config":  "home dot ssh config",
+	"/var/log":       "var log",
+	"/dev/null":      "dev null",
 
 	// Dev acronyms (kept short — voiceable, not exhaustive).
 	"API":   "A P I",

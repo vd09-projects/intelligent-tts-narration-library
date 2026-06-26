@@ -23,9 +23,9 @@ const proseVerbatimMaxWords = 120
 //     (no degradation needed)
 //   - levelOut.needsIntelligence is true → the (class, level) cell
 //     required comprehension. Behavior depends on class:
-//       prose ≤120 words → degraded verbatim
-//       prose >120 words → refused RefuseNoIntelligence
-//       structured (code/diagram) → degrade to L1 deterministic gist
+//     prose ≤120 words → degraded verbatim
+//     prose >120 words → refused RefuseNoIntelligence
+//     structured (code/diagram) → degrade to L1 deterministic gist
 //
 // Returns the block plus a non-nil diagnostic when downgrade information
 // is useful to surface. Block IDs are assigned by the orchestrator.

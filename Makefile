@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -20,7 +20,8 @@ help:
 	@echo "  test-manual-persistent — sink/persistent smoke with real Kokoro (writes \$$OUT)"
 	@echo "  test-mcp-manual        — MCP runSpeak smoke against \$$SAMPLE (real Kokoro + afplay)"
 	@echo "  bench                  — planner-only + end-to-end benchmarks"
-	@echo "  lint                   — golangci-lint run"
+	@echo "  fmt                    — gofmt -w . (format module-wide)"
+	@echo "  lint                   — gofmt drift gate + golangci-lint run"
 	@echo "  run                    — narrate \$$SAMPLE at level 1, female voice, ephemeral sink"
 	@echo "  run-detail             — narrate \$$SAMPLE at level 3, male voice"
 	@echo "  run-male               — narrate \$$SAMPLE at level 1, male voice"
@@ -74,7 +75,11 @@ test-mcp-manual:
 bench:
 	go test -bench=BenchmarkNarrate -benchmem ./pipeline/...
 
+fmt:
+	gofmt -w .
+
 lint:
+	@drift=$$(gofmt -l .); if [ -n "$$drift" ]; then echo "gofmt drift (run 'make fmt'):"; echo "$$drift"; exit 1; fi
 	golangci-lint run
 
 run:

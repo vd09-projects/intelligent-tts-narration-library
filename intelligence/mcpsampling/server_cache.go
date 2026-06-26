@@ -46,7 +46,7 @@ const DefaultCacheCapacity = 512
 type ServerCache struct {
 	// --- LRU half ---
 	mu    sync.Mutex
-	ll    *list.List               // front = most-recently-used; back = LRU
+	ll    *list.List // front = most-recently-used; back = LRU
 	index map[CacheKey]*list.Element
 	cap   int
 

@@ -58,9 +58,9 @@ func emptyOnlyResult() render.RenderResult {
 // and lets each test decide what each call returns. recorded order is
 // preserved so tests can assert plan-order traversal.
 type stubPlayer struct {
-	mu       sync.Mutex
-	calls    []string                                                              // resolved paths, in invocation order
-	respond  func(ctx context.Context, binary, path string, timeout time.Duration) error
+	mu      sync.Mutex
+	calls   []string // resolved paths, in invocation order
+	respond func(ctx context.Context, binary, path string, timeout time.Duration) error
 }
 
 func (sp *stubPlayer) fn() playFunc {
@@ -102,7 +102,7 @@ func TestSink_Consume_TableDriven(t *testing.T) {
 		wantPlayed  int
 		wantDurMs   int64
 		wantCalls   []string
-		wantErrIs   error // errors.Is target; nil means expect no error
+		wantErrIs   error  // errors.Is target; nil means expect no error
 		wantErrText string // substring to find in err.Error() (when wantErrIs is nil but err expected)
 	}{
 		{
@@ -120,9 +120,12 @@ func TestSink_Consume_TableDriven(t *testing.T) {
 			wantErrIs: nil,
 		},
 		{
-			name:       "skip empty AudioRef only",
-			res:        emptyOnlyResult(),
-			respond:    func(_ context.Context, _, _ string, _ time.Duration) error { t.Fatal("play should not be called for empty AudioRef"); return nil },
+			name: "skip empty AudioRef only",
+			res:  emptyOnlyResult(),
+			respond: func(_ context.Context, _, _ string, _ time.Duration) error {
+				t.Fatal("play should not be called for empty AudioRef")
+				return nil
+			},
 			ctx:        func() (context.Context, context.CancelFunc) { return context.Background(), func() {} },
 			wantPlayed: 0,
 			wantDurMs:  0,
@@ -477,4 +480,3 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
-
