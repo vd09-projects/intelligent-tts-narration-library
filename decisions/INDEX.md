@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-26-render-failure-server-player-readiness
+    title: "Render-failure signal is a server/player readiness collaboration (on-disk truth + client-owned give-up bound), not a render-side sentinel"
+    date: 2026-06-26
+    status: accepted
+    category: architecture
+    tags: [architecture, http-api, react, readiness, mcp, ttsplayer, issue-76, render-failed, no-out-dir]
+    path: architecture/2026-06-26-render-failure-server-player-readiness.md
+    summary: "Ticket #76 Part B (optional React visual companion for MCP listen-mode). The render-failure signal is modeled as a SERVER/PLAYER COLLABORATION — on-disk truth + a client-owned give-up bound — not a render-side sentinel. cmd/narrate-server exposes GET /readiness?dir= as a tri-state: 200 {status:rendered} (plan.json+manifest.json+audio.wav all present & non-empty), 200 {status:rendering} (dir exists, triple incomplete), and a NEW closed-enum reason token no_out_dir (HTTP 404) when the dir is absent. no_out_dir is APPENDED to the server's closed append-only reason enum (sibling to existing source_not_found, which stays scoped to the escalate/artifact source-resolution path). The player owns the bounded give-up: useRenderReadiness polls at 1 Hz with MAX_POLL_ATTEMPTS=120 absolute cap + UNREACHABLE_FASTFAIL=8 consecutive-transport-reject dead-server fast path, collapsing 'never completes' / 'server gone' into a single DEFINED terminal phase render_failed — zero perpetual spinners even when the server is dead from poll #1. The 'rendered' guarantee depends on the persistent sink publishing each leaf via atomic tmp+os.Rename (a size>0 check would otherwise risk reading a truncated streamed file). REJECTED (a) reusing source_not_found for the dir-absent case — AC3 names 'no-outDir' as a distinct outcome and the append-only enum exists to add a clear machine-stable token, not overload one; (b) a render-side failure SENTINEL FILE written by the sink — the server reports on-disk truth only, a crashed-mid-render is caught by the player's give-up bound, keeping the sink contract unchanged. Standing order honored: companion artifacts come from a SEPARATE cmd/narrate --sink persistent invocation, never a tee off speak (decoupling; Risk 6 / AC6); speak's ephemeral play-then-delete lifetime stays intact."
   - id: 2026-06-26-afplay-sigstop-sigcont-no-true-pause
     title: "afplay SIGSTOP/SIGCONT cannot deliver a true Pause; honest Stop/Replay block stands"
     date: 2026-06-26

@@ -479,3 +479,32 @@ scopes:
       cmd/narrate-observe binary are real consumer surfaces). Plan pre-produced
       externally by mimir, persisted draft (awaiting user approval before the
       implementation skill consumes).
+  - slug: react-visual-companion-listen-76
+    title: Part B — optional React visual companion for MCP listen-mode (#76, parent #73)
+    created: 2026-06-25
+    reasoning: |
+      Task-level implementation breakdown for GitHub issue #76 / parent #73
+      Part B — the optional, opt-in on-screen React visual companion for MCP
+      listen-mode. Part A (terminal-audio listen path) shipped in PR #75. Part B
+      reuses the ENTIRE shipped React player (player/) + cmd/narrate-server
+      stack (block highlight, whole-audio.wav play/pause, inline-card escalate
+      spinner #50, usePlayback block-id-signature reset R7, #62 /artifact
+      re-fetch) and builds nothing new except the render-failure terminal
+      signal: a bounded readiness handshake resolving spinner -> loaded ->
+      defined failure. Named tokens: server no_out_dir appended to the closed
+      append-only reason enum (404 on a new GET /readiness?dir=); readiness
+      states rendered/rendering on a 200 body; player terminal phase
+      render_failed (from no_out_dir, bound-expiry, or dead-server). Honors the
+      decoupling standing order (separate --sink persistent invocation, never a
+      speak tee — Risk 6/AC6) and all five prior decisions (optional/no-new-UI,
+      terminal listen = ephemeral afplay no spinner, block-id-signature reset
+      not manifest identity, inline command card escalate UX, ADR #77 two-channel
+      model). Slug pre-supplied + pre-approved via --scope in the orchestration
+      prompt; feature-descriptive + issue-numbered (parallels the Part A impl
+      scope narrate-mcp-listen-impl-73, kept separate so the companion build
+      artifact stays cleanly split from Part A). Planned via mimir task depth
+      with overlays public-api-change (new /readiness endpoint + no_out_dir token
+      + plan.json /artifact allowlist entry — additive server-contract change)
+      and state-management (the readiness poll/give-up state machine + App
+      load-gate + the block-id-signature reset decision). Plan persisted draft
+      (awaiting user approval before sindri consumes).

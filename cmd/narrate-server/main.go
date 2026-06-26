@@ -15,8 +15,10 @@
 //	  200 refused         → {block, refusal}            (timing + audio_ref ABSENT, not null)
 //	  non-2xx             → ErrorResponse{reason, message}  (single envelope, always)
 //	GET  /healthz   → 200 {"status":"ok"}
-//	GET  /artifact?dir=&name=  → 200 file bytes (audio.wav | manifest.json ONLY)
+//	GET  /artifact?dir=&name=  → 200 file bytes (audio.wav | manifest.json | plan.json ONLY)
 //	  non-2xx             → ErrorResponse{reason, message}  (same envelope as /escalate)
+//	GET  /readiness?dir=  → 200 {"status":"rendered"|"rendering"}  (companion render handshake, #76)
+//	  404                  → ErrorResponse{reason:"no_out_dir"}    (dir absent — terminal token)
 //
 // # Static artifact route (#62) — re-fetch the just-patched output over HTTP
 //
@@ -52,6 +54,7 @@
 //	format_mismatch         409  caller   ErrFormatMismatch
 //	cancelled               408  cancel   context.Canceled / context.DeadlineExceeded
 //	readback_failed         500  internal post-patch plan/manifest read failed
+//	no_out_dir              404  caller   GET /readiness ?dir does not exist (typo / wrong path / render never started)
 //	internal                500  internal render/sink hard fault, corrupt manifest, …
 //
 //	source_not_found is ONE token with a DETERMINISTIC status: 404 iff the
@@ -176,7 +179,14 @@ const (
 	reasonFormatMismatch      = "format_mismatch"
 	reasonCancelled           = "cancelled"
 	reasonReadbackFailed      = "readback_failed"
-	reasonInternal            = "internal"
+	// reasonNoOutDir is the readiness-handshake terminal token (#76): GET
+	// /readiness was asked about a dir that does not exist. Appended to the
+	// closed enum (never repurposing source_not_found — that token stays scoped
+	// to the escalate/artifact source-resolution path; the #50 client switches
+	// on these strings). The player converts a no_out_dir into its defined
+	// render_failed terminal state immediately.
+	reasonNoOutDir = "no_out_dir"
+	reasonInternal = "internal"
 )
 
 // writeTimeoutCushion is the fixed headroom added to the per-request render
@@ -214,6 +224,24 @@ type escalateResponse struct {
 	Timing   *plan.BlockTiming `json:"timing,omitempty"`
 	AudioRef string            `json:"audio_ref,omitempty"`
 	Refusal  *plan.Refusal     `json:"refusal,omitempty"`
+}
+
+// readiness status tokens — the GET /readiness 200 body values (#76). Named
+// consts (not inline literals) to match the reason* token discipline above: the
+// #76 companion client switches on these machine-stable strings, so a typo in a
+// bare literal would be a silent contract drift the compiler cannot catch.
+const (
+	statusRendered  = "rendered"
+	statusRendering = "rendering"
+)
+
+// readinessResponse — the GET /readiness 200 body (#76). Status is statusRendered
+// (plan.json + manifest.json + audio.wav all present & non-empty) or statusRendering
+// (dir exists but the triple is incomplete / mid-write). A missing dir is NOT a
+// readiness state — it is the no_out_dir terminal token on a 404 ErrorResponse,
+// so the player can distinguish "still rendering" from "wrong path / failed".
+type readinessResponse struct {
+	Status string `json:"status"`
 }
 
 // ErrorResponse — the single non-2xx envelope. Reason is a machine-stable token
@@ -412,6 +440,7 @@ func newMux(args serverArgs) http.Handler {
 	mux.HandleFunc("/healthz", healthzHandler)
 	mux.Handle("/escalate", escalateHandler(args))
 	mux.HandleFunc("/artifact", artifactHandler)
+	mux.HandleFunc("/readiness", readinessHandler)
 	return withCORS(args.CORSOrigin, mux)
 }
 
@@ -492,6 +521,12 @@ func escalateHandler(args serverArgs) http.Handler {
 var artifactAllowlist = map[string]string{
 	"audio.wav":     "audio/wav",
 	"manifest.json": "application/json",
+	// plan.json is allowlisted (#76) so the companion player can HTTP-load the
+	// INITIAL triple over the existing /artifact route (it polls one origin; the
+	// disk picker cannot be auto-polled). The containment machinery
+	// (resolveArtifactPath: EvalSymlinks + filepath.Rel) is unchanged and now
+	// covers plan.json for free.
+	"plan.json": "application/json",
 }
 
 // artifactHandler serves GET /artifact?dir=&name= — the static re-fetch route
@@ -524,7 +559,7 @@ func artifactHandler(w http.ResponseWriter, r *http.Request) {
 	contentType, ok := artifactAllowlist[name]
 	if !ok {
 		writeError(w, http.StatusBadRequest, reasonMissingField,
-			fmt.Sprintf("name must be one of audio.wav or manifest.json (got %q)", name))
+			fmt.Sprintf("name must be one of audio.wav, manifest.json, or plan.json (got %q)", name))
 		return
 	}
 	// Defence in depth: even though the allowlist is exact-match, reject any name
@@ -639,6 +674,85 @@ func resolveArtifactPath(absDir, name string) (string, int, *ErrorResponse) {
 	}
 
 	return resolvedLeaf, http.StatusOK, nil
+}
+
+// readinessLeaves are the three artifacts that must ALL be present and non-empty
+// for a dir to read as "rendered" — the same triple loadFromServer fetches and
+// loadDirectory requires. A missing or zero-byte leaf (mid-write / torn) keeps
+// the dir at "rendering" so the player re-polls instead of loading a half-write.
+var readinessLeaves = []string{"plan.json", "manifest.json", "audio.wav"}
+
+// readinessHandler serves GET /readiness?dir= — the companion-player render
+// handshake (#76). The render is a SEPARATE cmd/narrate --sink persistent
+// process, so the server reports only the on-disk truth it can see; it never
+// authors "the render crashed" (the player owns that give-up bound). Mapping:
+//
+//	dir absent / unreadable                       → 404 no_out_dir (terminal token)
+//	dir present, triple all present & non-empty   → 200 {"status":"rendered"}
+//	dir present, ≥1 leaf missing or empty         → 200 {"status":"rendering"}
+//
+// It takes the SAME per-dir mutex /escalate writers + /artifact readers hold, so
+// a poll issued mid-patch observes the fully-old or fully-new triple, never a
+// torn cross-file state (R3). rendered-with-refusal is still "rendered": refusal
+// is data, plan.json renders it; the readiness check is purely file-existence.
+func readinessHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "GET only")
+		return
+	}
+
+	dir := r.URL.Query().Get("dir")
+	if dir == "" {
+		writeError(w, http.StatusBadRequest, reasonMissingField, "dir is required")
+		return
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, reasonMissingField, "resolve dir: "+err.Error())
+		return
+	}
+
+	// Exclusive per-dir lock (shared with the /escalate writers + /artifact
+	// readers — sync.Mutex has no shared read mode, so this is a full Lock, not a
+	// read lock) so a poll that races a mid-patch escalate observes a consistent
+	// triple, never a torn one. The read path here is short, so serializing polls
+	// against each other costs nothing in practice.
+	muIface, _ := dirLocks.LoadOrStore(absDir, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// The dir itself must exist and be a directory. Absence (typo / wrong path /
+	// render never started) — or any stat fault that means we cannot see a valid
+	// outDir — is the no_out_dir terminal token, NOT a readiness state and NOT a
+	// 500. The player converts it to render_failed immediately.
+	info, err := os.Stat(absDir)
+	if err != nil || !info.IsDir() {
+		writeError(w, http.StatusNotFound, reasonNoOutDir,
+			fmt.Sprintf("output dir does not exist: %q", dir))
+		return
+	}
+
+	// All three leaves present AND non-empty → rendered; else still rendering.
+	//
+	// COUPLING (do NOT weaken without revisiting the sink): the size>0 test is a
+	// sufficient "this leaf is complete" signal ONLY because the persistent sink
+	// publishes each leaf atomically — it streams to a tmp file then os.Rename()s
+	// it into place (sink/persistent atomicWriteFile), so a non-zero file at the
+	// final path is never a partial write. If a leaf were ever streamed in place
+	// (written directly to its final path), this size>0 check could read a
+	// truncated file as "rendered" and the player would fetch a partial audio.wav.
+	// The atomic-publish guarantee is what makes file-existence a safe readiness
+	// proxy across the SEPARATE render process. (Doc only — never edit the sink here.)
+	for _, leaf := range readinessLeaves {
+		li, lerr := os.Stat(filepath.Join(absDir, leaf))
+		if lerr != nil || li.IsDir() || li.Size() == 0 {
+			writeJSON(w, http.StatusOK, readinessResponse{Status: statusRendering})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, readinessResponse{Status: statusRendered})
 }
 
 // runEscalate is the handler core (Step 4). Returns either a success response
