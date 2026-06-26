@@ -132,6 +132,7 @@ where every load-bearing claim carries a grade and a citation; the design delive
 
 ## Related decisions
 
+- [afplay SIGSTOP/SIGCONT cannot deliver a true Pause; honest Stop/Replay stands (#84)](2026-06-26-afplay-sigstop-sigcont-no-true-pause.md) — **resolves this decision's by-ear `SIGCONT` revisit trigger, NEGATIVE.** The #84 spike proved `SIGSTOP` does not pause audible playback (coreaudiod drains the front-loaded AudioQueue while afplay is frozen), so the "promote to true Pause" trigger is closed and the honest "Stop / Replay block" model stays.
 - [ADR: Playback observability & control model (issue #77)](2026-06-24-playback-observability-control-model-issue-77.md) — this design implements the #79 transport surface against that ADR's Data Contract; the ADR's 2026-06-25 addendum carries the corrected bubbletea v2 path + weight surfaced by this same research.
 - [Terminal listen-not-read is ephemeral-afplay audio-only](2026-06-23-terminal-listen-not-read-is-ephemeral-afplay-audio-only.md) — the LISTEN path this transport drives; `afplay`'s lack of runtime IPC is why the pause is a pseudo-pause.
 - [Player playback unit stays whole audio.wav](2026-06-22-player-playback-unit-stays-whole-audio-wav.md) — same block-level-sync invariant: navigation plays whole segment files, never sub-block seeks.
