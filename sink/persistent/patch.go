@@ -55,6 +55,7 @@ import (
 //     Consume uses (no special-case code).
 //  9. Commit per the Cross-File Write Ordering Invariant (stage all three tmp
 //     files, then rename plan.json, manifest.json, audio.wav LAST).
+//
 // 10. Return a SinkReceipt identical in shape to Consume's (S1).
 //
 // F1 (input-guard) and F2 (write-ordering) are INDEPENDENT guarantees, NOT a
@@ -575,4 +576,3 @@ func stageAudioTmp(outDir string, format plan.AudioFormat, segments []wavSegment
 	}
 	return tmpPath, nil
 }
-

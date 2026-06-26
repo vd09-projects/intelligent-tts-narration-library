@@ -97,10 +97,10 @@ var ErrMissingBlockAudio = errors.New("sink/persistent: block audio file missing
 //  2. Walk res.Timeline.Blocks in plan order:
 //     - Pre-block ctx.Err() short-circuit (partial receipt + ctx.Err()).
 //     - Empty AudioRef → skip read; planned duration still counts toward
-//       receipt; BlocksPlayed does NOT increment.
+//     receipt; BlocksPlayed does NOT increment.
 //     - Otherwise → readWAV the per-block file; format mismatch / missing
-//       file → wrapped error with block id; partial receipt; output files
-//       NOT written (partial-write guard).
+//     file → wrapped error with block id; partial receipt; output files
+//     NOT written (partial-write guard).
 //     - Track cursor + planned span for leading silence math.
 //  3. Atomically write audio.wav, plan.json, manifest.json via tmp+rename
 //     (Decision v1.4.0 — partial state on disk would violate the honesty

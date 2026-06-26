@@ -4,6 +4,15 @@
 
 ```yaml
 scopes:
+  - slug: planner-table-meaning-l2-47
+    title: Wire intelligence into table L2/L3 meaning-summary (issue #47)
+    created: 2026-06-26
+    reasoning: |
+      Plan/build/review cycle for GitHub issue #47 — make levelTable L2/L3
+      request an AI meaning summary (parity with levelDiagram/levelCode),
+      degrading to the current deterministic header/row reading with no adapter.
+      Slug was supplied pre-resolved by the build-session orchestrator
+      (planner-<area>-<issue> form); issue-numbered suffix continues convention.
   - slug: cmd-narrate-issue-7
     title: Wire cmd/narrate vertical slice (issue #7)
     created: 2026-06-18

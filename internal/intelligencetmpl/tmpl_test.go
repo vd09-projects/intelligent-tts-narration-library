@@ -216,6 +216,65 @@ func TestRenderPrompt_CodeL2SubstitutesCodeTemplate(t *testing.T) {
 	}
 }
 
+// TestPickUserTemplate_TableUsesTableTemplates — ClassTable at L2/L3 must
+// resolve to the table-specific prompts (TableUserL2 / TableUserL3), NOT
+// the shared UserL2/UserL3. Guards issue #47's wiring and catches drift
+// back to the generic skeletons. L1 stays on the shared UserL1.
+func TestPickUserTemplate_TableUsesTableTemplates(t *testing.T) {
+	t.Parallel()
+	tpl := DefaultPromptTemplates[plan.ClassTable]
+	if got := PickUserTemplate(tpl, plan.L2); got != TableUserL2 {
+		t.Errorf("ClassTable L2 should pick TableUserL2, got:\n%s", got)
+	}
+	if got := PickUserTemplate(tpl, plan.L3); got != TableUserL3 {
+		t.Errorf("ClassTable L3 should pick TableUserL3, got:\n%s", got)
+	}
+	if got := PickUserTemplate(tpl, plan.L1); got != UserL1 {
+		t.Errorf("ClassTable L1 should pick shared UserL1, got:\n%s", got)
+	}
+}
+
+// TestRenderPrompt_TableSubstitutesTableTemplates — the rendered ClassTable
+// L2 user prompt must carry the table-meaning framing, the block text, and
+// the substituted headers fact; and must NOT carry the generic
+// "three to five sentences" summary instruction. L3 must select the
+// per-row-walk framing.
+func TestRenderPrompt_TableSubstitutesTableTemplates(t *testing.T) {
+	t.Parallel()
+	tpl := DefaultPromptTemplates[plan.ClassTable]
+
+	reqL2 := intelligence.IntelligenceRequest{
+		BlockText: "TABLE_MARKER_47",
+		Class:     plan.ClassTable,
+		Facts:     []string{"class: table, cols: 3, rows: 3", "headers: name, role, team"},
+		Level:     plan.L2,
+		Locale:    "en",
+	}
+	_, user := RenderPrompt(tpl, reqL2)
+	if !strings.Contains(user, "TABLE_MARKER_47") {
+		t.Errorf("table L2 user prompt missing block text:\n%s", user)
+	}
+	if !strings.Contains(user, "what this table represents") {
+		t.Errorf("table L2 user prompt missing table-meaning framing:\n%s", user)
+	}
+	if !strings.Contains(user, "headers: name, role, team") {
+		t.Errorf("table L2 user prompt missing substituted headers fact:\n%s", user)
+	}
+	if strings.Contains(user, "three to five sentences") {
+		t.Errorf("table L2 user prompt unexpectedly used the generic summary skeleton:\n%s", user)
+	}
+
+	reqL3 := reqL2
+	reqL3.Level = plan.L3
+	_, userL3 := RenderPrompt(tpl, reqL3)
+	if !strings.Contains(userL3, "walk every row") {
+		t.Errorf("table L3 user prompt missing per-row-walk framing:\n%s", userL3)
+	}
+	if !strings.Contains(userL3, "headers: name, role, team") {
+		t.Errorf("table L3 user prompt missing substituted headers fact:\n%s", userL3)
+	}
+}
+
 // itoa is a tiny helper to keep test names compact without importing
 // strconv just for one call.
 func itoa(n int) string {

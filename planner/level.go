@@ -668,20 +668,78 @@ func kvHumanize(line string) string {
 	return k + " set to " + v
 }
 
-// levelTable — L1 = "a {C}-column, {R}-row table". L2 = headers + first/
-// last rows. L3 = read every row meaningfully.
+// levelTable — L1 = "a {C}-column, {R}-row table" (deterministic, free).
+// L2/L3 = AI meaning summary (needsIntelligence=true), parity with
+// levelCode/levelDiagram; degrade.go falls back to the deterministic
+// header/row reading (deterministicTableGist) when no adapter is plugged
+// in (issue #47). L1 stays deterministic — the deterministic-L1 invariant.
 //
 // Row counting: if row[1] is a separator (markdown's `|---|---|`), then
 // row[0] is the header and data rows start at index 2. Otherwise every
-// non-separator row is data.
-func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
-	rows := parseTableRows(rb.text)
-	cols := 0
+// non-separator row is data. Parsing is delegated wholesale to parseTable
+// so this fact-build and the degraded reading cannot structurally drift.
+func levelTable(rb rawBlock, target plan.Level, _ *compiledLex) levelResult {
+	cols, headerIdx, dataRows, rows := parseTable(rb.text)
+	nRows := len(dataRows)
+
+	l1 := fmt.Sprintf("A %d-column, %d-row table.", cols, nRows)
+	facts := []string{fmt.Sprintf("class: table, cols: %d, rows: %d", cols, nRows)}
+	// Headers fact: the joined header cells when a header row was detected,
+	// else the explicit "(none)" literal so the adapter sees a stable signal
+	// (matches JoinFacts's "(none)" convention).
+	//
+	// Delimiter note: JoinFacts joins facts on "; " and header cells join on
+	// ", ". A literal ";" or "," inside a single header CELL would be
+	// ambiguous to a downstream fact-splitter. Low-risk and accepted for
+	// phase one (English headers; the adapter consumes Facts as free text,
+	// not as a structured field).
+	if headerIdx >= 0 {
+		facts = append(facts, "headers: "+strings.Join(rows[headerIdx], ", "))
+	} else {
+		facts = append(facts, "headers: (none)")
+	}
+
+	switch target {
+	case plan.L1:
+		return levelResult{
+			segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: l1}},
+			provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
+			deterministic: true,
+			facts:         facts,
+		}
+	case plan.L2, plan.L3:
+		// Beyond the structural shape, table meaning needs comprehension.
+		// Empty segments signal the orchestrator to call the adapter, or
+		// degrade.go to fall back to deterministicTableGist when none is.
+		return levelResult{
+			provenance:        plan.Provenance{LevelAsked: target},
+			needsIntelligence: true,
+			facts:             facts,
+		}
+	}
+	return levelResult{}
+}
+
+// parseTable — the single structural table parser shared by levelTable
+// (cols/rows counts + the headers fact) and deterministicTableGist (the
+// no-adapter degraded reading). MANDATORY single source (issue #47): the
+// byte-identity between the headers fact and the degraded reading is
+// structural — both consume THIS parser, neither re-implements row/header
+// detection.
+//
+// Returns:
+//   - cols      — width of the first row (0 for an empty table).
+//   - headerIdx — 0 when row[1] is a markdown `|---|` separator (row[0] is
+//     the header), else -1 (no header row detected).
+//   - dataRows  — the non-separator data rows (header excluded when present).
+//   - rows      — every parsed row incl. header + separator, so a caller
+//     needing the raw header cells indexes rows[headerIdx].
+func parseTable(text string) (cols, headerIdx int, dataRows, rows [][]string) {
+	rows = parseTableRows(text)
 	if len(rows) > 0 {
 		cols = len(rows[0])
 	}
-	headerIdx := -1
-	var dataRows [][]string
+	headerIdx = -1
 	if len(rows) >= 2 && isSeparatorRow(rows[1]) {
 		headerIdx = 0
 		dataRows = rows[2:]
@@ -693,22 +751,30 @@ func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 			dataRows = append(dataRows, r)
 		}
 	}
+	return cols, headerIdx, dataRows, rows
+}
+
+// deterministicTableGist — the un-voiced deterministic header/row reading
+// for a table at L2/L3, used by degrade.go's no-adapter fallback. Pure
+// string builder; the caller applies voice(...). It reproduces the pre-#47
+// levelTable L2/L3 spoken text byte-for-byte (golden-first pinned) and
+// consumes the SAME parseTable as levelTable, so the reading and the
+// headers fact cannot structurally drift.
+//
+//   - L2: l1, then " Headers: {join}." when a header row exists, then
+//     " First row: {...}." when ≥1 data row, then " Last row: {...}." when
+//     ≥2 data rows.
+//   - L3: l1 followed by " Row: {...}." per data row.
+//   - any other level: l1 alone (defensive — degrade only calls L2/L3).
+func deterministicTableGist(text string, target plan.Level) string {
+	cols, headerIdx, dataRows, rows := parseTable(text)
 	nRows := len(dataRows)
-
 	l1 := fmt.Sprintf("A %d-column, %d-row table.", cols, nRows)
-	facts := []string{fmt.Sprintf("class: table, cols: %d, rows: %d", cols, nRows)}
 
+	var spoken strings.Builder
+	spoken.WriteString(l1)
 	switch target {
-	case plan.L1:
-		return levelResult{
-			segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: l1}},
-			provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
-			deterministic: true,
-			facts:         facts,
-		}
 	case plan.L2:
-		var spoken strings.Builder
-		spoken.WriteString(l1)
 		if headerIdx >= 0 {
 			spoken.WriteString(" Headers: ")
 			spoken.WriteString(strings.Join(rows[headerIdx], ", "))
@@ -724,28 +790,14 @@ func levelTable(rb rawBlock, target plan.Level, lex *compiledLex) levelResult {
 				spoken.WriteString(".")
 			}
 		}
-		return levelResult{
-			segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(spoken.String(), lex)}},
-			provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
-			deterministic: true,
-			facts:         facts,
-		}
 	case plan.L3:
-		var spoken strings.Builder
-		spoken.WriteString(l1)
 		for _, r := range dataRows {
 			spoken.WriteString(" Row: ")
 			spoken.WriteString(strings.Join(r, ", "))
 			spoken.WriteString(".")
 		}
-		return levelResult{
-			segments:      []plan.Segment{{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(spoken.String(), lex)}},
-			provenance:    plan.Provenance{VoicedBy: "planner", Deterministic: true, LevelAsked: target},
-			deterministic: true,
-			facts:         facts,
-		}
 	}
-	return levelResult{}
+	return spoken.String()
 }
 
 func parseTableRows(text string) [][]string {

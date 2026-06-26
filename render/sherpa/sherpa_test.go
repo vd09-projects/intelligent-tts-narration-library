@@ -59,8 +59,8 @@ func trivialPlan() plan.NarrationPlan {
 		Blocks: []plan.Block{
 			{
 				ID: "blk-001", Order: 0, Class: plan.ClassProse, Level: plan.L2, Status: plan.StatusVoiced,
-				SourceMap: plan.SourceMap{Kind: plan.SourceKindLineRange, StartLine: 1, EndLine: 1},
-				Segments:  []plan.Segment{{ID: "seg-1", Kind: plan.SegmentKindSpeech, Text: "Hi."}},
+				SourceMap:  plan.SourceMap{Kind: plan.SourceKindLineRange, StartLine: 1, EndLine: 1},
+				Segments:   []plan.Segment{{ID: "seg-1", Kind: plan.SegmentKindSpeech, Text: "Hi."}},
 				Provenance: plan.Provenance{VoicedBy: "verbatim", Deterministic: true, LevelAsked: plan.L2},
 			},
 		},

@@ -24,8 +24,8 @@ const (
 	hintList
 	hintImage
 	hintTable
-	hintCode    // fenced code block — fenceInfo carries the language tag.
-	hintProse   // paragraph or plaintext paragraph.
+	hintCode  // fenced code block — fenceInfo carries the language tag.
+	hintProse // paragraph or plaintext paragraph.
 	hintBlockHTML
 )
 

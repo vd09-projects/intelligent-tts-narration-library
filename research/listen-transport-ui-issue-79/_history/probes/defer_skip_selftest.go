@@ -25,5 +25,5 @@ func main() {
 	// funcs do NOT run (process dies, stack does not unwind).
 	_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
 	time.Sleep(2 * time.Second) // give the signal time to land
-	fmt.Println("REACHED_END") // must NOT print either
+	fmt.Println("REACHED_END")  // must NOT print either
 }

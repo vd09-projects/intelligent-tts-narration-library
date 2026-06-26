@@ -115,6 +115,24 @@ const CodeUserL2 = `Level 2 ({{.LevelName}}): one sentence, at most 30 words, st
 Block:
 {{.BlockText}}`
 
+// TableUserL2 and TableUserL3 are the table-specific L2/L3 user prompts
+// (issue #47). They override the shared UserL2/UserL3 for ClassTable only:
+// at L2 a listener wants the table's meaning in a few sentences (not a
+// cell dump); at L3 a faithful per-row walk by meaning, not a cell-by-cell
+// recital. TableSystem + HonestySystemPreamble + the __REFUSE__ contract
+// are unchanged; these only reshape the user-side instruction.
+const (
+	TableUserL2 = `Level 2 ({{.LevelName}}): two to four sentences stating what this table represents — what each row is and how the columns relate. Speak the meaning, not the cells; do not read every value. Class: {{.Class}}. Facts: {{.Facts}}.
+
+Block:
+{{.BlockText}}`
+
+	TableUserL3 = `Level 3 ({{.LevelName}}): walk every row, stating what each row means in relation to the columns — a faithful read, not a cell-by-cell recital. Class: {{.Class}}. Facts: {{.Facts}}.
+
+Block:
+{{.BlockText}}`
+)
+
 // DefaultPromptTemplates is the frozen, per-class prompt set shipped
 // with the library. Adapters use it by default; callers override via
 // each adapter's WithPromptTemplates option.
@@ -140,7 +158,7 @@ var DefaultPromptTemplates = map[plan.Class]PromptTemplate{
 	},
 	plan.ClassTable: {
 		System: TableSystem,
-		UserL1: UserL1, UserL2: UserL2, UserL3: UserL3,
+		UserL1: UserL1, UserL2: TableUserL2, UserL3: TableUserL3,
 	},
 	plan.ClassDiagramAsText: {
 		System: DiagramSystem,

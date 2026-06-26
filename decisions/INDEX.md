@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-table-degrade-gist-shares-leveltable-parser
+    title: "Table L2/L3 degrade gist and levelTable share one parseTable — byte-identity is structural, not test-dependent"
+    date: 2026-06-27
+    status: accepted
+    category: convention
+    tags: [planner, levelTable, deterministicTableGist, parseTable, degrade, byte-identical, honesty-rule, dry, issue-47, issue-48]
+    path: convention/2026-06-27-table-degrade-gist-shares-leveltable-parser.md
+    summary: "Issue #47's table-at-L2/L3 work creates the same dual-path byte-identity hazard as code (#48): the deterministic header/row reading must be produced from both levelTable (the headers fact) and the no-adapter degrade path (degraded reading with Status=degraded when L2/L3 wanted an AI meaning-summary but no adapter is wired). DECISION: extract one MANDATORY shared parseTable consumed by BOTH levelTable and the gist, with deterministicTableGist as a thin formatter over that shared parse — so byte-identity between the requested-but-degraded reading and the deterministic reading is STRUCTURAL (same parse, divergence impossible) rather than test-dependent. This is the table analog of #48's deterministicCodeGist shared helper but a deliberately STRONGER guarantee: #48's byte-identity rests on a call-site doc-comment contract the compiler can't enforce, whereas the table case shares the parse step itself. Resolves #48's 'second structured class' revisit trigger by sharing the parser rather than lifting a generic levelResult.deterministicFallback field (still rejected as YAGNI). REJECTED Option B (copy #48's shape — shared gist builder + doc-comment contract) because tables had a cleaner seam to make the guarantee structural. The honesty rule (degraded reading must be an exact non-fabricated rendering of source cells) is now enforced at the parse layer. The class-specific TableUserL3 prompt added for symmetry with TableUserL2 was judged too minor to journal."
   - id: 2026-06-26-render-failure-server-player-readiness
     title: "Render-failure signal is a server/player readiness collaboration (on-disk truth + client-owned give-up bound), not a render-side sentinel"
     date: 2026-06-26

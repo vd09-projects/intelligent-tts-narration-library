@@ -79,13 +79,13 @@ func TestParseWAV_FormatValidation_TableDriven(t *testing.T) {
 	expected := render.DefaultFormat()
 
 	cases := []struct {
-		name         string
-		sampleRate   int
-		channels     int
-		bitsPerSamp  int
-		formatTag    uint16
-		wantOK       bool
-		wantField    string // when wantOK=false
+		name        string
+		sampleRate  int
+		channels    int
+		bitsPerSamp int
+		formatTag   uint16
+		wantOK      bool
+		wantField   string // when wantOK=false
 	}{
 		{"happy-default-format", 24000, 1, 16, wFormatTagPCM, true, ""},
 		{"wrong-sample-rate", 16000, 1, 16, wFormatTagPCM, false, "sample_rate"},
