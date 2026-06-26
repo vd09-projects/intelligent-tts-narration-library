@@ -9,15 +9,19 @@ import { useDirectoryLoader } from './hooks/useDirectoryLoader.ts'
 import { usePlayback } from './hooks/usePlayback.ts'
 import { useServerMode } from './hooks/useServerMode.ts'
 import { useEscalation } from './hooks/useEscalation.ts'
+import { useRenderReadiness } from './hooks/useRenderReadiness.ts'
 import type { EscalateResult } from './lib/escalateClient.ts'
 import { reconcileManifest } from './lib/reconcileManifest.ts'
-import { reloadManifest as reloadManifestFile } from './lib/loadDirectory.ts'
+import { reloadManifest as reloadManifestFile, type LoadedDirectory } from './lib/loadDirectory.ts'
+import { loadFromServerDir } from './lib/loadFromServer.ts'
+import { readCompanionDir } from './lib/readinessConfig.ts'
 import { artifactUrl } from './lib/refetchBase.ts'
 import type { Manifest } from './types/manifest.ts'
 import type { Block, NarrationPlan } from './types/plan.ts'
 import { TopBar } from './components/TopBar.tsx'
 import { BlockList } from './components/BlockList.tsx'
 import { SourcePane } from './components/SourcePane.tsx'
+import { RenderGate } from './components/RenderGate.tsx'
 
 // App is the composition root for the player. Loads the fixture on mount,
 // optionally swaps to a directory the user picks at runtime, and threads the
@@ -34,7 +38,29 @@ export default function App() {
   const loader = useDirectoryLoader()
   const server = useServerMode()
 
-  const active = loader.data ?? fixture.data
+  // Companion mode (#76): VITE_COMPANION_DIR, when set, points the player at a
+  // dir a SEPARATE `cmd/narrate --sink persistent` process is rendering. When
+  // unset (`companionMode === false`) every line below is inert and the default
+  // fixture + manual-picker path is byte-identical to before — the AC6 guardrail.
+  const companionDir = readCompanionDir()
+  const companionMode = companionDir !== ''
+  const readiness = useRenderReadiness({
+    baseUrl: server.baseUrl,
+    dir: companionDir,
+    enabled: companionMode,
+  })
+  // The server triple, loaded once readiness flips to 'rendered'. Owns its own
+  // blob URL (revoked on unmount / re-load) — the loader/fixture hooks own theirs.
+  const [companionData, setCompanionData] = useState<LoadedDirectory | null>(null)
+  const [companionError, setCompanionError] = useState<string | null>(null)
+  const companionUrlRef = useRef<string | null>(null)
+
+  // In companion mode the active directory is the server-loaded triple (a manual
+  // picker selection still overrides it). Outside companion mode this is exactly
+  // the shipped `loader.data ?? fixture.data`.
+  const active = companionMode
+    ? (loader.data ?? companionData)
+    : (loader.data ?? fixture.data)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null)
 
@@ -53,9 +79,12 @@ export default function App() {
   const [sourceCursorBlockId, setSourceCursorBlockId] = useState<string | null>(null)
   const [escalatedBlockId, setEscalatedBlockId] = useState<string | null>(null)
   const [extraWarnings, setExtraWarnings] = useState<string[]>([])
-  // Manual escalate dir (Q2). Server-resolvable absolute path; empty until the
-  // user types it. Threaded into postEscalate via the escalation context.
-  const [dir, setDir] = useState('')
+  // Manual escalate dir (Q2). Server-resolvable absolute path; in companion mode
+  // it is SEEDED from VITE_COMPANION_DIR so escalate + the #62 re-fetch resolve
+  // against the companion dir without the user typing it; otherwise empty until
+  // the user types it (default path). Threaded into postEscalate via the
+  // escalation context.
+  const [dir, setDir] = useState(companionDir)
 
   // Seed-once on a new plan_id (directory swap or first fixture load).
   // Idempotent under StrictMode double-invoke; survives recheck() because
@@ -71,6 +100,45 @@ export default function App() {
     if (sourceCursorBlockId !== null) setSourceCursorBlockId(null)
     if (escalatedBlockId !== null) setEscalatedBlockId(null)
   }
+
+  // Companion load (#76): once the readiness handshake reports 'rendered', load
+  // the initial triple over HTTP into companionData. From there `active` adopts
+  // it and the existing seed-once guard treats it as a normal first load — every
+  // downstream behavior is the shipped path (refusal-is-data: a rendered triple
+  // carrying a refused block loads successfully, it is NOT a failure). Runs once
+  // (phase 'rendered' is terminal); never fires outside companion mode.
+  useEffect(() => {
+    if (!companionMode || readiness.phase !== 'rendered') return
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await loadFromServerDir(server.baseUrl, companionDir)
+        if (cancelled) {
+          URL.revokeObjectURL(data.audioUrl)
+          return
+        }
+        if (companionUrlRef.current) URL.revokeObjectURL(companionUrlRef.current)
+        companionUrlRef.current = data.audioUrl
+        setCompanionData(data)
+      } catch (e) {
+        if (!cancelled) setCompanionError((e as Error).message)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [companionMode, readiness.phase, server.baseUrl, companionDir])
+
+  // Revoke the companion audio blob on unmount (R3 hygiene — the loader/fixture
+  // hooks own their own blobs; this is the one App-owned companion blob).
+  useEffect(() => {
+    return () => {
+      if (companionUrlRef.current) {
+        URL.revokeObjectURL(companionUrlRef.current)
+        companionUrlRef.current = null
+      }
+    }
+  }, [])
 
   const playback = usePlayback(audioEl, manifest)
 
@@ -311,8 +379,28 @@ export default function App() {
     return w
   }, [active, extraWarnings, loader.error, fixture.error])
 
-  // Loading / error gates.
-  if (fixture.loading && !loader.data) {
+  // Companion-mode gate (#76): the render handshake replaces the fixture/picker
+  // gates entirely while VITE_COMPANION_DIR is set. Three defined outcomes, never
+  // a perpetual spinner. A manual picker selection (loader.data) short-circuits
+  // back to the shipped path. Inert (skipped) when companionMode is false.
+  if (companionMode && !loader.data) {
+    if (readiness.phase === 'failed' || companionError) {
+      return (
+        <RenderGate
+          phase="failed"
+          reason={companionError ? `load_failed: ${companionError}` : readiness.reason}
+        />
+      )
+    }
+    if (!active || !plan || !manifest) {
+      // idle / rendering / rendered-but-not-yet-loaded → keep spinning.
+      return <RenderGate phase="rendering" />
+    }
+    // rendered + loaded → fall through to the shipped main UI below.
+  }
+
+  // Loading / error gates (default path).
+  if (fixture.loading && !loader.data && !companionMode) {
     return (
       <div className="app">
         <p className="loading">Loading bundled fixture…</p>

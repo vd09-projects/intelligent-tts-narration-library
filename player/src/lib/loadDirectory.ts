@@ -129,7 +129,11 @@ export async function reloadManifest(
   return { manifest, warnings: collectWarnings(plan, manifest) }
 }
 
-function collectWarnings(plan: NarrationPlan, manifest: Manifest): string[] {
+// collectWarnings computes the schema/stale warning lines for a plan+manifest
+// pair. Exported (#76) so the companion HTTP loader (loadFromServer.ts) assembles
+// a LoadedDirectory through the EXACT same warning logic the disk/fixture paths
+// use — one source of truth for the load contract.
+export function collectWarnings(plan: NarrationPlan, manifest: Manifest): string[] {
   const w: string[] = []
   // Compare MAJOR version only — CLAUDE.md: "additive-compatible within a
   // major schema_version". "1.0" / "1.3" stay compatible with major "1".
