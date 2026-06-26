@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -37,6 +37,7 @@ help:
 	@echo "  player-dev             — cd player && pnpm install && pnpm dev"
 	@echo "  player-build           — cd player && pnpm install && pnpm build"
 	@echo "  player-test            — cd player && pnpm install && pnpm test"
+	@echo "  run-companion          — one-click visual companion: render \$$SAMPLE → \$$OUT (separate --sink persistent), start narrate-server, launch player against \$$OUT (#76)"
 	@echo "  player-fixture-silent  — regenerate $(PLAYER_FIXTURE_DIR)/audio.wav as silent 24kHz mono PCM-16"
 	@echo "  player-fixture-kokoro  — narrate \$$SAMPLE via persistent sink → $(PLAYER_FIXTURE_DIR)"
 	@echo ""
@@ -116,6 +117,29 @@ run-observe-manual:
 
 run-server:
 	go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN)
+
+# One-click optional React visual companion (#76). Composes EXISTING pieces, no
+# new render path and never a `speak` tee (Risk 6 / AC6): a SEPARATE
+# `cmd/narrate --sink persistent` render into $(OUT), the localhost narrate-server
+# (which the player polls + re-fetches over HTTP), and the player itself targeting
+# $(OUT) via VITE_COMPANION_DIR. mkdir -p $(OUT) FIRST so the dir exists before
+# the player polls — `no_out_dir` then fires only on a genuine bad path, and the
+# spinner-then-load path is exercised because the render runs in the background
+# while the player spins.
+#
+# Cleanup: the whole recipe runs in ONE shell (backslash-joined) so `trap 'kill
+# 0' INT EXIT` reaps BOTH backgrounded `go run` processes (server + render) when
+# the foreground `pnpm dev` exits on Ctrl-C. Without this they were orphaned by
+# their already-exited per-line sub-shells, leaving the narrate-server port held
+# so a second `make run-companion` failed with "address already in use". `kill 0`
+# signals the whole process group, so the trap fires on both interrupt and a
+# normal exit.
+run-companion:
+	@mkdir -p $(OUT)
+	@trap 'kill 0' INT EXIT; \
+		go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN) & \
+		go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(OUT) & \
+		cd player && VITE_ESCALATE_BASE_URL=http://$(ADDR) VITE_COMPANION_DIR=$(OUT) pnpm install && pnpm dev
 
 sanity:
 	go build ./... && test -x scripts/kokoro && echo "ok: build + scripts/kokoro present"
