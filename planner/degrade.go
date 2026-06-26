@@ -68,6 +68,17 @@ func degrade(
 		return degradeCodeL2(rb, sm, lex)
 	}
 
+	// Table at L2/L3 with no adapter: fall back to the deterministic
+	// header/row reading (deterministicTableGist) at the requested level
+	// rather than downshift to the bare L1 shape line. The ordering here is
+	// load-bearing — this branch sits AFTER the ClassCode&&L2 special-case
+	// and BEFORE degradeStructuredDownshift so a table keeps its richer
+	// headers+rows reading instead of collapsing to "A C-column, R-row
+	// table." via the L1 downshift (issue #47).
+	if cls == plan.ClassTable && (target == plan.L2 || target == plan.L3) {
+		return degradeTableL2L3(rb, target, sm, lex)
+	}
+
 	// Structured class needing intelligence (code L3, diagram L2/L3).
 	// Downshift to L1 deterministic gist and mark Status=degraded.
 	return degradeStructuredDownshift(rb, cls, target, sm, lex)
@@ -169,6 +180,35 @@ func degradeCodeL2(rb rawBlock, sm plan.SourceMap, lex *compiledLex) (plan.Block
 			Code:     "intelligence_unavailable",
 			Severity: "info",
 			Message:  "code block read at deterministic L2 (count + declarations) without an intelligence adapter",
+		}
+}
+
+// degradeTableL2L3 — no-adapter fallback for a table block asked at L2 or
+// L3. Voices the deterministic header/row reading (the same string the
+// pre-#47 levelTable produced) and marks Status=degraded so a downstream
+// consumer sees the requested-AI-summary-vs-delivered gap. The reading is
+// computed via deterministicTableGist, which shares parseTable with
+// levelTable so the degraded text is byte-identical to the pre-change
+// output. Mirrors degradeCodeL2, including its voiced→degraded semantics.
+func degradeTableL2L3(rb rawBlock, target plan.Level, sm plan.SourceMap, lex *compiledLex) (plan.Block, *plan.Diagnostic) {
+	gist := deterministicTableGist(rb.text, target)
+	return plan.Block{
+			Class:     plan.ClassTable,
+			Level:     target,
+			Status:    plan.StatusDegraded,
+			SourceMap: sm,
+			Segments: []plan.Segment{
+				{ID: "s1", Kind: plan.SegmentKindSpeech, Text: voice(gist, lex)},
+			},
+			Provenance: plan.Provenance{
+				VoicedBy:      "planner",
+				Deterministic: true,
+				LevelAsked:    target,
+			},
+		}, &plan.Diagnostic{
+			Code:     "intelligence_unavailable",
+			Severity: "info",
+			Message:  fmt.Sprintf("table block read at deterministic L%d (headers + rows) without an intelligence adapter", int(target)),
 		}
 }
 

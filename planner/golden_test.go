@@ -53,6 +53,18 @@ func goldenCases() []goldenCase {
 		{name: "code_l2_oversized_gate", inputFile: "code_l2_oversized.md", level: plan.L2, intel: scripted("SHOULD NOT APPEAR")},
 		{name: "config_l1", inputFile: "config_l1.md", level: plan.L1, intel: nil},
 		{name: "table_l1", inputFile: "table_l1.md", level: plan.L1, intel: nil},
+		// #47 — table L2/L3 request an AI meaning summary, degrading to the
+		// deterministic header/row reading with no adapter. The *_degraded
+		// goldens are golden-first: their Segment.Text is pinned to the
+		// pre-change deterministic reading (byte-identity proof), while the
+		// voiced→degraded status flip is the feature.
+		{name: "table_l2_intel", inputFile: "table_l1.md", level: plan.L2, intel: scripted("Team roster mapping people to roles and squads.")},
+		{name: "table_l2_degraded", inputFile: "table_l1.md", level: plan.L2, intel: nil},
+		{name: "table_l3_intel", inputFile: "table_l1.md", level: plan.L3, intel: scripted("Row-by-row: Alice leads core; Bob develops core; Carol develops edge.")},
+		{name: "table_l3_degraded", inputFile: "table_l1.md", level: plan.L3, intel: nil},
+		// Boundary fixtures pinning the "Last row only when nRows>1" logic.
+		{name: "table_l3_degraded_1row", inputFile: "table_1row.md", level: plan.L3, intel: nil},
+		{name: "table_l2_degraded_2row", inputFile: "table_2row.md", level: plan.L2, intel: nil},
 		{name: "diagram_l1", inputFile: "diagram_l1.md", level: plan.L1, intel: nil},
 		{name: "list_l1", inputFile: "list_l1.md", level: plan.L1, intel: nil},
 		// #54 Direction 2 — bare list whose de-markered first item ends in a
