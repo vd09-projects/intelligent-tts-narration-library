@@ -71,6 +71,41 @@ func TestArtifact_HappyPath_AudioAndManifest(t *testing.T) {
 	}
 }
 
+// TestArtifact_PlanJSONServedTraversalRejected proves plan.json is now served
+// over GET /artifact (#76 allowlist add) while the containment machinery is
+// unchanged — a traversal/".." name carrying plan.json is still rejected as a
+// bad artifact name (missing_field), never resolved against the filesystem.
+func TestArtifact_PlanJSONServedTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	planBytes := []byte(`{"schema_version":"1","plan_id":"01HTEST"}`)
+	writeFileT(t, filepath.Join(dir, "plan.json"), planBytes)
+	args := defaultArgs()
+
+	// Happy path: plan.json now serves its bytes with the JSON content type.
+	w := doArtifact(t, args, "dir="+dir+"&name=plan.json", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (plan.json should now serve; body %q)", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != string(planBytes) {
+		t.Fatalf("body = %q, want %q", got, planBytes)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+
+	// Containment unchanged: a traversal name targeting plan.json is rejected by
+	// the allowlist/defence-in-depth guard (missing_field), never served.
+	for _, name := range []string{"../plan.json", "../../plan.json", "sub/plan.json"} {
+		tw := doArtifact(t, args, "dir="+dir+"&name="+name, "")
+		if tw.Code != http.StatusBadRequest {
+			t.Fatalf("name %q: status = %d, want 400 (traversal must stay rejected)", name, tw.Code)
+		}
+		if e := decodeErr(t, tw); e.Reason != reasonMissingField {
+			t.Fatalf("name %q: reason = %q, want missing_field", name, e.Reason)
+		}
+	}
+}
+
 func TestArtifact_MethodNotAllowed(t *testing.T) {
 	dir, _, _ := seedArtifactDir(t)
 	mux := newMux(defaultArgs())
@@ -110,9 +145,10 @@ func TestArtifact_MissingFields(t *testing.T) {
 func TestArtifact_AllowlistRejectsNonServable(t *testing.T) {
 	dir, _, _ := seedArtifactDir(t)
 	args := defaultArgs()
-	// plan.json exists on disk but is NOT in the allowlist → missing_field, never
-	// served, never a 404 (it is a bad artifact NAME, not a missing artifact).
-	cases := []string{"plan.json", "source.md", "../plan.json", "sub/audio.wav", "..", "audio.wav.."}
+	// A non-allowlisted name → missing_field, never served, never a 404 (it is a
+	// bad artifact NAME, not a missing artifact). plan.json is now allowlisted
+	// (#76) and is covered by TestArtifact_PlanJSONServedTraversalRejected.
+	cases := []string{"source.md", "../plan.json", "sub/audio.wav", "..", "audio.wav.."}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			w := doArtifact(t, args, "dir="+dir+"&name="+name, "")
@@ -293,9 +329,9 @@ func TestArtifact_ReasonsFromClosedEnum(t *testing.T) {
 		reasonCancelled: true, reasonReadbackFailed: true, reasonInternal: true,
 	}
 	queries := []string{
-		"name=audio.wav",                  // missing dir
-		"dir=" + dir,                      // missing name
-		"dir=" + dir + "&name=plan.json",  // not allowlisted
+		"name=audio.wav",                      // missing dir
+		"dir=" + dir,                          // missing name
+		"dir=" + dir + "&name=source.md",      // not allowlisted
 		"dir=" + dir + "/nope&name=audio.wav", // absent
 	}
 	for _, q := range queries {
