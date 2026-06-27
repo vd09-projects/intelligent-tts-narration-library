@@ -745,20 +745,36 @@ func speakLastHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, 
 // path. The tool returns ONE uniform response shape (speakToFileResponse) for
 // both branches: output_path:"" is the sentinel for "played, not written".
 
-// inlineURIScheme is the URI prefix the mcptext adapter mints for inline text
-// ("mcp://inline/<sha256-hex>"). resolveOutputPath reads the hash suffix back
-// out of the SourceRef.URI to derive a stable filename for the directory-target
-// case. DUP: the literal mirrors adapter/mcptext's unexported uriScheme; if a
-// third consumer needs it, export it from adapter/mcptext and drop this mirror.
-const inlineURIScheme = "mcp://inline/"
-
-// speakToFileArgs — speak_to_file tool arguments. Embeds speakArgs (so
-// text/source XOR, level, gender, intelligence all carry their speak semantics
-// and defaults) and adds the optional OutputPath. An empty/omitted output_path
-// means "play ephemerally, write no file".
+// speakToFileArgs — speak_to_file tool arguments. Declares its own fields
+// (rather than embedding speakArgs) so the JSON schema advertises EXACTLY the
+// args this tool accepts: text/source XOR, level, gender, intelligence, plus
+// the optional OutputPath. The sink is NOT a caller arg here — speak_to_file
+// always renders through the ephemeral-style internals and writes its own wav
+// via output_path, so exposing a sink would be misleading (and sink:persistent
+// would mis-error). toSpeakArgs forces sink=ephemeral for the shared internals.
+// An empty/omitted output_path means "play ephemerally, write no file".
 type speakToFileArgs struct {
-	speakArgs
-	OutputPath string `json:"output_path,omitempty" jsonschema:"destination for the rendered .wav. A file path is written (a missing .wav extension is appended); an existing directory gets a derived filename inside it. Omit/empty to play the audio ephemerally and write no file."`
+	Source       string `json:"source,omitempty"       jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
+	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
+	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
+	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
+	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
+	OutputPath   string `json:"output_path,omitempty"  jsonschema:"destination for the rendered .wav. A file path is written (a missing .wav extension is appended); an existing directory gets a derived filename inside it. Omit/empty to play the audio ephemerally and write no file."`
+}
+
+// toSpeakArgs projects speak_to_file's args into the shared speakArgs the
+// internals (runSpeakWithCache, inputAdapterAndRef, buildIntelligence) consume.
+// Sink is pinned to ephemeral: speak_to_file selects its sink via output_path,
+// never via a caller-supplied sink, so there is no persistent path to mis-route.
+func (a speakToFileArgs) toSpeakArgs() speakArgs {
+	return speakArgs{
+		Source:       a.Source,
+		Text:         a.Text,
+		Level:        a.Level,
+		Gender:       a.Gender,
+		Intelligence: a.Intelligence,
+		Sink:         "ephemeral",
+	}
 }
 
 // speakToFileResponse — the UNIFORM response envelope for speak_to_file,
@@ -829,12 +845,11 @@ func derivedWAVName(src plan.SourceRef) string {
 		}
 		return stem + ".wav"
 	case plan.SourceKindMCPText:
-		short := strings.TrimPrefix(src.URI, inlineURIScheme)
-		if len(short) > 8 {
-			short = short[:8]
-		}
-		if short == "" {
+		short, ok := mcptext.InlineHash(src.URI)
+		if !ok || short == "" {
 			short = "inline"
+		} else if len(short) > 8 {
+			short = short[:8]
 		}
 		return "narration-" + short + ".wav"
 	default:
@@ -901,14 +916,14 @@ func resolveOutputPath(outputPath string, src plan.SourceRef) (string, error) {
 // scratch is removed on return; the output wav survives.
 func runSpeakToFile(ctx context.Context, args speakToFileArgs, cache *mcpsampling.ServerCache) (speakToFileResponse, error) {
 	if args.OutputPath == "" {
-		resp, err := runSpeakWithCache(ctx, args.speakArgs, cache)
+		resp, err := runSpeakWithCache(ctx, args.toSpeakArgs(), cache)
 		if err != nil {
 			return speakToFileResponse{}, err
 		}
 		return speakToFileResponseFromSpeak("", resp), nil
 	}
 
-	sa := args.speakArgs
+	sa := args.toSpeakArgs()
 	sa.applyDefaults()
 	if err := sa.validate(); err != nil {
 		return speakToFileResponse{}, err

@@ -138,13 +138,28 @@ func TestSpeakToFile_Registered(t *testing.T) {
 		}
 	}()
 
-	// The arg schema (via JSON tags, embedded speakArgs included) must expose
-	// text, source, output_path, level, gender.
+	// The arg schema (via JSON tags) must expose text, source, output_path,
+	// level, gender.
 	tags := jsonTagSet(reflect.TypeOf(speakToFileArgs{}))
 	for _, want := range []string{"text", "source", "output_path", "level", "gender"} {
 		if !tags[want] {
 			t.Errorf("speakToFileArgs missing json field %q (have %v)", want, tags)
 		}
+	}
+}
+
+// TestSpeakToFile_NoSinkArg (S1) — speak_to_file selects its sink via
+// output_path, so the `sink` arg must NOT appear in its input schema; a leaked
+// sink would let sink:"persistent" mis-error on a tool whose job is writing a
+// file. The pre-existing `speak` tool keeps its sink arg unchanged.
+func TestSpeakToFile_NoSinkArg(t *testing.T) {
+	t.Parallel()
+
+	if tags := jsonTagSet(reflect.TypeOf(speakToFileArgs{})); tags["sink"] {
+		t.Errorf("speak_to_file schema must NOT advertise a sink field (have %v)", tags)
+	}
+	if tags := jsonTagSet(reflect.TypeOf(speakArgs{})); !tags["sink"] {
+		t.Errorf("speak schema must still advertise its sink field (have %v)", tags)
 	}
 }
 
@@ -187,13 +202,13 @@ func TestSpeakToFile_InputRouting(t *testing.T) {
 	}{
 		{
 			name:      "inline text routes through mcptext",
-			args:      speakToFileArgs{speakArgs: speakArgs{Text: "hello world"}, OutputPath: filepath.Join(tmp, "a.wav")},
+			args:      speakToFileArgs{Text: "hello world", OutputPath: filepath.Join(tmp, "a.wav")},
 			wantKind:  plan.SourceKindMCPText,
 			wantInput: &mcptext.Adapter{},
 		},
 		{
 			name:      "file source routes through file adapter",
-			args:      speakToFileArgs{speakArgs: speakArgs{Source: srcFile}, OutputPath: filepath.Join(tmp, "b.wav")},
+			args:      speakToFileArgs{Source: srcFile, OutputPath: filepath.Join(tmp, "b.wav")},
 			wantKind:  plan.SourceKindFile,
 			wantInput: &file.Adapter{},
 		},
@@ -242,7 +257,7 @@ func TestSpeakToFile_OutputResolution(t *testing.T) {
 		outDir := t.TempDir()
 		want := filepath.Join(outDir, "speech.wav")
 		resp, err := runSpeakToFile(context.Background(), speakToFileArgs{
-			speakArgs: speakArgs{Text: "hello there"}, OutputPath: want,
+			Text: "hello there", OutputPath: want,
 		}, nil)
 		if err != nil {
 			t.Fatalf("runSpeakToFile: %v", err)
@@ -253,7 +268,7 @@ func TestSpeakToFile_OutputResolution(t *testing.T) {
 	t.Run("directory path gets derived filename from inline text", func(t *testing.T) {
 		outDir := t.TempDir()
 		resp, err := runSpeakToFile(context.Background(), speakToFileArgs{
-			speakArgs: speakArgs{Text: "hello there"}, OutputPath: outDir,
+			Text: "hello there", OutputPath: outDir,
 		}, nil)
 		if err != nil {
 			t.Fatalf("runSpeakToFile: %v", err)
@@ -271,7 +286,7 @@ func TestSpeakToFile_OutputResolution(t *testing.T) {
 	t.Run("directory path gets derived filename from file source", func(t *testing.T) {
 		outDir := t.TempDir()
 		resp, err := runSpeakToFile(context.Background(), speakToFileArgs{
-			speakArgs: speakArgs{Source: srcFile}, OutputPath: outDir,
+			Source: srcFile, OutputPath: outDir,
 		}, nil)
 		if err != nil {
 			t.Fatalf("runSpeakToFile: %v", err)
@@ -319,7 +334,7 @@ func TestSpeakToFile_NoPathFallback(t *testing.T) {
 	// A uniform response is the SAME type the with-path branch returns.
 	var resp speakToFileResponse
 	resp, err := runSpeakToFile(context.Background(), speakToFileArgs{
-		speakArgs: speakArgs{Text: "hello world"}, // no OutputPath
+		Text: "hello world", // no OutputPath
 	}, nil)
 	if err != nil {
 		t.Fatalf("runSpeakToFile: %v", err)
@@ -346,7 +361,10 @@ func TestResolveOutputPath(t *testing.T) {
 	t.Parallel()
 
 	fileSrc := plan.SourceRef{Kind: plan.SourceKindFile, URI: "/abs/path/notes.md"}
-	textSrc := plan.SourceRef{Kind: plan.SourceKindMCPText, URI: inlineURIScheme + "deadbeefcafef00d0102030405060708"}
+	// Build the inline URI from mcptext's EXPORTED scheme (not a local literal)
+	// so a real scheme drift in adapter/mcptext would break this case — the
+	// derived name relies on mcptext.InlineHash parsing this exact prefix.
+	textSrc := plan.SourceRef{Kind: plan.SourceKindMCPText, URI: mcptext.URIScheme + "deadbeefcafef00d0102030405060708"}
 
 	t.Run("explicit .wav file kept as-is", func(t *testing.T) {
 		t.Parallel()
