@@ -4,6 +4,16 @@
 
 ```yaml
 scopes:
+  - slug: refusal-omission-accounting-98
+    title: Refusal-aware transcript omission accounting for MCP speak receipt (issue #98)
+    created: 2026-06-27
+    reasoning: |
+      Plan/build/review cycle for GitHub issue #98 — the refusal-aware omission
+      accounting follow-on explicitly named by the accepted #86 transcript-cap
+      decision. Adds an additive omitempty field counting refused blocks dropped
+      from the head-keep/tail-truncate cap so a consumer reading the transcript
+      view alone sees they exist. Slug supplied pre-resolved by the build-session
+      orchestrator (<area>-<issue> form); issue-numbered suffix continues convention.
   - slug: planner-table-meaning-l2-47
     title: Wire intelligence into table L2/L3 meaning-summary (issue #47)
     created: 2026-06-26
@@ -583,3 +593,31 @@ scopes:
       stdin invariant, loop-stays-sole-owner-of-child reap, cleanup-never-joins-
       reader, -race test discipline). Plan pre-produced by mimir, persisted draft
       (awaiting user approval before sindri consumes).
+  - slug: mcp-transcript-cap-86
+    title: Cap transcript size on very large MCP speak responses (issue #86)
+    created: 2026-06-27
+    reasoning: |
+      Plan cycle for GitHub issue #86 (cap/bound the per-block transcript[] the
+      MCP speak tool returns on its receipt — today unbounded, and a very large
+      speak response carries the whole array twice: once in structuredContent and
+      once in the duplicate serialized-JSON TextContent block per ADR #77 D3). A
+      number-less TODO(#86) marker sits at cmd/narrate-mcp/main.go:365 in runSpeak
+      where transcriptFromResult is assembled into speakResponse.Transcript.
+      Chosen strategy (mimir): head-keep / tail-truncate by entry count with a
+      default const transcriptCap=200, plus two additive omitempty signal fields
+      (transcript_truncated bool + transcript_omitted_count int) on speakResponse;
+      cap lives in a pure capTranscript helper (identity-return under cap so the
+      common small case stays byte-identical) wired at the TODO site — the
+      dual-channel handler needs no change since it marshals the one capped struct,
+      so both channels inherit the bound. Follow-on to mcp-speak-transcript-78 (the
+      Channel-1 transcript build that introduced transcript[] and left the size-cap
+      TODO); distinct slug because this is the bounding feature on top of that
+      build, not the build itself. mcp- prefix marks the MCP speak surface;
+      transcript-cap qualifier captures the crux; issue-numbered suffix continues
+      the convention. Slug pre-supplied + pre-approved via --scope in the
+      orchestration prompt. Planned via mimir task depth with the public-api-change
+      overlay (the MCP speak result shape is a real consumer contract; change is
+      additive/minor — two omitempty fields + a runtime array-length bound, no
+      field removed/renamed/retyped, no deprecation). Honesty boundary noted:
+      capping an observability receipt, not fabrication — no Refusal involved.
+      Plan persisted draft (awaiting user approval before sindri consumes).
