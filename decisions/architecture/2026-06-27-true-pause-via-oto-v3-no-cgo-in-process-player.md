@@ -77,6 +77,7 @@ maintenance. **This is a plan, not a build.**
 ## Related decisions
 
 - [afplay SIGSTOP/SIGCONT cannot deliver a true Pause (#84)](2026-06-26-afplay-sigstop-sigcont-no-true-pause.md) — this decision **extends** #84 and **resolves its revisit trigger** without CGo. #84 proved OS-signal pause impossible and named the deferred CGo renderer as the only path to true pause; oto v3 provides true pause in-process with no CGo, so the trigger condition is moot. #84's finding remains valid and accepted.
+- [oto v3.4 Player.Close() is a no-op (finalizer teardown) (#100 → #101)](2026-06-27-oto-v3-4-player-close-no-op-finalizer-teardown.md) — follow-on **amendment** from the #100 build. The plan's `player.Close()`-first teardown ordering, derived from this decision's premise, is overturned by oto v3.4 making `Close()` a no-op with teardown moved to a GC finalizer. This decision's oto-v3 choice stands (device-confirmed); only the plan-derived teardown sub-invariant is corrected. Production fd-lifecycle fix tracked to #101.
 
 ## Experiments
 

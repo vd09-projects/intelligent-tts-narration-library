@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-oto-v3-4-player-close-no-op-finalizer-teardown
+    title: "oto v3.4 Player.Close() is a no-op (finalizer teardown) — overturns the planned Close()-halts-read-pull invariant; spike halts via Pause(), fd-lifecycle fix carried to #101"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [listen-path, oto, ebitengine, oto-v3.4, player-close, finalizer, teardown, fd-lifecycle, read-from-closed-fd, pause-then-close, sa1019, go-memory-safe, accepted-debt, spike, issue-100, issue-101]
+    path: architecture/2026-06-27-oto-v3-4-player-close-no-op-finalizer-teardown.md
+    summary: "Build-session finding for spike #100. The #100 plan mandated per-block teardown ordering 'player.Close() FIRST (stops oto's goroutine pulling the reader), THEN file.Close()', derived from the accepted oto-v3 decision's premise. That invariant is OVERTURNED against the resolved dependency: in github.com/ebitengine/oto/v3 v3.4.0, Player.Close() is documented as 'does nothing and always returns nil' (deprecated; teardown moved to a runtime GC finalizer). So Close() does NOT stop the read-pull, calling it trips SA1019, and the source reader (LimitReader->*os.File) stays alive until the finalizer runs at some later GC — the fd is NOT guaranteed to outlive the player. The spike works around it (Option B) by calling player.Pause() — the v3.4-correct deterministic halt (removes the player from oto's active mux set; a paused player does not pull) — before file.Close(); safe by ear, and the residual read-from-closed-fd window is Go-memory-safe (os.ErrClosed, never UB) and benign at a teardown we are already doing. The deprecated Close() is avoided outright, not nolint-suppressed (golangci-lint --build-tags oto = 0 issues). Production-grade finalizer-aware fd ownership (oto owns an io.ReadCloser, or reader retained until player collected, so the fd always outlives the player) is carried to #101 as tracked accepted debt — Option C, out of scope for a by-ear spike. Marker cmd/narrate/listen_oto.go:118. Corroborated in review by Error Handling + Tech Debt (highest-signal item). Amends, does NOT supersede, 2026-06-27-true-pause-via-oto-v3-no-cgo-in-process-player.md — the oto-v3 choice stands and is device-confirmed; only the plan-derived teardown sub-invariant is corrected against the as-resolved v3.4.0 API. Revisit when #101 begins."
   - id: 2026-06-27-true-pause-via-oto-v3-no-cgo-in-process-player
     title: "Listen-path true Pause/Resume via ebitengine/oto v3 in-process PCM player — no CGo, decoupled from the deferred sherpa-onnx CGo renderer"
     date: 2026-06-27
