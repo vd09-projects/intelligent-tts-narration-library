@@ -63,6 +63,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -536,6 +539,201 @@ func capTranscript(entries []transcriptEntry, limit int) (kept []transcriptEntry
 	return entries[:limit], true, len(entries) - limit, omittedRefused
 }
 
+// ----- speak_last: narrate Claude's most recent assistant turn ---------------
+//
+// Self-contained, on-demand counterpart to `speak`. Where `speak` is handed the
+// text to voice, `speak_last` LOCATES it: the server reads Claude Code's own
+// session transcript off disk, extracts the most recent completed assistant turn,
+// and routes that text through the very same runSpeak composition root (via the
+// mcptext adapter). This is the "handle it internally" path — no external Stop
+// hook, no shell parse script. The MCP server still cannot SELF-TRIGGER (it acts
+// only when Claude calls a tool), so this is on-demand, not automatic.
+//
+// Reading the transcript file is composition-root glue (cmd/), analogous to
+// cmd/narrate reading a --file flag — it does not put I/O in planner/ or plan/.
+
+// speakLastToolName is the registered tool name. Referenced both at registration
+// and inside lastAssistantText (to exclude the invoking turn), so the two cannot
+// drift apart.
+const speakLastToolName = "speak_last"
+
+// speakLastArgs — args for speak_last. Level / Gender / Intelligence mirror
+// speak's semantics and defaults (applied downstream by speakArgs.applyDefaults
+// once the resolved text is handed to runSpeak). TranscriptPath is an optional
+// override: empty means "locate the newest transcript under the projects root".
+// It exists mainly for tests and power users; normal callers omit everything.
+type speakLastArgs struct {
+	Level          int    `json:"level,omitempty"           jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
+	Gender         string `json:"gender,omitempty"          jsonschema:"voice gender: female | male. default female"`
+	Intelligence   string `json:"intelligence,omitempty"    jsonschema:"intelligence backend: none | mcpsampling. default none"`
+	TranscriptPath string `json:"transcript_path,omitempty" jsonschema:"optional override: absolute path to a Claude Code transcript .jsonl; default = newest under the projects root"`
+}
+
+var (
+	errNoTranscript    = errors.New("internal_error: no Claude Code transcript found under the projects root")
+	errNoAssistantText = errors.New("caller-error: failed_precondition: no prior assistant message with spoken text found in the transcript")
+)
+
+// transcriptProjectsRoot resolves where Claude Code writes per-project session
+// transcripts. NARRATE_TRANSCRIPT_ROOT overrides it (tests + unusual installs);
+// otherwise ~/.claude/projects.
+func transcriptProjectsRoot() string {
+	if v := os.Getenv("NARRATE_TRANSCRIPT_ROOT"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".claude", "projects")
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
+// newestTranscript returns the most-recently-modified *.jsonl under root/*/ — the
+// active session's transcript, regardless of which repo it belongs to. This
+// sidesteps reconstructing Claude Code's path-mangled project dir from a cwd (the
+// launcher pins cwd, so cwd is unreliable here). Concurrency caveat: with two
+// live sessions the newest-modified file wins; pin one with transcript_path.
+func newestTranscript(root string) (string, error) {
+	matches, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
+	if err != nil {
+		return "", fmt.Errorf("internal_error: glob transcripts: %w", err)
+	}
+	var newest string
+	var newestMod time.Time
+	for _, m := range matches {
+		fi, statErr := os.Stat(m)
+		if statErr != nil {
+			continue
+		}
+		if newest == "" || fi.ModTime().After(newestMod) {
+			newest, newestMod = m, fi.ModTime()
+		}
+	}
+	if newest == "" {
+		return "", errNoTranscript
+	}
+	return newest, nil
+}
+
+// lastAssistantText extracts the verbatim text of the most recent COMPLETED
+// assistant turn from a Claude Code transcript .jsonl. It joins the text blocks
+// of each assistant line and returns the last non-empty join, EXCLUDING any
+// assistant line that itself invoked speak_last — that is the current turn, so
+// excluding it makes the tool speak the PRIOR response rather than its own
+// preamble. Assumes one assistant message per turn (the common case); a turn
+// split into a separate text line + tool line would still voice the text line.
+//
+// Tolerant by design: non-JSON lines, schema-variant lines, and string-valued
+// content are skipped rather than erroring — transcripts evolve.
+func lastAssistantText(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("internal_error: open transcript: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	// Assistant messages can be large; raise the line cap well above the default
+	// 64 KiB so a long turn is not silently dropped mid-line.
+	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+
+	var last string
+	for sc.Scan() {
+		var line struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Type != "assistant" {
+			continue
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(line.Message.Content, &blocks) != nil {
+			continue // content not an array (e.g. a bare string) — skip
+		}
+		var sb strings.Builder
+		invoking := false
+		for _, b := range blocks {
+			if b.Type == "tool_use" && b.Name == speakLastToolName {
+				invoking = true
+				break
+			}
+			if b.Type == "text" {
+				sb.WriteString(b.Text)
+			}
+		}
+		if invoking {
+			continue // the speak_last call itself — never voice the current turn
+		}
+		if strings.TrimSpace(sb.String()) != "" {
+			last = sb.String()
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("internal_error: read transcript: %w", err)
+	}
+	return last, nil
+}
+
+// runSpeakLast resolves the last assistant turn's text and delegates to the same
+// composition root as speak: the text rides the mcptext adapter exactly as an
+// inline `text` arg would, so defaults, validation, leveling, refusal, and the
+// receipt+transcript envelope are all single-sourced from runSpeakWithCache.
+func runSpeakLast(ctx context.Context, args speakLastArgs, cache *mcpsampling.ServerCache) (speakResponse, error) {
+	path := args.TranscriptPath
+	if path == "" {
+		p, err := newestTranscript(transcriptProjectsRoot())
+		if err != nil {
+			return speakResponse{}, err
+		}
+		path = p
+	}
+	text, err := lastAssistantText(path)
+	if err != nil {
+		return speakResponse{}, err
+	}
+	if strings.TrimSpace(text) == "" {
+		return speakResponse{}, errNoAssistantText
+	}
+	return runSpeakWithCache(ctx, speakArgs{
+		Text:         text,
+		Level:        args.Level,
+		Gender:       args.Gender,
+		Intelligence: args.Intelligence,
+	}, cache)
+}
+
+// speakLastHandler bridges the SDK's typed handler signature to runSpeakLast.
+// Mirrors speakHandler's dual-channel success result (manual TextContent blob +
+// auto-populated StructuredContent) and the mcpsampling session threading, so a
+// speak_last response is byte-shaped identically to a speak response. It closes
+// over deps.cache directly rather than the speakArgs-typed deps.run seam, since
+// speak_last has its own pre-pipeline resolution step; runSpeakLast and its
+// helpers stay unit-testable without the seam.
+func speakLastHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, speakLastArgs) (*mcp.CallToolResult, speakResponse, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args speakLastArgs) (*mcp.CallToolResult, speakResponse, error) {
+		if args.Intelligence == "mcpsampling" && req != nil && req.Session != nil {
+			ctx = mcpsampling.WithSamplingClient(ctx, req.Session)
+		}
+		resp, err := runSpeakLast(ctx, args, deps.cache)
+		if err != nil {
+			return nil, speakResponse{}, err
+		}
+		blob, mErr := json.Marshal(resp)
+		if mErr != nil {
+			return nil, speakResponse{}, fmt.Errorf("internal_error: marshal speak response: %w", mErr)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(blob)}},
+		}, resp, nil
+	}
+}
+
 // classifyPipelineErr — caller-error vs internal-error split, per
 // Decision v2. The split rule: anything the caller could fix by changing
 // the request maps to caller-error (and the wire message begins
@@ -682,6 +880,21 @@ func newServer(deps runDeps) *mcp.Server {
 		Name:        "speak",
 		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a `receipt` (planned duration + temp dir the renderer used) AND an after-the-fact per-block `transcript`: the verbatim spoken text, level, status, per-block duration, and — for refused blocks — the refusal reason. The transcript is block-granularity only (no word-level timing) and is present both in structuredContent and as a duplicate serialized-JSON text block (expand with ctrl+o). On very large documents the transcript is capped at 200 entries (head-keep): `transcript_truncated` is then true and `transcript_omitted_count` reports how many trailing entries were dropped (the dropped blocks are still counted in the receipt, so a truncated transcript is not an exhaustive refusal ledger), and `transcript_omitted_refused_count` reports how many of those dropped tail blocks were refusals (still spoken and counted in the receipt). Refusals stay inside the plan (honesty rule) — the call still succeeds with refused blocks listed in the transcript.",
 	}, speakHandler(deps))
+
+	// speak_last — narrate Claude's most recent COMPLETED assistant turn. The
+	// server reads its own Claude Code session transcript off disk (newest
+	// .jsonl under the projects root), extracts the last assistant turn's text
+	// EXCLUDING this speak_last invocation, and voices it through the same
+	// pipeline as speak. No external Stop hook or parse script. Works from any
+	// repo (user-scope registration + transcript located by mtime, not cwd).
+	// On-demand only — MCP servers cannot self-trigger, so this is not the
+	// "automatic every turn" path (that still needs a Stop hook). Same
+	// receipt+transcript envelope as speak; takes level/gender/intelligence.
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        speakLastToolName,
+		Description: "Narrate Claude's most recent completed assistant response via TTS, without being handed the text. The server reads its own Claude Code session transcript (newest .jsonl under the projects root) and voices the last assistant turn — excluding this speak_last call itself, so it speaks the PRIOR response, not its own preamble. Use it when the user asks to \"speak/read your last response\" out loud. Works from any repo. Args mirror speak: level (1 gist | 2 summary | 3 detail, default 1), gender (female | male, default female), intelligence (none | mcpsampling, default none); optional transcript_path pins a specific transcript instead of the newest. Returns the same receipt + per-block transcript envelope as speak. Caveats: locates the newest session by file mtime (with two live sessions, pass transcript_path); assumes one assistant message per turn.",
+	}, speakLastHandler(deps))
+
 	return server
 }
 

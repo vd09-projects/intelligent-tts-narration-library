@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -12,6 +12,7 @@ help:
 	@echo "Targets:"
 	@echo "  build                  — go build ./..."
 	@echo "  build-mcp              — go build ./cmd/narrate-mcp (compile MCP server in isolation)"
+	@echo "  build-mcp-bin          — build the MCP server into bin/narrate-mcp (the binary .mcp.json's launcher execs)"
 	@echo "  build-server           — go build ./cmd/narrate-server (compile HTTP escalate edge in isolation)"
 	@echo "  test                   — unit + golden fixtures (no audio, no subprocess)"
 	@echo "  test-race              — unit tests under the race detector (go test -race ./...)"
@@ -50,6 +51,13 @@ build:
 
 build-mcp:
 	go build ./cmd/narrate-mcp
+
+# Build the MCP server into bin/narrate-mcp — the binary that bin/narrate-mcp-launch
+# execs when Claude Code starts the project-scoped "narrate" server from .mcp.json.
+# bin/ is gitignored (build output), so a fresh clone must run this once before the
+# MCP server is usable. The launcher script itself is force-tracked.
+build-mcp-bin:
+	go build -o bin/narrate-mcp ./cmd/narrate-mcp
 
 build-server:
 	go build ./cmd/narrate-server

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/mcp.json",
+  "mcpServers": {
+    "narrate": {
+      "type": "stdio",
+      "command": "./bin/narrate-mcp-launch",
+      "args": [],
+      "env": {}
+    }
+  }
+}

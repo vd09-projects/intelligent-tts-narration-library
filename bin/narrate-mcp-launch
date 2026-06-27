@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Launcher for the narrate-mcp stdio server when registered as a Claude Code
+# MCP server. The server resolves the Kokoro wrapper at ./scripts/kokoro
+# (relative to cwd) and the models at ./models/, so cwd MUST be the repo
+# root. Claude Code inherits its own cwd to MCP servers, which is not
+# guaranteed to be this repo — so pin it here before exec.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+exec "$REPO_ROOT/bin/narrate-mcp" "$@"
