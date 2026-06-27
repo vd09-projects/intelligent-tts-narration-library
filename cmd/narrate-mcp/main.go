@@ -216,14 +216,26 @@ type transcriptEntry struct {
 
 // speakResponse — wraps speakReceipt under the `receipt` key and the per-block
 // spoken transcript under `transcript` (sibling, additive — issue #78). The
-// `receipt` shape is untouched (counter-metric). Additive future fields stay
-// admissible under the schema_version rule.
+// `receipt` shape is untouched (counter-metric). This is the MCP result
+// envelope, not plan.json — it has no schema_version field (that governs the
+// narration plan). The additive / ignore-unknown discipline (CLAUDE.md) applies
+// to this envelope by analogy: new fields are omitempty and absent unless they
+// carry signal, so consumers that ignore them see byte-identical output.
 type speakResponse struct {
 	Receipt speakReceipt `json:"receipt"`
 	// Transcript is the after-the-fact, block-granularity spoken transcript,
 	// in plan order. Present on the success path only (built after Narrate
-	// returns a nil error); an error return carries no transcript.
-	Transcript []transcriptEntry `json:"transcript" jsonschema:"after-the-fact per-block spoken transcript in plan order: verbatim text, level, status, duration, and refusal reason for refused blocks"`
+	// returns a nil error); an error return carries no transcript. Bounded to
+	// transcriptMaxEntries entries (issue #86) — see capTranscript.
+	Transcript []transcriptEntry `json:"transcript" jsonschema:"after-the-fact per-block spoken transcript in plan order: verbatim text, level, status, duration, and refusal reason for refused blocks; capped at 200 entries on very large documents"`
+	// TranscriptTruncated signals that the transcript was capped (issue #86):
+	// the document had more blocks than transcriptMaxEntries and the tail was
+	// dropped. omitempty → absent (byte-identical) on the common under-cap case.
+	TranscriptTruncated bool `json:"transcript_truncated,omitempty" jsonschema:"true when the transcript was capped because the document exceeded the per-response entry limit; absent otherwise"`
+	// TranscriptOmittedCount is how many trailing entries were dropped by the
+	// cap (issue #86). omitempty → absent (and byte-identical) when nothing was
+	// dropped. The dropped blocks are still counted in receipt.blocks_played.
+	TranscriptOmittedCount int `json:"transcript_omitted_count,omitempty" jsonschema:"number of trailing transcript entries dropped by the cap; absent when none were dropped"`
 }
 
 // runDeps — IO + behavior seams injected by tests. Production wires
@@ -362,10 +374,18 @@ func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.S
 
 	// Success path only: project the rendered plan's already-computed roster
 	// into the after-the-fact transcript. Refusals are data here, not errors.
-	// TODO(#86): cap transcript size on very large speak responses — unbounded today
+	// Then bound the roster (issue #86): a very large document ships its
+	// transcript twice (structuredContent + the duplicate serialized TextContent,
+	// ADR #77 D3), so an unbounded array doubles a huge payload. capTranscript
+	// keeps the head and drops the tail. NOTE: the dropped tail may include
+	// refused entries — those blocks are still counted in receipt.blocks_played,
+	// so a truncated transcript is NOT an exhaustive refusal ledger.
+	transcript, truncated, omitted := capTranscript(transcriptFromResult(receipt), transcriptMaxEntries)
 	return speakResponse{
-		Receipt:    receiptFromSink(receipt.SinkReceipt, outDir),
-		Transcript: transcriptFromResult(receipt),
+		Receipt:                receiptFromSink(receipt.SinkReceipt, outDir),
+		Transcript:             transcript,
+		TranscriptTruncated:    truncated,
+		TranscriptOmittedCount: omitted,
 	}, nil
 }
 
@@ -458,6 +478,37 @@ func transcriptFromResult(r pipeline.NarrateResult) []transcriptEntry {
 		})
 	}
 	return out
+}
+
+// transcriptMaxEntries bounds how many per-block transcript entries one speak
+// response carries (issue #86). The transcript ships twice in a single response
+// (structuredContent + the duplicate serialized-JSON TextContent, ADR #77 D3),
+// so an unbounded array doubles the cost on very large documents. 200 entries is
+// a generous bound for a "very large" document while keeping the duplicated
+// payload sane; it is a single named const so re-tuning is a one-line change,
+// and transcript_truncated / transcript_omitted_count let a consumer detect when
+// the bound bites. The cap drops the document tail (head-keep), never narration
+// content — the blocks were still voiced and counted in the receipt.
+const transcriptMaxEntries = 200
+
+// capTranscript bounds a transcript roster to limit entries, head-keep /
+// tail-truncate by entry count. Pure: no I/O, no logging, no global state.
+//
+// Under the limit (the common case) it returns the input slice UNCHANGED with
+// truncated=false, omitted=0 — no copy, no allocation — so the small-case
+// response serializes byte-identically (the omitempty signal fields stay absent
+// and the slice header is the same backing array). Over the limit it returns the
+// first limit entries (plan order preserved), truncated=true, and the number of
+// dropped trailing entries.
+//
+// A limit <= 0 is treated as "no cap" (a defensive contract, not a request to
+// drop everything): the input is returned unchanged with truncated=false,
+// omitted=0. The production caller always passes transcriptMaxEntries (200).
+func capTranscript(entries []transcriptEntry, limit int) (kept []transcriptEntry, truncated bool, omitted int) {
+	if limit <= 0 || len(entries) <= limit {
+		return entries, false, 0
+	}
+	return entries[:limit], true, len(entries) - limit
 }
 
 // classifyPipelineErr — caller-error vs internal-error split, per
@@ -604,7 +655,7 @@ func newServer(deps runDeps) *mcp.Server {
 	// it in the tool list, and mirrored in the README.
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "speak",
-		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a `receipt` (planned duration + temp dir the renderer used) AND an after-the-fact per-block `transcript`: the verbatim spoken text, level, status, per-block duration, and — for refused blocks — the refusal reason. The transcript is block-granularity only (no word-level timing) and is present both in structuredContent and as a duplicate serialized-JSON text block (expand with ctrl+o). Refusals stay inside the plan (honesty rule) — the call still succeeds with refused blocks listed in the transcript.",
+		Description: "Narrate a markdown document via TTS using the intelligent-tts-narration-library pipeline. Buffer the COMPLETE response and pass it as one `text` (or `source`) input — the planner needs the whole document and does not stream; partial/chunked calls are out of contract. Code blocks are voiced at a Level-2 floor (structural gist) for listen-mode. Returns a `receipt` (planned duration + temp dir the renderer used) AND an after-the-fact per-block `transcript`: the verbatim spoken text, level, status, per-block duration, and — for refused blocks — the refusal reason. The transcript is block-granularity only (no word-level timing) and is present both in structuredContent and as a duplicate serialized-JSON text block (expand with ctrl+o). On very large documents the transcript is capped at 200 entries (head-keep): `transcript_truncated` is then true and `transcript_omitted_count` reports how many trailing entries were dropped (the dropped blocks are still counted in the receipt, so a truncated transcript is not an exhaustive refusal ledger). Refusals stay inside the plan (honesty rule) — the call still succeeds with refused blocks listed in the transcript.",
 	}, speakHandler(deps))
 	return server
 }

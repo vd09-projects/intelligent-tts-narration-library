@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-cap-mcp-speak-transcript-head-keep-tail-truncate
+    title: "Cap the MCP speak per-block transcript via head-keep tail-truncate by entry count"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [transcript-cap, mcp, speak, head-keep, tail-truncate, observability, additive-compatible, omitempty, byte-identical, honesty-rule, issue-86, adr-77]
+    path: architecture/2026-06-27-cap-mcp-speak-transcript-head-keep-tail-truncate.md
+    summary: "Issue #86 bounds the previously-unbounded, double-shipped (structuredContent + serialized TextContent, ADR #77 D3) per-block transcript[] on the MCP speak receipt. DECISION: HEAD-KEEP TAIL-TRUNCATE by entry count via a single named const transcriptMaxEntries = 200, signaled by two additive omitempty fields (transcript_truncated, transcript_omitted_count) on speakResponse. A pure, total, allocation-free capTranscript helper is applied at the single runSpeak success-path site (projection transcriptFromResult and bounding stay independently testable; dual-channel handler untouched — capping the one struct before its single marshal bounds both channels). Under cap returns the input slice unchanged (false,0) so both fields elide and the wire response is BYTE-IDENTICAL to before; over cap returns entries[:200] with omitted=len-cap; cap<=0 is a defensive no-op; error path untouched (nil transcript). REJECTED elide-middle (breaks the listen transport's plan-order contiguity — consumers walk transcript[] from Order=0, a contiguous 0..N-1 prefix is exactly what a front-to-back listener reaches first); byte-budget cap (non-deterministic, forces mid-entry SpokenText truncation which leaks a partial-spoken-text variant, barred by the Channel-2 no-text-leak decision); caller-tunable speakArgs field (deferred — v1 envelope stays minimal). Bounding an observability receipt is NOT fabrication: honesty rule untouched (audio + plan unaffected, refused blocks still spoken at playback time and still counted in receipt.blocks_played from SinkReceipt), and a truncated transcript is documented as NOT an exhaustive refusal ledger in both the cap-site comment and the client-visible tool Description. Relates to ADR #77 (playback observability), the receipt-only-envelope decision, and the Channel-2 no-text-leak decision. Known follow-on (a deferred TASK, not a decision): refusal-aware omission accounting when a >200-block document drops tail refusals."
   - id: 2026-06-27-table-degrade-gist-shares-leveltable-parser
     title: "Table L2/L3 degrade gist and levelTable share one parseTable — byte-identity is structural, not test-dependent"
     date: 2026-06-27

@@ -305,7 +305,11 @@ type stubNarrator struct {
 	gotIntel  intelligence.IntelligenceAdapter
 	gotInput  adapter.InputAdapter
 	receipt   sink.SinkReceipt
-	err       error
+	// blockSummaries is the per-block roster the stub returns (nil by default
+	// so existing tests are unaffected). The transcript-cap test (issue #86)
+	// sets an oversized roster to drive capTranscript through real runSpeak.
+	blockSummaries []pipeline.BlockSummary
+	err            error
 	// outDirSnapshot captures whether outDir existed at Narrate time so
 	// the cleanup-assertion test can confirm the directory was created
 	// before the deferred RemoveAll fires (B3 fix).
@@ -326,7 +330,7 @@ func (s *stubNarrator) Narrate(ctx context.Context, ref plan.SourceRef, req pipe
 		_, statErr := os.Stat(s.gotOutDir)
 		s.outDirExistedAtNarrate = statErr == nil
 	}
-	return pipeline.NarrateResult{SinkReceipt: s.receipt}, s.err
+	return pipeline.NarrateResult{SinkReceipt: s.receipt, BlockSummaries: s.blockSummaries}, s.err
 }
 
 // withStubPipeline installs a stub narrator via the newPipeline seam,
