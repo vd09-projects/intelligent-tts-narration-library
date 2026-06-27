@@ -27,6 +27,12 @@
 //   - Temp dir removed exactly once by one owner: the listen path owns the
 //     RemoveAll. runNarrate suppresses its own defer-based removal for the
 //     listen path so the dir is not double-owned.
+//   - Interruptible idle read (issue #88): the blocking stdin read lives in a
+//     detached reader goroutine feeding byteCh; the loop selects over
+//     {byteCh, shutdown, ctx.Done()} so a kill -TERM delivered while idle is
+//     serviced (tty restored, child reaped) without a keypress. The reader
+//     reads exactly one byte per grant and parks between reads, so the g-target
+//     readLine (read from the loop goroutine) is never racing the same fd.
 //
 // Honesty rule (CLAUDE.md, non-negotiable): the on-screen controls are labeled
 // "Stop / Replay block", never "Pause". This controller does not implement true
@@ -350,12 +356,68 @@ func runListen(ctx context.Context, cfg listenConfig, timeline plan.Timeline) er
 		}
 	}
 
+	// Interruptible read (issue #88). A blocking cfg.readByte() is parked on a
+	// stdin syscall and cannot observe a shutdownRequest, so an external
+	// kill -TERM while the listener is idle at a keypress was not serviced until
+	// the next byte — leaving the tty raw and the afplay child unreaped. The fix
+	// moves the read into a detached goroutine that feeds bytes on byteCh; the
+	// loop selects over {byteCh, shutdown, ctx.Done()} so an idle shutdown wins
+	// immediately and runs cleanup without a keypress.
+	//
+	// Single-reader-of-stdin invariant: the reader reads exactly one byte per
+	// grant (a token on wantByte) and PARKS on wantByte between reads — it is
+	// never blocked on a stdin read unless the loop granted it. The g-target
+	// path (cfg.readLine) reads stdin directly from the loop goroutine; because
+	// the loop withholds the grant across that read, the reader is parked and
+	// not racing the same fd. The loop maintains exactly one outstanding grant.
+	//
+	// The reader is detached: cleanup never joins it (planner-task.md). On exit
+	// the loop's defer cancels readerCtx; a reader parked on wantByte returns at
+	// once, and a reader blocked on an in-flight cfg.readByte() returns as soon
+	// as that read yields a byte/EOF (the byteCh send then loses to
+	// readerCtx.Done()). The process is on its way out either way.
+	type byteRead struct {
+		b   byte
+		err error
+	}
+	byteCh := make(chan byteRead, 1)
+	wantByte := make(chan struct{}, 1)
+	readerCtx, stopReader := context.WithCancel(ctx)
+	defer stopReader()
+	go func() {
+		for {
+			select {
+			case <-wantByte:
+			case <-readerCtx.Done():
+				return
+			}
+			b, err := cfg.readByte()
+			select {
+			case byteCh <- byteRead{b: b, err: err}:
+			case <-readerCtx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	// grantRead asks the reader for exactly one byte. Non-blocking send over a
+	// buffered(1) channel: with the one-outstanding-grant discipline the buffer
+	// is always empty here, and the default is pure belt-and-suspenders against
+	// an accidental double-grant (which would let the reader read ahead).
+	grantRead := func() {
+		select {
+		case wantByte <- struct{}{}:
+		default:
+		}
+	}
+
 	pos := 0
 	spawn(pos)
+	grantRead()
 
 	for {
-		// Service a shutdown request without blocking on stdin: if the signal
-		// handler has asked us to stop, do the cleanup and return now.
 		select {
 		case <-cfg.shutdown:
 			cleanup()
@@ -363,61 +425,69 @@ func runListen(ctx context.Context, cfg listenConfig, timeline plan.Timeline) er
 		case <-ctx.Done():
 			cleanup()
 			return nil
-		default:
-		}
+		case r := <-byteCh:
+			if r.err != nil {
+				// A read error after a shutdown signal closed stdin is expected;
+				// distinguish a genuine read failure from a clean shutdown.
+				select {
+				case <-cfg.shutdown:
+					cleanup()
+					return nil
+				default:
+				}
+				cleanup()
+				if errors.Is(r.err, io.EOF) {
+					return nil
+				}
+				return fmt.Errorf("listen: read stdin: %w", r.err)
+			}
 
-		b, err := cfg.readByte()
-		if err != nil {
-			// A read error after a shutdown signal closed stdin is expected;
-			// distinguish a genuine read failure from a clean shutdown.
-			select {
-			case <-cfg.shutdown:
+			switch r.b {
+			case 'n':
+				if pos < len(nav)-1 {
+					pos++
+					spawn(pos)
+				}
+				grantRead()
+			case 'b':
+				if pos > 0 {
+					pos--
+					spawn(pos)
+				}
+				grantRead()
+			case ' ':
+				// Stop / Replay block (honesty rule: never "Pause"). Stop the
+				// current child and replay the SAME block from the top.
+				spawn(pos)
+				grantRead()
+			case 'g':
+				// Read the target line directly here. The reader is parked on
+				// wantByte (no grant outstanding across this read), so this is
+				// the sole stdin reader — the single-reader invariant holds.
+				_, _ = fmt.Fprint(cfg.out, "  go to block index (0-based): \r\n")
+				line, lerr := cfg.readLine()
+				if lerr != nil {
+					_, _ = fmt.Fprintf(cfg.out, "  ! could not read target: %v\r\n", lerr)
+					grantRead()
+					continue
+				}
+				target, perr := parseBlockIndex(line, len(timeline.Blocks))
+				if perr != nil {
+					_, _ = fmt.Fprintf(cfg.out, "  ! %v\r\n", perr)
+					grantRead()
+					continue
+				}
+				pos = nearestNavigable(nav, target)
+				spawn(pos)
+				grantRead()
+			case 'q':
 				cleanup()
 				return nil
 			default:
+				// Unknown key — ignore. Keeps the loop forgiving in raw mode
+				// where arrow keys etc. arrive as escape sequences.
+				grantRead()
 			}
-			cleanup()
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("listen: read stdin: %w", err)
-		}
-
-		switch b {
-		case 'n':
-			if pos < len(nav)-1 {
-				pos++
-				spawn(pos)
-			}
-		case 'b':
-			if pos > 0 {
-				pos--
-				spawn(pos)
-			}
-		case ' ':
-			// Stop / Replay block (honesty rule: never "Pause"). Stop the
-			// current child and replay the SAME block from the top.
-			spawn(pos)
-		case 'g':
-			_, _ = fmt.Fprint(cfg.out, "  go to block index (0-based): \r\n")
-			line, lerr := cfg.readLine()
-			if lerr != nil {
-				_, _ = fmt.Fprintf(cfg.out, "  ! could not read target: %v\r\n", lerr)
-				continue
-			}
-			target, perr := parseBlockIndex(line, len(timeline.Blocks))
-			if perr != nil {
-				_, _ = fmt.Fprintf(cfg.out, "  ! %v\r\n", perr)
-				continue
-			}
-			pos = nearestNavigable(nav, target)
-			spawn(pos)
-		case 'q':
-			cleanup()
-			return nil
-		default:
-			// Unknown key — ignore. Keeps the loop forgiving in raw mode where
-			// arrow keys etc. arrive as escape sequences.
 		}
 	}
 }
