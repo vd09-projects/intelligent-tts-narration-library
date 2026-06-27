@@ -63,7 +63,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,6 +72,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -85,6 +85,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence/mcpsampling"
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/errclass"
+	"github.com/vd09-projects/intelligent-tts-narration-library/internal/transcript"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
@@ -616,66 +617,39 @@ func newestTranscript(root string) (string, error) {
 }
 
 // lastAssistantText extracts the verbatim text of the most recent COMPLETED
-// assistant turn from a Claude Code transcript .jsonl. It joins the text blocks
-// of each assistant line and returns the last non-empty join, EXCLUDING any
-// assistant line that itself invoked speak_last — that is the current turn, so
-// excluding it makes the tool speak the PRIOR response rather than its own
-// preamble. Assumes one assistant message per turn (the common case); a turn
-// split into a separate text line + tool line would still voice the text line.
+// assistant turn from a Claude Code transcript .jsonl. It returns the last
+// non-empty assistant join, EXCLUDING any assistant turn that itself invoked
+// speak_last — that is the current turn, so excluding it makes the tool speak
+// the PRIOR response rather than its own preamble. Assumes one assistant
+// message per turn (the common case); a turn split into a separate text line +
+// tool line would still voice the text line.
 //
-// Tolerant by design: non-JSON lines, schema-variant lines, and string-valued
-// content are skipped rather than erroring — transcripts evolve.
+// The file scan, the 16 MiB line buffer, and the tolerance (non-JSON /
+// schema-variant / unrecognised-content lines skipped, never errored) now live
+// in the shared internal/transcript parser. This function is the speak_last
+// POLICY layer over the full ordered message list: the speak_last self-skip is
+// applied caller-side via ToolNames so the parser stays tool-agnostic.
 func lastAssistantText(path string) (string, error) {
-	f, err := os.Open(path)
+	msgs, err := transcript.ParseMessages(path)
 	if err != nil {
-		return "", fmt.Errorf("internal_error: open transcript: %w", err)
+		return "", err
 	}
-	defer func() { _ = f.Close() }()
-
-	sc := bufio.NewScanner(f)
-	// Assistant messages can be large; raise the line cap well above the default
-	// 64 KiB so a long turn is not silently dropped mid-line.
-	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
-
 	var last string
-	for sc.Scan() {
-		var line struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Type != "assistant" {
+	for _, m := range msgs {
+		if m.Role != "assistant" {
 			continue
 		}
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-			Name string `json:"name"`
+		// Exclude the invoking speak_last turn (the current one) — drop the whole
+		// turn, its text included, exactly as the pre-refactor break-on-speak_last
+		// path did.
+		if slices.Contains(m.ToolNames, speakLastToolName) {
+			continue
 		}
-		if json.Unmarshal(line.Message.Content, &blocks) != nil {
-			continue // content not an array (e.g. a bare string) — skip
+		// Skip turns with no spoken text (e.g. tool-only turns). Keep the
+		// untrimmed join, matching the historical behaviour.
+		if strings.TrimSpace(m.Text) != "" {
+			last = m.Text
 		}
-		var sb strings.Builder
-		invoking := false
-		for _, b := range blocks {
-			if b.Type == "tool_use" && b.Name == speakLastToolName {
-				invoking = true
-				break
-			}
-			if b.Type == "text" {
-				sb.WriteString(b.Text)
-			}
-		}
-		if invoking {
-			continue // the speak_last call itself — never voice the current turn
-		}
-		if strings.TrimSpace(sb.String()) != "" {
-			last = sb.String()
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return "", fmt.Errorf("internal_error: read transcript: %w", err)
 	}
 	return last, nil
 }
