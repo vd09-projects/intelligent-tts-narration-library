@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-transcript-omitted-refused-count-additive-field
+    title: "Report dropped refused blocks via additive transcript_omitted_refused_count on MCP speak receipt"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [transcript-cap, mcp, speak, refusal-aware, omission-accounting, additive-compatible, omitempty, byte-identical, channel-2-no-text-leak, honesty-rule, issue-98, issue-86]
+    path: architecture/2026-06-27-transcript-omitted-refused-count-additive-field.md
+    summary: "Follow-on to #86 (named there as deferred refusal-aware omission accounting). When a >200-block document's truncated transcript tail drops refused blocks, the MCP speak receipt reports HOW MANY via a new additive omitempty field transcript_omitted_refused_count (enum-sourced: entry.Status == string(plan.StatusRefused)). Chose Option A (count field) over Option B (refusal-preferring retention). Option B REJECTED: breaks plan-order contiguity (same property that killed elide-middle in #86), makes capTranscript non-pure/allocation-bearing, and re-adds spoken/source text to the wire (violates Channel-2 no-text-leak). Count is additive-compatible, byte-identical under cap (omitempty elides), keeps capTranscript pure. Honesty rule untouched (audio+plan unaffected; refused blocks still spoken and counted in blocks_played). Accepted limitation: count-only, not an exhaustive refusal ledger. File cmd/narrate-mcp/main.go."
   - id: 2026-06-27-cap-mcp-speak-transcript-head-keep-tail-truncate
     title: "Cap the MCP speak per-block transcript via head-keep tail-truncate by entry count"
     date: 2026-06-27

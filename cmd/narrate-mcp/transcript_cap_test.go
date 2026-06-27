@@ -23,6 +23,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
+	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 )
 
@@ -82,7 +83,13 @@ func TestCapTranscript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			entries := makeEntries(tc.in)
-			kept, truncated, omitted := capTranscript(entries, tc.limit)
+			kept, truncated, omitted, omittedRefused := capTranscript(entries, tc.limit)
+			// makeEntries builds all-voiced rosters, so no refusals can fall in
+			// the dropped tail here; omittedRefused must be 0 on every row. The
+			// refusal-positioning cases live in TestCapTranscript_OmittedRefusedCount.
+			if omittedRefused != 0 {
+				t.Errorf("omittedRefused: want 0 for all-voiced roster, got %d", omittedRefused)
+			}
 
 			if len(kept) != tc.wantKept {
 				t.Errorf("kept len: want %d, got %d", tc.wantKept, len(kept))
@@ -132,7 +139,7 @@ func TestCapTranscript_RefusedHeadRetainsRefusalFields(t *testing.T) {
 	entries[0].RefusalReason = "refuse_no_intelligence"
 	entries[0].RefusalMessage = "skipped: prose too large to voice without intelligence"
 
-	kept, truncated, omitted := capTranscript(entries, limit)
+	kept, truncated, omitted, _ := capTranscript(entries, limit)
 	if !truncated || omitted != limit {
 		t.Fatalf("setup expects truncation: got truncated=%v omitted=%d", truncated, omitted)
 	}
@@ -261,6 +268,159 @@ func TestSpeakHandler_SmallTranscript_OmitemptyAbsent(t *testing.T) {
 	}
 	if strings.Contains(tc.Text, "transcript_omitted_count") {
 		t.Errorf("omitempty: transcript_omitted_count must be absent under cap, got %s", tc.Text)
+	}
+}
+
+// makeEntriesWithRefusedAt builds n transcript entries (as makeEntries) then
+// marks the entries at the given 0-based indices refused, with the status sourced
+// from string(plan.StatusRefused) — the SAME enum production compares against — so
+// the test moves in lockstep if the enum string ever changes. Refused rows carry
+// the refusal fields a real refused block would, to prove only Status drives the
+// count (text is never surfaced — count only).
+func makeEntriesWithRefusedAt(n int, refusedIdx ...int) []transcriptEntry {
+	out := makeEntries(n)
+	for _, i := range refusedIdx {
+		out[i].Status = string(plan.StatusRefused)
+		out[i].SpokenText = ""
+		out[i].RefusalReason = "refuse_no_intelligence"
+		out[i].RefusalMessage = "skipped: prose too large to voice without intelligence"
+	}
+	return out
+}
+
+// TestCapTranscript_OmittedRefusedCount is the issue #98 coverage: how many
+// refused blocks fell in the DROPPED TAIL (entries[limit:]). The count is
+// enum-sourced (string(plan.StatusRefused)) and scoped to the dropped tail only —
+// refusals surviving in the kept head are NOT counted. Each row also marshals a
+// speakResponse threaded with the helper's return values to assert the
+// transcript_omitted_refused_count key is present (non-zero) or absent (omitempty
+// when zero) at the wire level — the byte-identical guarantee for the zero case.
+func TestCapTranscript_OmittedRefusedCount(t *testing.T) {
+	t.Parallel()
+	const limit = 5
+	tests := []struct {
+		name        string
+		entries     []transcriptEntry
+		limit       int
+		wantTrunc   bool
+		wantOmit    int
+		wantOmitRef int
+		wantKeyJSON bool // transcript_omitted_refused_count present in marshalled response
+	}{
+		{
+			// Case 1: under-cap — refusals exist but nothing is dropped, so the
+			// tail count is 0 and the key is absent (byte-identical small case).
+			name:        "under-cap-refusals-present-not-dropped",
+			entries:     makeEntriesWithRefusedAt(limit-1, 0, 1),
+			limit:       limit,
+			wantTrunc:   false,
+			wantOmit:    0,
+			wantOmitRef: 0,
+			wantKeyJSON: false,
+		},
+		{
+			// Case 2: over-cap with R refused in the dropped tail → count == R.
+			// limit=5, total=8 → tail is indices 5,6,7; mark 5 and 7 refused.
+			name:        "over-cap-refused-in-tail",
+			entries:     makeEntriesWithRefusedAt(limit+3, 5, 7),
+			limit:       limit,
+			wantTrunc:   true,
+			wantOmit:    3,
+			wantOmitRef: 2,
+			wantKeyJSON: true,
+		},
+		{
+			// Case 3: mixed — refusals in BOTH the kept head (0,1) and the
+			// dropped tail (5,6) → count is tail-only (2), NOT head+tail (4).
+			name:        "mixed-head-and-tail-counts-tail-only",
+			entries:     makeEntriesWithRefusedAt(limit+3, 0, 1, 5, 6),
+			limit:       limit,
+			wantTrunc:   true,
+			wantOmit:    3,
+			wantOmitRef: 2,
+			wantKeyJSON: true,
+		},
+		{
+			// Case 4: over-cap but all refusals sit in the kept head → tail count
+			// is 0 and the key is absent (omitempty proof on the over-cap path).
+			name:        "over-cap-no-refused-in-tail",
+			entries:     makeEntriesWithRefusedAt(limit+3, 0, 1),
+			limit:       limit,
+			wantTrunc:   true,
+			wantOmit:    3,
+			wantOmitRef: 0,
+			wantKeyJSON: false,
+		},
+		{
+			// Case 5: entire dropped tail refused → count == omitted == len-limit.
+			name:        "entire-dropped-tail-refused",
+			entries:     makeEntriesWithRefusedAt(limit+3, 5, 6, 7),
+			limit:       limit,
+			wantTrunc:   true,
+			wantOmit:    3,
+			wantOmitRef: 3,
+			wantKeyJSON: true,
+		},
+		{
+			// Case 6: limit<=0 no-cap defensive contract — nothing dropped, so
+			// no refusals are counted even though the roster contains some.
+			name:        "limit-zero-no-cap",
+			entries:     makeEntriesWithRefusedAt(limit+3, 0, 6, 7),
+			limit:       0,
+			wantTrunc:   false,
+			wantOmit:    0,
+			wantOmitRef: 0,
+			wantKeyJSON: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			kept, truncated, omitted, omittedRefused := capTranscript(tc.entries, tc.limit)
+			if truncated != tc.wantTrunc {
+				t.Errorf("truncated: want %v, got %v", tc.wantTrunc, truncated)
+			}
+			if omitted != tc.wantOmit {
+				t.Errorf("omitted: want %d, got %d", tc.wantOmit, omitted)
+			}
+			if omittedRefused != tc.wantOmitRef {
+				t.Errorf("omittedRefused: want %d, got %d", tc.wantOmitRef, omittedRefused)
+			}
+			// Case 5 invariant: when the entire dropped tail is refused, the
+			// refused count equals the omitted count.
+			if tc.name == "entire-dropped-tail-refused" && omittedRefused != omitted {
+				t.Errorf("entire-tail-refused: omittedRefused (%d) must equal omitted (%d)", omittedRefused, omitted)
+			}
+
+			// Wire-level: thread the helper output into a speakResponse exactly as
+			// the production builder does, marshal, and assert key presence/absence.
+			resp := speakResponse{
+				Receipt:                       speakReceipt{BlocksPlayed: len(tc.entries)},
+				Transcript:                    kept,
+				TranscriptTruncated:           truncated,
+				TranscriptOmittedCount:        omitted,
+				TranscriptOmittedRefusedCount: omittedRefused,
+			}
+			blob, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatalf("marshal speakResponse: %v", err)
+			}
+			hasKey := strings.Contains(string(blob), "transcript_omitted_refused_count")
+			if hasKey != tc.wantKeyJSON {
+				t.Errorf("transcript_omitted_refused_count key presence: want %v, got %v\nJSON: %s",
+					tc.wantKeyJSON, hasKey, blob)
+			}
+			// When present, the marshalled value must equal the count.
+			if tc.wantKeyJSON {
+				var decoded speakResponse
+				if err := json.Unmarshal(blob, &decoded); err != nil {
+					t.Fatalf("unmarshal speakResponse: %v", err)
+				}
+				if decoded.TranscriptOmittedRefusedCount != tc.wantOmitRef {
+					t.Errorf("round-trip count: want %d, got %d", tc.wantOmitRef, decoded.TranscriptOmittedRefusedCount)
+				}
+			}
+		})
 	}
 }
 
