@@ -279,6 +279,65 @@ func TestRunListen_KeypressSequence(t *testing.T) {
 	assertCleanupRan(t, rec)
 }
 
+// TestRunListen_NavigationBoundaries pins the two runListen navigation guards
+// that make a keypress a silent no-op at a boundary: 'n' at the last navigable
+// block (listen.go: if pos < len(nav)-1) and 'b' at position 0 (if pos > 0).
+//
+// pos is a runListen local, not observable from a test. The no-op is asserted
+// indirectly: spawn count (rec.playN) is 1 (the opening spawn(0)) plus one per
+// navigation that actually moved, and the last wav played (rec.playArgs)
+// pins which block pos landed on. A boundary no-op adds zero spawns and leaves
+// the last wav unchanged.
+//
+// Failure-mode note: deleting either guard does NOT cleanly bump the count by
+// one. 'n' at the last block would do pos++ then spawn(pos) with pos == len(nav),
+// indexing nav[len(nav)] — out of range; 'b' at 0 would index nav[-1]. Both
+// panic. Detection still holds (a panic fails the test loudly); the
+// "count bumps by one" framing is just imprecise.
+func TestRunListen_NavigationBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		script      string
+		wantPlayN   int32
+		wantLastWav string
+	}{
+		{"n at last navigable is no-op", "nnn", 3, "/tmp/audio/c.wav"},
+		{"b at position zero is no-op", "b", 1, "/tmp/audio/a.wav"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &recordingCleanup{}
+			cfg := listenConfig{
+				binary:    "afplay",
+				audioDir:  "/tmp/audio",
+				play:      rec.stubPlay,
+				restore:   rec.restore,
+				removeAll: rec.removeAll,
+				tempDir:   "/tmp/narrate-xyz",
+				readByte:  scriptedBytes(tc.script),
+				readLine:  func() (string, error) { return "", nil },
+				shutdown:  make(chan shutdownRequest),
+				out:       io.Discard,
+			}
+			if err := runListen(context.Background(), cfg, navTimeline()); err != nil {
+				t.Fatalf("runListen returned error: %v", err)
+			}
+			if got := atomic.LoadInt32(&rec.playN); got != tc.wantPlayN {
+				t.Fatalf("play invoked %d times, want %d", got, tc.wantPlayN)
+			}
+			rec.mu.Lock()
+			last := rec.playArgs[len(rec.playArgs)-1]
+			rec.mu.Unlock()
+			if last != tc.wantLastWav {
+				t.Fatalf("last wav played = %q, want %q", last, tc.wantLastWav)
+			}
+			assertCleanupRan(t, rec)
+		})
+	}
+}
+
 func TestRunListen_GoTo(t *testing.T) {
 	t.Parallel()
 	rec := &recordingCleanup{}
