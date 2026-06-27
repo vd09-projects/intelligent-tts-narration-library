@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -112,11 +111,13 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 	if !isTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("%w: --listen requires an interactive terminal (stdin is not a tty)", errFlagValidation)
 	}
-	// Fail-fast 2: afplay must exist. The whole listen path is afplay-driven
-	// (macOS phase one); a missing binary is a clean pre-loop refusal, not a
-	// mid-playback surprise.
-	if _, lerr := exec.LookPath(listenAfplayBinary); lerr != nil {
-		return fmt.Errorf("listen: %q not found on PATH (macOS afplay required, phase one): %w", listenAfplayBinary, lerr)
+	// Fail-fast 2: the active playback engine's pre-loop check. The seam is
+	// build-tagged (listen_afplay.go vs listen_oto.go): the default afplay build
+	// fails fast if afplay is missing from PATH; the oto spike build is a no-op
+	// here (its engine failure surfaces from oto.NewContext instead). A clean
+	// pre-loop refusal, not a mid-playback surprise.
+	if perr := listenEnginePreflight(); perr != nil {
+		return perr
 	}
 
 	// Render the whole plan into a capturing sink — no playback, no durable
@@ -187,10 +188,12 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 	}()
 
 	readByte, readLine := stdinReaders()
+	// cfg.play is left unset here: the build-tagged driveListen owns engine
+	// wiring (the afplay seam fills in playBlock; the oto seam ignores play and
+	// drives its own in-process player). This keeps listen_run.go engine-neutral.
 	cfg := listenConfig{
 		binary:    listenAfplayBinary,
 		audioDir:  res.Audio.Dir,
-		play:      playBlock,
 		restore:   restore,
 		removeAll: os.RemoveAll,
 		tempDir:   outDir,
@@ -200,7 +203,7 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 		out:       stdout,
 	}
 
-	if lerr := runListen(ctx, cfg, res.Timeline); lerr != nil {
+	if lerr := driveListen(ctx, cfg, res.Timeline); lerr != nil {
 		return lerr
 	}
 	_, _ = fmt.Fprintln(stderr, "listen: done")

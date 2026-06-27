@@ -34,13 +34,18 @@
 //     reads exactly one byte per grant and parks between reads, so the g-target
 //     readLine (read from the loop goroutine) is never racing the same fd.
 //
-// Honesty rule (CLAUDE.md, non-negotiable): the on-screen controls are labeled
-// "Stop / Replay block", never "Pause". This controller does not implement true
-// mid-block pause/resume (SIGSTOP/SIGCONT) — space stops the current block and
-// replays it from the top. Block-level only: it plays the whole per-block WAV;
-// there is no sub-block or word-level seek.
+// Honesty rule (CLAUDE.md, non-negotiable): on the DEFAULT (afplay) build the
+// on-screen controls are labeled "Stop / Replay block", never "Pause" — afplay
+// cannot pause the audio device (SIGSTOP/SIGCONT does not freeze it), so space
+// stops the current block and replays it from the top. The build-tagged spike
+// seam in listen_oto.go (//go:build oto, issue #100) is the only build that
+// labels space "Pause / Resume", because oto v3 delivers true device-level
+// pause. The active label is the build-tagged listenControlsLine constant, so
+// it can never drift from the active key binding. Block-level only either way:
+// the whole per-block WAV is the unit; there is no sub-block or word-level seek.
 //
-// macOS-only, phase one — same boundary as sink/ephemeral (afplay).
+// macOS-only, phase one — same boundary as sink/ephemeral (afplay) and the oto
+// purego/CoreAudio path.
 package main
 
 import (
@@ -51,29 +56,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 )
-
-// listenPerBlockTimeout caps a single afplay invocation on the listen path.
-// Mirrors ephemeral.DefaultPerBlockTimeout intent — a single per-block clip is
-// short, so a generous ceiling only matters as a backstop against a wedged
-// afplay. A keypress (n/b/space/g/q) interrupts well before this elapses in
-// normal use; the timeout exists for the pathological "afplay never returns"
-// case.
-const listenPerBlockTimeout = 60 * time.Second
-
-// listenWaitDelay is the grace window handed to exec.Cmd.WaitDelay. After the
-// call context is cancelled (keypress interrupt, timeout, or shutdown), the
-// os/exec machinery sends its own interrupt; if the child has not exited within
-// WaitDelay it is hard-killed (SIGKILL) and the I/O pipes are force-closed so
-// cmd.Wait() can never block forever. This replaces the hand-rolled
-// kill-grace timer + drain-the-done-chan dance in sink/ephemeral
-// (decision 2026-06-25-listen-transport-keypress-loop-not-tui mandates
-// exec.Cmd.WaitDelay over hand-rolled grace). 200ms is comfortably longer than
-// afplay's observed teardown.
-const listenWaitDelay = 200 * time.Millisecond
 
 // playFn is the per-block playback seam runListen drives. Production passes
 // playBlock; tests pass a stub that blocks until ctx cancel (to exercise the
@@ -82,63 +67,14 @@ const listenWaitDelay = 200 * time.Millisecond
 // The seam takes a *started* contract: it spawns the child, returns the handle
 // so the caller (the loop) owns reaping, and blocks until the child exits or
 // ctx is cancelled. See playBlock for the production implementation.
+//
+//nolint:unused // afplay seam — live in the default (!oto) build + listen_test.go; intentionally dormant under -tags oto, which compiles the listen_oto.go seam instead. Removed when #101 collapses the build-tag pair.
 type playFn func(ctx context.Context, binary, wavPath string) (*exec.Cmd, error)
 
-// playBlock spawns `afplay <wavPath>` and waits for it under ctx, mirroring the
-// reaping discipline of sink/ephemeral.playWithAfplay but using
-// exec.Cmd.WaitDelay instead of a hand-rolled kill-grace timer + done-chan
-// drain.
-//
-// Returns the started *exec.Cmd so the caller owns the handle for an explicit
-// kill+Wait on the next transition (reap-before-spawn). The returned cmd has
-// already been Wait()ed by the time this function returns nil/err in the
-// non-cancelled case; on ctx cancel the returned cmd may still be terminating,
-// and the caller's kill+Wait is the authoritative reap.
-//
-// Behavior:
-//   - ctx cancelled before/while playing → returns ctx.Err() (wrapped). The
-//     os/exec WaitDelay backstop guarantees the child is SIGKILLed and reaped.
-//   - afplay exits non-zero on its own → wrapped exec error.
-//   - clean exit → nil.
-func playBlock(ctx context.Context, binary, wavPath string) (*exec.Cmd, error) {
-	callCtx, cancel := context.WithTimeout(ctx, listenPerBlockTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(callCtx, binary, wavPath)
-	// WaitDelay: once callCtx is cancelled, exec sends its interrupt; if the
-	// child has not exited within listenWaitDelay, exec force-kills it and
-	// closes the I/O so cmd.Wait() returns. This is the decision-mandated
-	// replacement for the ephemeral hand-rolled grace timer.
-	cmd.WaitDelay = listenWaitDelay
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start afplay: %w", err)
-	}
-
-	// Buffered so the wait goroutine cannot leak if we return on ctx.Done()
-	// before Wait() returns. The WaitDelay backstop bounds how long Wait()
-	// can block after cancellation.
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	select {
-	case err := <-done:
-		if cerr := callCtx.Err(); cerr != nil {
-			// Cancelled/timed out: surface the ctx cause, not the
-			// "signal: killed" exec wrapper.
-			return cmd, cerr
-		}
-		if err != nil {
-			return cmd, fmt.Errorf("afplay: %w", err)
-		}
-		return cmd, nil
-	case <-callCtx.Done():
-		// Cancellation requested. WaitDelay guarantees the child is reaped;
-		// drain done so the wait goroutine exits, then surface the ctx cause.
-		<-done
-		return cmd, callCtx.Err()
-	}
-}
+// The concrete afplay implementation of playFn (playBlock) and its timeout
+// constants live in the build-tagged sibling listen_afplay.go (//go:build
+// !oto) so the default/shipped seam is paired with the //go:build oto spike
+// seam in listen_oto.go. See those files and printLegend's listenControlsLine.
 
 // navigableBlocks returns the positions (indices into timeline.Blocks) of the
 // blocks a listener can navigate to with n/b/g: those with a non-empty AudioRef
@@ -243,9 +179,10 @@ type shutdownRequest struct{}
 // unit-testable without a real tty, real afplay, or a real signal. Production
 // wires these in runNarrate; tests pass stubs.
 type listenConfig struct {
-	binary    string                 // afplay binary path.
-	audioDir  string                 // render temp dir holding per-block WAVs.
-	play      playFn                 // per-block playback seam (playBlock in prod).
+	binary   string // afplay binary path.
+	audioDir string // render temp dir holding per-block WAVs.
+	//nolint:unused // afplay seam (playBlock in prod); set only by the !oto driver, dormant under -tags oto.
+	play      playFn
 	restore   func()                 // idempotent tty restore (from enterRaw).
 	removeAll func(string) error     // temp-dir removal seam (os.RemoveAll in prod).
 	tempDir   string                 // session temp dir the loop owns removal of.
@@ -259,6 +196,8 @@ type listenConfig struct {
 // reaped flag. The flag is the intra-goroutine double-Wait guard
 // (planner-task.md): the loop reaps a child exactly once even though the reap
 // is reachable from several branches (next transition, replay, quit, shutdown).
+//
+//nolint:unused // afplay seam — dormant under -tags oto (see playFn).
 type childHandle struct {
 	cmd    *exec.Cmd
 	reaped bool
@@ -268,6 +207,8 @@ type childHandle struct {
 // nil handle, an already-reaped handle, or a handle whose cmd already exited is
 // a safe no-op. Only the loop goroutine calls this, so no locking is needed —
 // the single-owner model is the synchronization.
+//
+//nolint:unused // afplay seam — dormant under -tags oto (see playFn).
 func (h *childHandle) reap() {
 	if h == nil || h.cmd == nil || h.reaped {
 		return
@@ -304,6 +245,8 @@ func (h *childHandle) reap() {
 // fails irrecoverably (a play error does NOT stop the loop — a failed block
 // surfaces and the listener can space-replay or move on, per the
 // no-retry/manual-replay stance).
+//
+//nolint:unused // afplay seam — driven by the !oto driveListen + listen_test.go; the -tags oto build uses runListenOto (listen_oto.go) instead. Both collapse into one loop in #101.
 func runListen(ctx context.Context, cfg listenConfig, timeline plan.Timeline) error {
 	nav := navigableBlocks(timeline)
 	if len(nav) == 0 {
@@ -533,7 +476,11 @@ func printLegend(w io.Writer, timeline plan.Timeline, nav []int) {
 	}
 	_, _ = fmt.Fprint(w, "\r\n")
 	_, _ = fmt.Fprint(w, "Listen mode — single-key transport (block-level)\r\n")
-	_, _ = fmt.Fprint(w, "  n next   b back   space Stop / Replay block   g go-to   q quit\r\n")
+	// listenControlsLine is build-tagged (listen_afplay.go vs listen_oto.go) so
+	// the on-screen label can never drift from the active key binding: the
+	// default afplay build prints "Stop / Replay block" (honesty rule — no true
+	// pause), the oto spike build prints "Pause / Resume" (true device pause).
+	_, _ = fmt.Fprintf(w, "  %s\r\n", listenControlsLine)
 	_, _ = fmt.Fprintf(w, "  %d blocks, %d navigable (empty/refused/zero-duration shown but skipped)\r\n", len(timeline.Blocks), len(nav))
 	_, _ = fmt.Fprint(w, "\r\n")
 	for i, bt := range timeline.Blocks {

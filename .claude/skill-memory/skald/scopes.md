@@ -621,3 +621,23 @@ scopes:
       field removed/renamed/retyped, no deprecation). Honesty boundary noted:
       capping an observability receipt, not fabrication — no Refusal involved.
       Plan persisted draft (awaiting user approval before sindri consumes).
+
+  - slug: spike-oto-v3-listen-pause-100
+    title: oto v3 listen-path wiring + true Pause/Resume by-ear spike (#100)
+    created: 2026-06-27
+    reasoning: |
+      Spike for GitHub issue #100 (parent research #92) — first wiring of the
+      accepted 2026-06-27 true-pause-via-oto-v3-no-CGo decision into the
+      cmd/narrate listen path. Proves github.com/ebitengine/oto/v3 can consume
+      real Kokoro 24 kHz mono int16 PCM via io.Reader and deliver true
+      Pause()/Resume() by ear, behind a //go:build oto tag so the shipped afplay
+      run-listen loop stays the default and untouched. spike- prefix marks it a
+      throwaway-grade proof (not the production player — that is #101);
+      oto-v3-listen-pause qualifier captures the crux; issue-numbered suffix
+      continues the convention. Slug pre-supplied + pre-approved via --scope in
+      the orchestration prompt (build-session single-skill runner). Planned via
+      mimir task depth, no overlays (solo project; concurrency model already
+      handled by the existing transport; observability/cross-team silenced by
+      mimir never_overlays). Plan persisted draft (awaiting user approval before
+      sindri consumes). NOTE: this run re-persisted after a prior run produced
+      the mimir plan but failed to write the scope dir.

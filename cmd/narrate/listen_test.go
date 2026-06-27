@@ -1,3 +1,5 @@
+//go:build !oto
+
 // Tests for the listen-path keypress transport controller (issue #83).
 //
 // These exercise the pure navigation/parse helpers plus the load-bearing
@@ -6,6 +8,12 @@
 // loop driven through stubbed seams (no real tty, no real afplay). Run under
 // `go test -race ./cmd/narrate/` (make test) — the single-owner model means a
 // race here is a correctness bug, not a flake.
+//
+// Build-tagged !oto: childHandle, playBlock, and runListen are the afplay seam,
+// which only exists in the default (!oto) build. The //go:build oto spike seam
+// (listen_oto.go, issue #100) is verified by ear via `make spike-oto-listen`,
+// not by these tests. The build-tag-free pcmReader has its own tag-free test
+// (pcm_wav_test.go) that runs under both configs.
 package main
 
 import (

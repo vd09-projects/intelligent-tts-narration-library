@@ -3,6 +3,7 @@ module github.com/vd09-projects/intelligent-tts-narration-library
 go 1.25.0
 
 require (
+	github.com/ebitengine/oto/v3 v3.4.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.8.2
@@ -11,6 +12,7 @@ require (
 )
 
 require (
+	github.com/ebitengine/purego v0.9.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect

@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen spike-oto-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -27,6 +27,7 @@ help:
 	@echo "  run-male               — narrate \$$SAMPLE at level 1, male voice"
 	@echo "  run-persistent         — narrate \$$SAMPLE via persistent sink → \$$OUT"
 	@echo "  run-listen             — interactive raw-mode transport over \$$SAMPLE (n/b/space/g/q; needs a tty + afplay)"
+	@echo "  spike-oto-listen       — #100 spike: -tags oto in-process player; space = TRUE Pause/Resume by ear (needs a tty)"
 	@echo "  run-mcp                — start the MCP stdio server (Ctrl-C to stop)"
 	@echo "  run-observe            — tail the Channel-2 live observer (-f \$$OBSERVE_FILE, else newest /tmp glob; Ctrl-C to stop)"
 	@echo "  run-observe-manual     — 2-terminal live observer smoke: speak \$$SAMPLE emitting to \$$OBSERVE_FILE (real Kokoro + afplay)"
@@ -146,8 +147,20 @@ run-companion:
 		go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(OUT) & \
 		cd player && VITE_ESCALATE_BASE_URL=http://$(ADDR) VITE_COMPANION_DIR=$(OUT) pnpm install && pnpm dev
 
+# sanity also compiles the //go:build oto spike path (issue #100). That file is
+# invisible to the default `go build ./...`, so without this it could rot
+# uncompiled. Proves BOTH build configs compile.
 sanity:
-	go build ./... && test -x scripts/kokoro && echo "ok: build + scripts/kokoro present"
+	go build ./... && go build -tags oto ./cmd/narrate && test -x scripts/kokoro && echo "ok: build (default + -tags oto) + scripts/kokoro present"
+
+# Interactive true-pause spike (issue #100). Builds cmd/narrate with the `oto`
+# tag (in-process oto v3 player) and runs the listen path against $(SAMPLE).
+# Press space MID-block to confirm by ear that audio freezes at the current
+# sample and resumes from the same sample (no restart/bleed). Requires a tty.
+# Throwaway-grade — #101 productionizes. Use a sample whose blocks are long
+# enough (~10-20s of continuous audio) for an unambiguous pause point.
+spike-oto-listen:
+	go run -tags oto ./cmd/narrate --file $(SAMPLE) --listen
 
 clean:
 	go clean -testcache
