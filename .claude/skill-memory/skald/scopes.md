@@ -622,6 +622,40 @@ scopes:
       capping an observability receipt, not fabrication — no Refusal involved.
       Plan persisted draft (awaiting user approval before sindri consumes).
 
+  - slug: integrate-oto-v3-player-101
+    title: integrate oto v3 player + WAV-header-strip behind listen transport (#101)
+    created: 2026-06-27
+    reasoning: |
+      Plan cycle for GitHub issue #101 — the PRODUCTION build that follows the
+      #100 throwaway spike (spike-oto-v3-listen-pause-100). Productionizes the
+      accepted 2026-06-27 true-pause-via-oto-v3-no-CGo decision: collapse the
+      //go:build oto / !oto seam pair so github.com/ebitengine/oto/v3 (v3.4.0,
+      Apache-2.0; purego v0.9.0 Apache-2.0 zero-CGo shim) becomes the DEFAULT and
+      only cmd/narrate listen engine (afplay removed from the listen path only —
+      sink/ephemeral afplay untouched). Resolves the two spike-carried debts: (1)
+      oto v3.4 finalizer-teardown fd-lifecycle (oto-v3-4-player-close-no-op-
+      finalizer-teardown decision) — chosen approach is an IN-MEMORY PCM buffer
+      (*bytes.Reader over the stripped data chunk; no *os.File held while the
+      player runs, so the read-from-closed-fd window is designed out, not merely
+      sequenced; otoBlock drops its file field; Pause()-before-drop kept for
+      deterministic halt); (2) RIFF dataChunkStart/io.Seeker — bytes.Reader is
+      natively io.ReadSeeker+io.ReaderAt, satisfying the #77 Seek(offset,whence)
+      substrate (actual seek KEYBINDINGS out of scope). Adds an injectable
+      listenPlayer seam (Play/Pause/IsPlaying/Err) + newPlayer factory on
+      listenConfig so the unified runListen is device-free unit-testable
+      (oto.NewContext only in driveListen, the composition root — honors
+      only-cmd/pipeline-know-concrete-edges + the listen-transport-keypress-loop
+      decision). integrate- prefix + oto-v3-player qualifier marks the production
+      player build; distinct slug from spike-oto-v3-listen-pause-100 (the
+      throwaway proof this consumes). Slug pre-supplied + pre-approved via --scope
+      in the orchestration prompt (build-session single-skill runner). Planned via
+      mimir task depth with the concurrency overlay (fd-ownership/finalizer +
+      loop-owned handle + single-reader-of-stdin + sync.Once cleanup; go test
+      -race the gate) — brief explicitly pre-authorized concurrency if the
+      fd-ownership surface warranted it; it did. Open question carried to build:
+      drop the afplay listen fallback entirely (recommended) vs keep a
+      --engine=afplay escape hatch. Plan persisted draft (awaiting user approval
+      before sindri consumes). Issue-numbered naming continues the convention.
   - slug: spike-oto-v3-listen-pause-100
     title: oto v3 listen-path wiring + true Pause/Resume by-ear spike (#100)
     created: 2026-06-27
