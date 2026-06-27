@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-shared-transcript-parser-lives-in-internal
+    title: "Shared transcript parser lives in internal/transcript; speak_last skip is caller policy; Message.Turn is an emit-index, not a stable id"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [transcript-parser, internal-package, claude-code-jsonl, speak_last, tool-agnostic, caller-policy, emit-index, not-a-stable-id, additive-extensible, pagination-cursor, decoupled-listen-path, issue-106, issue-109, adr-86, adr-81]
+    path: architecture/2026-06-28-shared-transcript-parser-lives-in-internal.md
+    summary: "#106 extracts the Claude Code transcript .jsonl parser out of cmd/narrate-mcp's lastAssistantText (which was hard-wired to return only the last assistant turn AND knew the speak_last tool name for self-skip) into a new internal/ package internal/transcript (sibling to internal/errclass, internal/intelligencetmpl), exposing ParseMessages(path) ([]Message, error) returning the FULL ordered []Message{Turn, Role, Text, ToolNames}. internal/ keeps it off the public module surface, importable by both cmd/ roots without one binary depending on another. Decisions: (1) parser stays TOOL-AGNOSTIC — records tool_use names in ToolNames but knows no specific tool; the speak_last self-invocation skip stays CALLER-SIDE POLICY in cmd/narrate-mcp (slices.Contains over ToolNames), not parser logic. (2) Message.Turn is an EMIT-INDEX (position among emitted messages, tool-only turns included) that RENUMBERS if a previously-skipped/unparseable line later parses — NOT a stable identifier. Forward contract for #109 (GET /sessions/{id}/messages): must NOT use Message.Turn as a pagination cursor; prefer a line-derived stable id (timestamp/UUID); Message is additively extensible so #109 may widen it without breaking schema. REJECTED: exporting the parser from cmd/narrate-mcp (one binary depending on another's surface); keeping speak_last in the parser (re-bakes the removed coupling); string-only user-content assumption (real user turns carry array content like tool_result). Honors the standing 'keep the listen path decoupled from any durable sink' order — pure parser refactor, speak_last stays byte-identical (6-row TestLastAssistantText oracle unchanged). Corroborated by multi-perspective review."
   - id: 2026-06-28-earshot-ui-finalized-material-list-detail-bottom
     title: "Earshot UI finalized — Material list-detail, bottom transport, APG-grounded controls"
     date: 2026-06-28
