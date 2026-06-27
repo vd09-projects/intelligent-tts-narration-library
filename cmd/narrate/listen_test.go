@@ -368,27 +368,86 @@ func TestRunListen_GoTo(t *testing.T) {
 	}
 }
 
-func TestRunListen_ShutdownDuringRead(t *testing.T) {
+// TestRunListen_InterruptibleRead proves the idle read is interruptible
+// (issue #88): with readByte GENUINELY blocked (never returns), an interrupt —
+// a shutdownRequest or a ctx-cancel — delivered AFTER the loop is parked on the
+// read must still run the full cleanup and return nil WITHOUT any keypress.
+//
+// This supersedes the former TestRunListen_ShutdownDuringRead, which pre-loaded
+// the shutdown request AND returned io.EOF immediately, so it never exercised a
+// genuinely-blocked read and would pass even against the pre-#88 blocking-read
+// loop. Here readByte blocks on a never-fed channel; the test fires the
+// interrupt only after observing the read is reached, so a non-interruptible
+// loop would hang and fail on the timeout.
+func TestRunListen_InterruptibleRead(t *testing.T) {
 	t.Parallel()
-	rec := &recordingCleanup{}
-	shutdown := make(chan shutdownRequest, 1)
-	shutdown <- shutdownRequest{} // request already pending
-	cfg := listenConfig{
-		binary:    "afplay",
-		audioDir:  "/tmp/audio",
-		play:      rec.stubPlay,
-		restore:   rec.restore,
-		removeAll: rec.removeAll,
-		tempDir:   "/tmp/narrate-xyz",
-		readByte:  func() (byte, error) { return 0, io.EOF },
-		readLine:  func() (string, error) { return "", nil },
-		shutdown:  shutdown,
-		out:       io.Discard,
+	tests := []struct {
+		name    string
+		trigger func(shutdown chan shutdownRequest, cancel context.CancelFunc)
+	}{
+		{
+			"shutdown while blocked on read",
+			func(shutdown chan shutdownRequest, _ context.CancelFunc) { shutdown <- shutdownRequest{} },
+		},
+		{
+			"ctx cancel while blocked on read",
+			func(_ chan shutdownRequest, cancel context.CancelFunc) { cancel() },
+		},
 	}
-	if err := runListen(context.Background(), cfg, navTimeline()); err != nil {
-		t.Fatalf("runListen returned error on shutdown: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &recordingCleanup{}
+			shutdown := make(chan shutdownRequest, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// readByte parks forever on `block` after signalling `reading`, so
+			// the loop is genuinely idle on the read — no byte will ever arrive.
+			reading := make(chan struct{})
+			block := make(chan struct{})
+			var once sync.Once
+			cfg := listenConfig{
+				binary:    "afplay",
+				audioDir:  "/tmp/audio",
+				play:      rec.stubPlay,
+				restore:   rec.restore,
+				removeAll: rec.removeAll,
+				tempDir:   "/tmp/narrate-xyz",
+				readByte: func() (byte, error) {
+					once.Do(func() { close(reading) })
+					<-block // never fed — the read is genuinely blocked
+					return 0, io.EOF
+				},
+				readLine: func() (string, error) { return "", nil },
+				shutdown: shutdown,
+				out:      io.Discard,
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- runListen(ctx, cfg, navTimeline()) }()
+
+			// Fire the interrupt only after the read is reached — this is what
+			// makes the test genuine rather than racing the opening spawn.
+			select {
+			case <-reading:
+			case <-time.After(2 * time.Second):
+				t.Fatal("readByte was never reached")
+			}
+			tc.trigger(shutdown, cancel)
+
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("runListen returned error on idle interrupt: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("runListen did not return after idle interrupt — read not interruptible")
+			}
+			close(block) // release the detached reader goroutine
+			assertCleanupRan(t, rec)
+		})
 	}
-	assertCleanupRan(t, rec)
 }
 
 func TestRunListen_ContextCancel(t *testing.T) {
