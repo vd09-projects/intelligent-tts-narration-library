@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-earshot-ui-finalized-material-list-detail-bottom
+    title: "Earshot UI finalized — Material list-detail, bottom transport, APG-grounded controls"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, player-ui, react, list-detail, material-design-3, w3c-apg, accessibility, transport-bar, per-block-leveling, radiogroup, novel-synthesis, claude-artifacts, honesty-rule, quality-over-reuse, issue-108]
+    path: architecture/2026-06-28-earshot-ui-finalized-material-list-detail-bottom.md
+    summary: "#108 finalizes the Earshot reference-player UI via huginn research (7/7 load-bearing claims adversarially verified). Material list-detail layout: left net-new session pane, center spoken transcript (rebuilt BlockList/BlockRow), bottom-anchored persistent transport deck (role=toolbar + roving tabindex) replacing raw <audio controls>. Transport anchor decided = BOTTOM (delegated design call) on audio-first convention + clean reading column + block-level 'return to playing' pairing + touch reach; acknowledged tradeoff, cheap one-CSS flip. Interaction grounded in verified W3C APG roles (toolbar/slider-block-quantized-aria-valuetext/listbox/inline-escalate-never-modal). Per-block L1/L2/L3 = accessible radiogroup segmented control (NOT a disclosure — disclosure can't honestly model the L2 middle state), designed as explicit NOVEL SYNTHESIS with cited lineage (Shneiderman details-on-demand + screen-reader verbosity + summarizer length sliders) — weakest-grounded surface, flagged for user-testing. Mockup method = FREE Claude Artifacts (claude.ai Claude Design REJECTED: $20/mo, no free tier, violates no-recurring-spend). Quality-over-reuse steer: reuse usePlayback/escalation LOGIC but rebuild UI to production quality (fixes dual aria-hidden seek wrapper + up-only escalate bugs). Report at research/earshot-ui-design-108/report.md. Revisit anchor + level-control pattern if Artifact user-test disagrees; revisit reuse scope if #107 deletes player/."
   - id: 2026-06-27-oto-v3-4-player-teardown-is-pause-drop-reference
     title: "oto v3.4 player teardown is Pause()+drop-reference (GC finalizer), not Close()"
     date: 2026-06-27
