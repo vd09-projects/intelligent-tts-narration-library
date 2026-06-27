@@ -21,7 +21,7 @@ func TestRead_EmptyText(t *testing.T) {
 	t.Parallel()
 	got, err := New("").Read(context.Background(), plan.SourceRef{
 		Kind: plan.SourceKindMCPText,
-		URI:  uriScheme + emptySHA256,
+		URI:  URIScheme + emptySHA256,
 	})
 	if err != nil {
 		t.Fatalf("Read empty: %v", err)
@@ -203,7 +203,7 @@ func TestRead_URIHashMismatch(t *testing.T) {
 	t.Parallel()
 	_, err := New("hello").Read(context.Background(), plan.SourceRef{
 		Kind: plan.SourceKindMCPText,
-		URI:  uriScheme + "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		URI:  URIScheme + "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 	})
 	if err == nil {
 		t.Fatal("expected error for URI hash mismatch")
@@ -272,7 +272,7 @@ func TestURIFor_MatchesSha256(t *testing.T) {
 	const body = "compose me"
 	got := URIFor(body)
 	sum := sha256.Sum256([]byte(body))
-	want := uriScheme + hex.EncodeToString(sum[:])
+	want := URIScheme + hex.EncodeToString(sum[:])
 	if got != want {
 		t.Errorf("URIFor: got %q want %q", got, want)
 	}

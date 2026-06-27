@@ -129,49 +129,17 @@ func (s *Sink) Consume(ctx context.Context, p plan.NarrationPlan, res render.Ren
 		expectedFormat = defaultExpectedFormat()
 	}
 
-	// segments accumulates per-block PCM + leading-silence pairs that
-	// writeCombinedWAV will concatenate into a single audio.wav. We collect
-	// the whole list before writing so a per-block error leaves no partial
-	// audio.wav behind.
-	segments := make([]wavSegment, 0, len(res.Timeline.Blocks))
-	cursorMs := 0
-	for _, blk := range res.Timeline.Blocks {
-		if err := ctx.Err(); err != nil {
-			return receipt, err
-		}
-
-		planned := int64(blk.EndMs - blk.StartMs)
-		// Leading silence = the gap between the previous block's end (cursor)
-		// and this block's planned start. Negative gaps (overlapping blocks)
-		// clamp to zero inside silenceBytes — overlap is a planner bug, not
-		// a corrupting condition the sink should propagate.
-		leading := max(blk.StartMs-cursorMs, 0)
-
-		if blk.AudioRef == "" {
-			// Empty AudioRef = no on-disk WAV for this block (all-pause or
-			// no-speech). Planned duration still flows into the receipt so
-			// the receipt mirrors plan truth, but BlocksPlayed does NOT
-			// increment (matches ephemeral sink invariant). The leading
-			// silence still emits per Decision v1.5.0 — fidelity to the
-			// planned timeline.
-			segments = append(segments, wavSegment{pcm: nil, leadingSilenceMs: leading})
-			receipt.TotalDurationMs += planned
-			cursorMs = blk.EndMs
-			continue
-		}
-
-		absPath := filepath.Join(res.Audio.Dir, blk.AudioRef)
-		_, pcm, err := readWAV(absPath, expectedFormat)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return receipt, fmt.Errorf("%w: block %s at %s", ErrMissingBlockAudio, blk.BlockID, absPath)
-			}
-			return receipt, fmt.Errorf("sink/persistent: read block %s: %w", blk.BlockID, err)
-		}
-		segments = append(segments, wavSegment{pcm: pcm, leadingSilenceMs: leading})
-		receipt.TotalDurationMs += planned
-		receipt.BlocksPlayed++
-		cursorMs = blk.EndMs
+	// Walk the timeline into per-block PCM + leading-silence segments plus
+	// the receipt counts. buildSegments owns the whole per-block walk (the
+	// wav-concat math) so a wav-only sink can reuse it without the plan.json
+	// / manifest.json sidecars (issue #105). On a per-block read error or a
+	// ctx cancel mid-walk, the partial counts come back and feed a partial
+	// receipt — identical observable behavior to the pre-refactor inline loop.
+	segments, blocksPlayed, totalDurationMs, err := buildSegments(ctx, res, expectedFormat)
+	receipt.BlocksPlayed = blocksPlayed
+	receipt.TotalDurationMs = totalDurationMs
+	if err != nil {
+		return receipt, err
 	}
 
 	// Atomic write of audio.wav. writeCombinedWAV streams to an io.Writer;
@@ -205,6 +173,63 @@ func (s *Sink) Consume(ctx context.Context, p plan.NarrationPlan, res render.Ren
 	}
 
 	return receipt, nil
+}
+
+// buildSegments walks res.Timeline.Blocks in plan order and produces the
+// per-block wav-concat segments ([]wavSegment) plus the receipt counts
+// (blocksWritten + totalDurationMs). It is the shared wav-concat core of every
+// sink that concatenates per-block WAVs into one blob: the 3-file persistent
+// Sink (audio.wav + plan.json + manifest.json) and the single-wav WAVFileSink
+// (issue #105). It deliberately returns counts only — NOT a sink.SinkReceipt —
+// so each sink builds its own receipt shape (no cross-sink receipt coupling).
+//
+// Behavior mirrors the pre-#105 inline loop exactly so audio.wav stays
+// byte-identical and the persistent receipt is unchanged:
+//   - Empty AudioRef (all-pause / no-speech) → nil-PCM segment carrying only
+//     the leading silence; planned duration still counts toward totalDurationMs
+//     but blocksWritten does NOT increment.
+//   - Non-empty AudioRef → readWAV the per-block file (format-validated);
+//     missing file → ErrMissingBlockAudio; other read failure → wrapped error.
+//   - ctx cancel mid-walk → return ctx.Err() with the segments + counts
+//     accumulated up to the cancellation point (partial-receipt contract).
+//
+// Leading silence = max(0, gap) between the previous block's end (cursor) and
+// this block's planned start; negative gaps (overlapping blocks) clamp to zero
+// inside silenceBytes — overlap is a planner bug, not a corrupting condition.
+func buildSegments(ctx context.Context, res render.RenderResult, expectedFormat plan.AudioFormat) (segs []wavSegment, blocksWritten int, totalDurationMs int64, err error) {
+	segments := make([]wavSegment, 0, len(res.Timeline.Blocks))
+	cursorMs := 0
+	for _, blk := range res.Timeline.Blocks {
+		if cerr := ctx.Err(); cerr != nil {
+			return segments, blocksWritten, totalDurationMs, cerr
+		}
+
+		planned := int64(blk.EndMs - blk.StartMs)
+		leading := max(blk.StartMs-cursorMs, 0)
+
+		if blk.AudioRef == "" {
+			segments = append(segments, wavSegment{pcm: nil, leadingSilenceMs: leading})
+			totalDurationMs += planned
+			cursorMs = blk.EndMs
+			continue
+		}
+
+		absPath := filepath.Join(res.Audio.Dir, blk.AudioRef)
+		_, pcm, rerr := readWAV(absPath, expectedFormat)
+		if rerr != nil {
+			if errors.Is(rerr, os.ErrNotExist) {
+				return segments, blocksWritten, totalDurationMs,
+					fmt.Errorf("%w: block %s at %s", ErrMissingBlockAudio, blk.BlockID, absPath)
+			}
+			return segments, blocksWritten, totalDurationMs,
+				fmt.Errorf("sink/persistent: read block %s: %w", blk.BlockID, rerr)
+		}
+		segments = append(segments, wavSegment{pcm: pcm, leadingSilenceMs: leading})
+		totalDurationMs += planned
+		blocksWritten++
+		cursorMs = blk.EndMs
+	}
+	return segments, blocksWritten, totalDurationMs, nil
 }
 
 // writeAudio is a thin wrapper that opens a tmp file in the same directory,
