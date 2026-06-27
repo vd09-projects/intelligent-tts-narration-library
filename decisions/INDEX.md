@@ -8,6 +8,46 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-wavfilesink-reuses-wav-concat-no-sidecars
+    title: "WAVFileSink reuses persistent-sink wav-concat math but writes only the combined wav, no JSON sidecars"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [speak-to-file, wav-sink, buildSegments, persistent-sink, no-sidecars, dry]
+    path: architecture/2026-06-28-wavfilesink-reuses-wav-concat-no-sidecars.md
+    summary: "speak_to_file's contract is one .wav at a caller path; the existing persistent sink writes a 3-file directory (audio.wav+plan.json+manifest.json). WAVFileSink reuses the per-block wav-concatenation math by extracting an unexported buildSegments helper out of sink/persistent.Consume (returns segments + counts only, not a receipt), then writes ONLY the combined wav — no plan.json/manifest.json sidecars. REJECTED duplicating the concat walk. Rationale: avoid duplicating the concat walk; each sink builds its own lean receipt; the single-wav contract must not drag in the directory-manifest contract. Revisit if a caller needs the plan/manifest alongside the wav."
+  - id: 2026-06-28-speak-to-file-uniform-response-envelope
+    title: "speak_to_file returns a uniform speakToFileResponse envelope across both path and no-path branches"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [speak-to-file, mcp, response-envelope, tool-contract, dual-channel]
+    path: architecture/2026-06-28-speak-to-file-uniform-response-envelope.md
+    summary: "speak_to_file writes a file when output_path is given and falls back to speaking ephemerally when it is not. Both branches return the same speakToFileResponse envelope mirroring speak's dual-channel (human transcript + structured result) shape; the no-path branch reuses runSpeakWithCache and re-wraps its result into speakToFileResponse{output_path:\"\"}. REJECTED different shapes per branch. Rationale: one stable contract for the client LLM regardless of whether a file was written; output_path==\"\" is the wire signal that the tool spoke instead of writing."
+  - id: 2026-06-28-speak-to-file-output-path-file-vs-dir-rule
+    title: "resolveOutputPath rule for speak_to_file output_path (file vs directory)"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [speak-to-file, output-path, path-resolution, file-vs-dir, resolveOutputPath]
+    path: architecture/2026-06-28-speak-to-file-output-path-file-vs-dir-rule.md
+    summary: "Resolves the 'settle at build' open item from the separate-tool decision. Rule: if output_path denotes a directory (trailing separator, '.' or '..', or an existing directory) → write a derived filename into that directory; otherwise treat it as a file path and append '.wav' case-insensitively if missing (no double extension); MkdirAll the parent; result is absolutized and Cleaned. Rationale: callers may pass either a directory or a full file path; the rule disambiguates from the value itself without a separate flag."
+  - id: 2026-06-28-wavfilesink-in-persistent-package-debt
+    title: "WAVFileSink lives in package sink/persistent, accepted as debt"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [speak-to-file, tech-debt, package-naming, wavfile-sink, wavconcat, accepted-debt]
+    path: architecture/2026-06-28-wavfilesink-in-persistent-package-debt.md
+    summary: "The new single-wav WAVFileSink was placed in package sink/persistent, whose name now overstates its contents (it holds both the 3-file directory sink and the single-wav sink). Accepted as deliberate debt to reuse the extracted buildSegments core without a premature package split. REJECTED hoisting the core into internal/wavconcat now (premature). Trigger-on-objection follow-up: hoist the shared wav-concat core into internal/wavconcat. A self-describing code marker records this in wavfile.go (no issue number)."
+  - id: 2026-06-28-speak-to-file-separate-mcp-tool
+    title: "Ship speak_to_file as a separate MCP tool, not an option on speak"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, mcp, speak-to-file, speak, single-wav-output, output-path, persistent-sink, tool-surface, priority-tool]
+    path: architecture/2026-06-28-speak-to-file-separate-mcp-tool.md
+    summary: "Use case 3 wants text OR a .md/text file converted to one wav at a caller-given path (no path → speak). Today MCP speak plays ephemerally only; the persistent sink (CLI-only) writes a 3-file directory (audio.wav+plan.json+manifest.json), not a single wav. REJECTED Option A (add output_path to speak) — overloads a play-only tool with a write-file mode, mixed contract, harder for the client LLM to invoke. CHOSE Option B: separate speak_to_file tool, {text | source, output_path?, level, gender}; input is inline text or a path to a text/.md file; writes one .wav to output_path (file or dir); falls back to speak when no path; reuses persistent-sink wav-concat math WITHOUT writing the JSON sidecars. This is the PRIORITY tool, built first. Settle at build: output_path file-vs-dir resolution rule. Revisit if a caller later needs the full plan/manifest alongside the wav."
   - id: 2026-06-27-oto-v3-4-player-teardown-is-pause-drop-reference
     title: "oto v3.4 player teardown is Pause()+drop-reference (GC finalizer), not Close()"
     date: 2026-06-27
