@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-low-priority-mid-build-issues-fix-inline-or-drop
+    title: "Low-priority mid-build issues: fix inline or drop — never defer to new tickets"
+    date: 2026-06-28
+    status: accepted
+    category: process
+    tags: [process, workflow, review, backlog, standing-order]
+    path: process/2026-06-28-low-priority-mid-build-issues-fix-inline-or-drop.md
+    summary: "Standing order. Low-priority issues surfaced mid-build are FIXED INLINE in the same PR or DROPPED — NOT deferred to new tickets. Corollary guardrails: don't pick a tiny issue just so you can defer it; and don't log every trivial deferral in the decision journal either — this single standing-order entry IS the record, individual trivial cases are not journaled. Became standing philosophy during the #105 speak_to_file build (PR #114): two non-blocking review suggestions (S1 sink-arg leak, S3 mcptext URI-scheme DUP) were fixed inline in the same PR rather than spun out as follow-up tickets. Keeps the backlog free of never-actioned low-value tickets and the journal signal-dense. Revisit if dropping mid-build findings starts repeatedly costing real work."
   - id: 2026-06-28-wavfilesink-reuses-wav-concat-no-sidecars
     title: "WAVFileSink reuses persistent-sink wav-concat math but writes only the combined wav, no JSON sidecars"
     date: 2026-06-28
