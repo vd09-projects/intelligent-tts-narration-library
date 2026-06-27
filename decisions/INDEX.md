@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-oto-v3-4-player-teardown-is-pause-drop-reference
+    title: "oto v3.4 player teardown is Pause()+drop-reference (GC finalizer), not Close()"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [listen-path, oto, ebitengine, oto-v3.4, player-teardown, pause, finalizer, gc, no-close, sa1019, listenPlayer-seam, bytes-reader, bounded-retention, issue-101, issue-100]
+    path: architecture/2026-06-27-oto-v3-4-player-teardown-is-pause-drop-reference.md
+    summary: "#101 productionizes the single-path oto v3 listen player, applying the spike finding 2026-06-27-oto-v3-4-player-close-no-op-finalizer-teardown to shipped code. On every n/b/g/replay transition and on cleanup, the prior player is Pause()'d (removes it from oto's active mux set so it stops pulling its source) then its Go reference is dropped; real teardown is the runtime GC finalizer. Player.Close() is NOT called and NOT //nolint:staticcheck-suppressed — in oto v3.4 it is a no-op (returns nil, does not stop the read-pull) and trips SA1019, so it is avoided outright, not suppressed. The listenPlayer seam interface deliberately has NO Close() method so the no-op can't be called by mistake. The PCM source is an in-memory *bytes.Reader (no fd), so the finalizer reclaims only memory (the spike's fd-lifecycle debt does not apply here). Honest invariant — BOUNDED RETENTION: the prior player is Pause()'d and dereferenced on transition, becoming GC-reclaimable via oto's finalizer; NOT a deterministic synchronous free and NOT a process-lifetime leak. Builds on the close-no-op finding and is a sibling to the afplay-fallback-dropped decision on the same single path. Revisit if the PCM source becomes fd-backed."
+  - id: 2026-06-27-afplay-listen-fallback-dropped-oto-is-the-sole
+    title: "afplay listen fallback dropped — oto is the sole listen engine"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [listen-path, oto, afplay, single-engine, build-tags, engine-flag, honesty-rule, device-open-error, no-fallback, zero-cgo, purego, issue-101, issue-100]
+    path: architecture/2026-06-27-afplay-listen-fallback-dropped-oto-is-the-sole.md
+    summary: "#101 collapses the //go:build oto / !oto tag pair so the in-process oto v3 player is the default and ONLY listen engine in cmd/narrate; the afplay listen fallback and the --engine escape hatch are removed. There is no second listen engine. If oto cannot open an audio device, listen mode returns a wrapped, actionable error UP the pipeline — per the CLAUDE.md honesty rule an engine/device-open failure is an ERROR (stops the pipeline), NEVER a Refusal (refusals are for readable-but-unvoiceable content, not an output device that won't open). The non-interactive speak/MCP path still uses sink/ephemeral afplay independently and is untouched — afplay is dropped only as a LISTEN engine. Rationale: afplay+SIGSTOP structurally cannot give true device-level Pause/Resume (see 2026-06-26-afplay-sigstop-sigcont-no-true-pause), so the fallback was strictly inferior on the listen path's defining feature; maintaining a second engine + build-tag matrix was pure cost. oto v3.4 via purego is zero-CGo (CGO_ENABLED=0 builds) so it is the default with no packaging regression. REJECTED keeping the afplay fallback + --engine hatch. Sibling to the oto-v3.4 teardown decision on the same single path."
   - id: 2026-06-27-oto-v3-4-player-close-no-op-finalizer-teardown
     title: "oto v3.4 Player.Close() is a no-op (finalizer teardown) — overturns the planned Close()-halts-read-pull invariant; spike halts via Pause(), fd-lifecycle fix carried to #101"
     date: 2026-06-27

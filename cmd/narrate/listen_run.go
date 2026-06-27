@@ -28,11 +28,6 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 )
 
-// listenAfplayBinary is the afplay binary name resolved from PATH. The listen
-// path keeps its own copy (not sink/ephemeral's) so it stays decoupled from the
-// durable-sink machinery (planner-task.md open question — local copy chosen).
-const listenAfplayBinary = "afplay"
-
 // listenCodeFloor is the additive L2 floor applied to code blocks in listen
 // mode (planner-task.md integration point: CodeMinLevel). Code at L1 is a bare
 // line count; lifting the floor to L2 gives a listener the count + declarations
@@ -97,25 +92,45 @@ var stdinReaders = func() (readByte func() (byte, error), readLine func() (strin
 	return readByte, readLine
 }
 
+// loadBlockPCM reads a per-block WAV fully into memory and strips its RIFF header
+// to raw 24 kHz mono int16 PCM. It is the production cfg.loadPCM seam: the whole
+// buffer is in hand on return, so runListen constructs a player only after the
+// full PCM is loaded (no player over a partially-read source), and the returned
+// []byte wrapped in a *bytes.Reader has no file descriptor for the oto player's
+// finalizer-driven teardown to read after close.
+func loadBlockPCM(wavPath string) ([]byte, error) {
+	f, err := os.Open(wavPath) //nolint:gosec // path is a renderer-produced temp WAV under our own outDir.
+	if err != nil {
+		return nil, fmt.Errorf("open block: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	pcm, err := stripWAVToPCM(f)
+	if err != nil {
+		return nil, fmt.Errorf("parse wav: %w", err)
+	}
+	return pcm, nil
+}
+
 // runListenMode renders the whole plan into a capturing sink and drives the
 // keypress transport loop. It owns the listen path's temp-dir removal (the
 // caller suppresses its own defer for this path).
 //
-// Fail-fast order (pre-loop, planner-task.md): non-tty stdin and a missing
-// afplay binary are both rejected BEFORE any render/raw-mode work, with honest
-// messages, so a listener never gets a half-entered raw terminal or a silent
-// hang on a piped stdin.
+// Fail-fast order (pre-loop, planner-task.md): non-tty stdin is rejected BEFORE
+// any render/raw-mode work, with an honest message, so a listener never gets a
+// half-entered raw terminal or a silent hang on a piped stdin. The engine's own
+// failure (no openable audio device) surfaces honestly from oto.NewContext in
+// driveListen, after the bounded ready-wait.
 func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, stderr io.Writer) (err error) {
 	// Fail-fast 1: stdin must be an interactive terminal. Single-key transport
 	// is meaningless on a pipe/redirect; refuse honestly rather than hang.
 	if !isTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("%w: --listen requires an interactive terminal (stdin is not a tty)", errFlagValidation)
 	}
-	// Fail-fast 2: the active playback engine's pre-loop check. The seam is
-	// build-tagged (listen_afplay.go vs listen_oto.go): the default afplay build
-	// fails fast if afplay is missing from PATH; the oto spike build is a no-op
-	// here (its engine failure surfaces from oto.NewContext instead). A clean
-	// pre-loop refusal, not a mid-playback surprise.
+	// Fail-fast 2: the engine's pre-loop check. With oto as the sole listen
+	// engine this is a no-op (there is no external binary to look up); the
+	// engine's real failure mode — no openable audio device — surfaces honestly
+	// from oto.NewContext in driveListen. Retained so the fail-fast structure is
+	// unchanged.
 	if perr := listenEnginePreflight(); perr != nil {
 		return perr
 	}
@@ -163,9 +178,10 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 
 	// Single SIGINT/SIGTERM handler for the whole listen session. It is
 	// request-not-reap: on a signal it sends ONE shutdownRequest to the loop and
-	// returns. The loop (sole owner of the *exec.Cmd, the tty restore, and the
+	// returns. The loop (sole owner of the player handle, the tty restore, and the
 	// temp-dir removal) performs the actual teardown in order
-	// restore → kill+Wait → RemoveAll. The handler never touches those itself.
+	// restore → Pause()+drop-the-reference → RemoveAll. The handler never touches
+	// those itself.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	shutdown := make(chan shutdownRequest, 1)
@@ -188,12 +204,12 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 	}()
 
 	readByte, readLine := stdinReaders()
-	// cfg.play is left unset here: the build-tagged driveListen owns engine
-	// wiring (the afplay seam fills in playBlock; the oto seam ignores play and
-	// drives its own in-process player). This keeps listen_run.go engine-neutral.
+	// cfg.newPlayer is left unset here: driveListen owns engine wiring — it opens
+	// the process-wide oto context and injects the real player factory. This keeps
+	// listen_run.go engine-neutral (it never imports oto).
 	cfg := listenConfig{
-		binary:    listenAfplayBinary,
 		audioDir:  res.Audio.Dir,
+		loadPCM:   loadBlockPCM,
 		restore:   restore,
 		removeAll: os.RemoveAll,
 		tempDir:   outDir,
