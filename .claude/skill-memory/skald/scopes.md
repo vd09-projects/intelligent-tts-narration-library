@@ -517,3 +517,69 @@ scopes:
       and state-management (the readiness poll/give-up state machine + App
       load-gate + the block-id-signature reset decision). Plan persisted draft
       (awaiting user approval before sindri consumes).
+  - slug: listen-nav-boundary-tests-89
+    title: Listen mode — add n-at-last / b-at-first navigation boundary tests (issue #89)
+    created: 2026-06-27
+    reasoning: |
+      Plan cycle for GitHub issue #89 (test-only — add table-driven coverage
+      for the two untested runListen navigation boundary guards in
+      cmd/narrate/listen.go: `n` at the last navigable block, listen.go:388
+      `if pos < len(nav)-1`, and `b` at position 0, listen.go:392 `if pos > 0`).
+      Existing listen_test.go covers the keypress sequence, go-to, shutdown,
+      ctx-cancel, and no-navigable cases but never the two boundary no-ops. One
+      new table-driven TestRunListen_NavigationBoundaries (2 rows) asserts the
+      no-op indirectly via spawn count (rec.playN) + last wav played
+      (rec.playArgs) since `pos` is a runListen local not observable directly.
+      Zero production-code changes, reuses the ephemeral stub harness
+      (recordingCleanup/scriptedBytes/navTimeline) — no durable/persistent sink
+      (standing decoupling order). Follow-on coverage on the cmd/narrate listen
+      transport surface from listen-transport-controller-83 (the base keypress-
+      loop build); distinct slug because this is a focused test-coverage ticket,
+      so a descriptive listen-nav-boundary-tests qualifier rather than reusing
+      the issue-83 scope. listen- prefix marks the listen transport surface;
+      issue-numbered suffix continues the convention. Slug pre-supplied +
+      pre-approved via --scope in the orchestration prompt. Plan pre-produced
+      externally by mimir, reviewed APPROVE (review-findings v1), then consumed
+      by sindri. Latest artifact: review-findings v2 (draft, review_type build,
+      iteration 1) — APPROVE, 0 blocking; plan review v1 archived to
+      _history/review-findings-v1.md. Single file touched
+      (cmd/narrate/listen_test.go, +59, one table-driven
+      TestRunListen_NavigationBoundaries, 2 rows), zero production-code change;
+      make test/lint/sanity all green and the new test passes under -race
+      (re-verified at build review). Build review carried both plan-review nits
+      (load-bearing audioDir, precise failure-mode comment); 1 FYI + 1 optional
+      cfg-builder suggestion, no blocking items, no accepted debt.
+  - slug: listen-interruptible-read-88
+    title: Listen mode — interruptible read so SIGTERM-while-idle is serviced without a keypress (issue #88)
+    created: 2026-06-27
+    reasoning: |
+      Plan cycle for GitHub issue #88 (cmd/narrate listen mode — make the
+      runListen blocking os.Stdin.Read interruptible so an external kill -TERM
+      while the listener is idle on the read is serviced WITHOUT a keypress;
+      today the deferred restore()/cleanup() never fires while idle, leaving the
+      tty in raw mode and the afplay child unreaped until a key is pressed).
+      Follow-up to listen-transport-controller-83 / PR #87 (the base keypress-loop
+      build): MakeRaw disables ISIG so Ctrl-C arrives as byte 0x03 and the single
+      signal handler only catches SIGTERM/terminal-close, but the loop is parked
+      in a bare blocking readByte between iterations so the shutdown channel is
+      not observed until the next byte. Chosen fix (mimir Approach A): a stdin
+      reader goroutine pumping bytes onto byteCh + a loop select over
+      {byteCh, shutdown, ctx.Done()} — preserves the listenConfig readByte/
+      readLine/shutdown seam (every existing stub keeps working), no fragile
+      tty-deadline/stdin-close tricks. Key finding surfaced during planning: the
+      existing TestRunListen_ShutdownDuringRead is false-confidence — it
+      pre-loads the shutdown request AND returns io.EOF immediately, so it never
+      exercises a genuinely-blocked read and would pass against the broken code;
+      the plan supersedes it with a table-driven TestRunListen_InterruptibleRead
+      whose readByte blocks on a never-fed test channel. Distinct slug from
+      listen-transport-controller-83 (the base build) and listen-nav-boundary-
+      tests-89 (the boundary-test follow-on) — this is the interruptible-read
+      fix on the same listen surface, so a descriptive listen-interruptible-read
+      qualifier rather than reusing those scopes. listen- prefix marks the
+      cmd/narrate listen transport surface; issue-numbered suffix continues the
+      convention. Slug pre-supplied + pre-approved via --scope in the
+      orchestration prompt. Planned via mimir task depth with the concurrency
+      overlay (reader goroutine + byteCh/shutdown/ctx select, single-reader-of-
+      stdin invariant, loop-stays-sole-owner-of-child reap, cleanup-never-joins-
+      reader, -race test discipline). Plan pre-produced by mimir, persisted draft
+      (awaiting user approval before sindri consumes).
