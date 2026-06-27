@@ -1,6 +1,6 @@
-// Table-driven tests for the pure WAV header-strip reader (spike #100,
-// suggestion 1). Build-tag-free: runs in the default `make test`, no `oto` tag
-// required, because pcmReader has no audio-engine dependency.
+// Table-driven tests for the pure WAV header-strip (issue #101, productionized
+// from the #100 spike). Build-tag-free: runs in the default `make test` with no
+// build tag, because stripWAVToPCM has no audio-engine dependency.
 package main
 
 import (
@@ -56,7 +56,7 @@ func canonicalFmt() []byte {
 	return b
 }
 
-func TestNewPCMReader(t *testing.T) {
+func TestStripWAVToPCM(t *testing.T) {
 	pcm8 := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
 	tests := []struct {
@@ -119,7 +119,7 @@ func TestNewPCMReader(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := newPCMReader(bytes.NewReader(tc.input))
+			got, err := stripWAVToPCM(bytes.NewReader(tc.input))
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("want error, got nil")
@@ -132,19 +132,63 @@ func TestNewPCMReader(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			got, rerr := io.ReadAll(r)
-			if rerr != nil {
-				t.Fatalf("ReadAll: %v", rerr)
-			}
 			if !bytes.Equal(got, tc.want) {
 				t.Fatalf("PCM bytes = %v, want %v", got, tc.want)
 			}
-			// For the canonical case, assert the bounded reader stopped exactly
-			// at the declared length and did not bleed trailing bytes.
+			// For the canonical case, assert the strip stopped exactly at the
+			// declared length and did not bleed trailing bytes.
 			if !tc.overRead && len(got) != len(tc.want) {
 				t.Fatalf("read %d bytes, want exactly %d", len(got), len(tc.want))
 			}
 		})
+	}
+}
+
+// TestStripWAVToPCM_Seekable pins the #101 seek substrate (issue #77 model): the
+// stripped PCM, wrapped in a *bytes.Reader, is natively an io.ReadSeeker +
+// io.ReaderAt where offset-zero is the first PCM sample. A Seek(n, SeekStart)
+// then a 1-byte read returns the PCM byte at offset n — the round-trip the
+// future block-seek model relies on. Wiring actual seek keybindings is out of
+// scope; this only proves the source is seekable.
+func TestStripWAVToPCM_Seekable(t *testing.T) {
+	pcm := []byte{10, 20, 30, 40, 50, 60, 70, 80}
+	wav := buildWAV(chunk{"fmt ", canonicalFmt()}, chunk{"data", pcm})
+
+	got, err := stripWAVToPCM(bytes.NewReader(wav))
+	if err != nil {
+		t.Fatalf("stripWAVToPCM: %v", err)
+	}
+	if !bytes.Equal(got, pcm) {
+		t.Fatalf("stripped PCM = %v, want %v", got, pcm)
+	}
+
+	// The player source is bytes.NewReader(pcm) — assert it satisfies the seek
+	// substrate interfaces the production player hands to oto.
+	src := bytes.NewReader(got)
+	var _ io.ReadSeeker = src
+	var _ io.ReaderAt = src
+
+	// offset-zero == first PCM sample.
+	if got[0] != pcm[0] {
+		t.Fatalf("offset-zero byte = %d, want first sample %d", got[0], pcm[0])
+	}
+
+	// Seek/read round-trip at every offset: Seek(n) then read one byte == pcm[n].
+	for n := 0; n < len(pcm); n++ {
+		off, serr := src.Seek(int64(n), io.SeekStart)
+		if serr != nil {
+			t.Fatalf("Seek(%d): %v", n, serr)
+		}
+		if off != int64(n) {
+			t.Fatalf("Seek(%d) returned offset %d", n, off)
+		}
+		var one [1]byte
+		if _, rerr := io.ReadFull(src, one[:]); rerr != nil {
+			t.Fatalf("read after Seek(%d): %v", n, rerr)
+		}
+		if one[0] != pcm[n] {
+			t.Fatalf("byte at offset %d = %d, want %d", n, one[0], pcm[n])
+		}
 	}
 }
 

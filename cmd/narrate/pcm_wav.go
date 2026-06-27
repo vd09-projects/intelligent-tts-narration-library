@@ -1,15 +1,20 @@
-// WAV/RIFF header-strip → bounded raw-PCM io.Reader for the listen path
-// (spike #100). Pure byte logic with NO audio-engine dependency, so it compiles
-// in the default build and is unit-testable without the `oto` build tag.
+// WAV/RIFF header-strip → in-memory raw-PCM bytes for the listen path
+// (issue #101, productionized from the #100 spike). Pure byte logic with NO
+// audio-engine dependency, so it is unit-testable without a real device.
 //
 // Why it exists: the renderer emits one `audio.wav` per block (24 kHz mono
-// int16, Kokoro native). The oto in-process player wants a reader of RAW PCM
-// frames, not a RIFF container — so we walk the chunk list to the `data` chunk
-// and hand oto an io.Reader positioned at the first sample byte, bounded to the
-// declared data length. No resampling at our layer (CLAUDE.md: 24 kHz native).
+// int16, Kokoro native). The in-process oto player wants RAW PCM frames, not a
+// RIFF container — so we walk the chunk list to the `data` chunk and return the
+// declared-length sample bytes, with no resampling at our layer (CLAUDE.md:
+// 24 kHz native).
 //
-// This reader is the one component promoted to #101 (the production player), so
-// it is unit-tested rather than treated as throwaway scaffolding.
+// Returning a []byte (rather than an io.Reader over the live *os.File) is the
+// load-bearing #101 change. The caller wraps it in a *bytes.Reader, which is
+// natively an io.ReadSeeker + io.ReaderAt: it has no file descriptor, so the
+// oto player's finalizer-driven teardown can never read a closed fd, and the
+// seekable source is the substrate the future block-seek model (#77) needs
+// — offset-zero is the first PCM sample. Wiring actual seek keybindings is out
+// of scope here; this only makes the source seekable.
 package main
 
 import (
@@ -19,33 +24,31 @@ import (
 	"io"
 )
 
-// pcmReadError flags a malformed RIFF/WAV stream. Distinct sentinel so callers
+// errNotRIFFWave flags a malformed RIFF/WAV stream. Distinct sentinel so callers
 // (and tests) can tell a parse failure from an I/O failure on the underlying
 // file.
 var errNotRIFFWave = errors.New("pcm: not a RIFF/WAVE stream")
 
-// newPCMReader consumes the RIFF header of r, walks the chunk list to the
+// stripWAVToPCM consumes the RIFF header of r, walks the chunk list to the
 // `data` chunk (skipping `fmt `, `LIST`, `fact`, and any other ancillary
-// chunks), and returns an io.Reader positioned at the first PCM sample byte and
-// bounded to the `data` chunk's declared length.
+// chunks), reads the declared-length sample bytes fully into memory, and
+// returns them as raw PCM. The whole block buffer is in hand on return, so the
+// caller can construct a player only after the full PCM is loaded (no player is
+// ever built over a partially-read source).
 //
 // It deliberately does NOT assume the canonical 44-byte header — a real Kokoro
 // WAV, or any tool-rewritten one, can carry a `LIST`/`fact` chunk before
-// `data`. The walk is the honest way to find the sample bytes (mirrors the
-// walk-to-`data` rule already used by the playback-observability work).
+// `data`. The walk is the honest way to find the sample bytes.
 //
 // Bounding to the declared length means a truncated file (declared size larger
-// than the bytes actually present) yields a short read + EOF rather than
+// than the bytes actually present) yields the bytes that ARE present rather than
 // over-reading into whatever follows; the underlying reader returning EOF early
-// is surfaced to the caller (oto), which stops cleanly.
+// simply ends the data short.
 //
-// TODO(#101-followup): RIFF-parse the dataChunkStart byte offset from an
-// io.ReaderAt and return it alongside the reader, so the production player can
-// io.Seek(offset+n, …) for mid-block and jump-to-block seeking. The spike only
-// needs a forward-only io.Reader, so offset-resume / io.Seeker support is
-// intentionally out of scope here — what/where/why: the seek math belongs to
-// the productionized single-path player, not this throwaway build-tagged spike.
-func newPCMReader(r io.Reader) (io.Reader, error) {
+// The returned []byte wrapped in bytes.NewReader is an io.ReadSeeker +
+// io.ReaderAt with offset-zero == first PCM sample — the seek substrate the #77
+// block-seek model builds on.
+func stripWAVToPCM(r io.Reader) ([]byte, error) {
 	// RIFF master header: "RIFF" <uint32 chunkSize> "WAVE" (12 bytes).
 	var hdr [12]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
@@ -68,9 +71,14 @@ func newPCMReader(r io.Reader) (io.Reader, error) {
 		size := binary.LittleEndian.Uint32(chunkHdr[4:8])
 
 		if id == "data" {
-			// Position is now the first PCM sample byte. Bound the reader to the
-			// declared data length so we never over-read past the samples.
-			return io.LimitReader(r, int64(size)), nil
+			// Position is now the first PCM sample byte. Read the declared data
+			// length fully into memory, bounded so we never over-read past the
+			// samples. A truncated file yields the present bytes (short read).
+			pcm, err := io.ReadAll(io.LimitReader(r, int64(size)))
+			if err != nil {
+				return nil, fmt.Errorf("pcm: read data chunk: %w", err)
+			}
+			return pcm, nil
 		}
 
 		// Skip this chunk's body plus any word-alignment pad byte.
