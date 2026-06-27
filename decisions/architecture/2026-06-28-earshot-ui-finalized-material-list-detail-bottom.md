@@ -63,16 +63,34 @@ target stack; only Live/AI/persistent artifacts are paid — a static mockup nee
 Per the user's **quality-over-reuse** steer: reuse `usePlayback`/escalation **logic**, but
 **rebuild** the UI for production quality — fixing the dual-seek and up-only-escalate bugs.
 
+## Correction (2026-06-28, post-merge)
+
+This decision's "reuse `usePlayback`/escalation logic, rebuild UI" framing assumed `player/` as
+the substrate to finalize. That premise is **superseded by the prior same-day decision**
+(`earshot-rebuild-server-driven-listener-ui`, referenced by #107/#109/#110/#111): Earshot is a
+**server-driven rebuild** — `player/` is deleted (#107), a new `earshot/` web app talks to a Go
+`narrate-server` HTTP bridge (#109) because the browser cannot run Kokoro. The **design
+conclusions still hold** (Material list-detail, bottom transport, W3C APG roles,
+radiogroup-not-disclosure, the BlockRow/seek bug fixes), but they apply to the new `earshot/`
+app, not as client-side reuse of `player/`. The "reuse client-side components" point below is
+therefore moot — #107 (delete `player/`) is **confirmed**, not a hedge.
+
+The build follow-ups I created (#116/#117) were **duplicates** of the existing Earshot
+decomposition (#111 scaffold, #112 playback engine, #113 leveling UI) and have been closed; the
+design refinements were folded into #111/#112/#113. The only net-new follow-up is #115 (clickable
+Artifact mockup / sign-off gate). #108 was the design gate feeding #111/#112/#113 — not a source
+of new build tickets.
+
 ## Consequences
 
-- Build follow-ups are consolidated into 3 bigger chunks (build shell + transport + rebuilt
-  transcript; per-block L1/L2/L3 segmented control; clickable Artifact mockup + user-test).
+- Build follow-ups are NOT new tickets — #108's design enriches existing #111/#112/#113 (server-
+  driven Earshot rebuild). The one net-new follow-up is #115 (clickable Artifact / sign-off gate).
 - The per-block 3-level control carries the most design risk (bounded-negative grounding) and is
   explicitly flagged for user-testing.
 - Honesty rule preserved in UI: refusals spoken + surfaced, degraded never shown as a real gist,
   stale chip with no auto-regenerate, escalate inline-only.
-- If issue #107 deletes `player/`, "reuse" weakens — but the gap analysis still scopes which
-  logic/patterns to port. Reuse was treated as not load-bearing.
+- #107 (delete `player/`) is confirmed by the established server-driven direction (see
+  Correction above); the gap analysis serves as port-guidance only, not client-side reuse.
 
 ## Related decisions
 
