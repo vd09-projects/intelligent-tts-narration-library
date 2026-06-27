@@ -63,6 +63,7 @@ deferred CGo / `sherpa-onnx-go` in-process renderer using `AudioQueuePause` (Opt
 
 - [LISTEN-path terminal transport: keypress loop, honest "Stop / Replay block", not "Pause" (#79)](2026-06-25-listen-transport-keypress-loop-not-tui.md) — this spike resolves that decision's by-ear `SIGCONT` revisit trigger; answer is negative, so the honest model stays.
 - [Terminal listen-not-read is ephemeral-afplay audio-only](2026-06-23-terminal-listen-not-read-is-ephemeral-afplay-audio-only.md) — `afplay`'s lack of runtime IPC / queue control is the root cause; this measurement confirms it concretely.
+- [Listen-path true Pause/Resume via ebitengine/oto v3, no CGo (#92)](2026-06-27-true-pause-via-oto-v3-no-cgo-in-process-player.md) — **extends this decision and resolves its revisit trigger**. huginn research (#92) found a true in-process Pause/Resume via `oto` v3 with no CGo (device-confirmed), so the "adopt the CGo renderer" trigger condition need never be met. This decision's `afplay` finding stands unchanged; only its open question is now answered along a path it did not anticipate.
 
 ## Experiments
 

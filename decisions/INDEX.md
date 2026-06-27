@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-27-true-pause-via-oto-v3-no-cgo-in-process-player
+    title: "Listen-path true Pause/Resume via ebitengine/oto v3 in-process PCM player — no CGo, decoupled from the deferred sherpa-onnx CGo renderer"
+    date: 2026-06-27
+    status: accepted
+    category: architecture
+    tags: [listen-path, true-pause, pause-resume, oto, ebitengine, purego, no-cgo, in-process-renderer, pcm, kokoro, apache-2.0, sherpa-onnx, device-confirmed, issue-92, issue-84]
+    path: architecture/2026-06-27-true-pause-via-oto-v3-no-cgo-in-process-player.md
+    summary: "huginn research (#92) OVERTURNS the ticket premise that listen-path true Pause/Resume is deferred until the sherpa-onnx CGo renderer phase. Adopt github.com/ebitengine/oto/v3 as the in-process PCM player: zero CGo on macOS (purego), native io.Reader-of-PCM with library-managed freeze position (Player.Pause()/Play()), Apache-2.0, consumes 24 kHz mono int16 PCM (Kokoro native, no source resampling). Earned over raw-CoreAudio-CGo / malgo / portaudio across 5 axes — oto is the only zero-CGo, only io.Reader-of-PCM, only Apache-2.0 pick; the three competitors all reach resume-from-freeze but only via stop/start with app-managed position + fill-callback and all need CGo. DEVICE-CONFIRMED on-device probe (go1.26.1 darwin/arm64, oto v3.4.0, CoreAudio): pause-window delta 0 bytes / 0.0 ms, resume continuous from frozen offset 96000 -> 168000 with no restart. All 7 load-bearing claims verified or device-confirmed; none contested. EXTENDS decision 2026-06-26-afplay-sigstop-sigcont-no-true-pause.md and resolves its CGo-renderer revisit trigger WITHOUT CGo (the trigger condition need never be met); #84's afplay finding stands, not superseded. Research/decision output only — no implementation. Build follow-ups (spike + gated integration) tracked separately."
   - id: 2026-06-27-transcript-omitted-refused-count-additive-field
     title: "Report dropped refused blocks via additive transcript_omitted_refused_count on MCP speak receipt"
     date: 2026-06-27
