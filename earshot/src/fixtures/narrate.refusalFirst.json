@@ -1,0 +1,55 @@
+{
+  "audio_url": "/audio/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.wav",
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 0,
+      "class": "unknown",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 1,
+        "end_line": 1,
+        "raw_excerpt": "![architecture diagram](diagram.png)"
+      },
+      "refusal": {
+        "reason": "bare_image_no_description",
+        "message": "There is an image here with no text description, so it cannot be read aloud.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 1,
+          "end_line": 1,
+          "raw_excerpt": "![architecture diagram](diagram.png)"
+        }
+      },
+      "provenance": { "voiced_by": "planner", "deterministic": true, "level_asked": 1 }
+    },
+    {
+      "id": "b002",
+      "order": 1,
+      "class": "prose",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "char_span",
+        "start_char": 0,
+        "end_char": 40,
+        "raw_excerpt": "The diagram shows three tiers of service."
+      },
+      "segments": [
+        { "id": "s0", "kind": "speech", "text": "The diagram shows three tiers of service." }
+      ],
+      "provenance": { "voiced_by": "intelligence", "deterministic": false, "model": "test-model", "level_asked": 1 }
+    }
+  ],
+  "timeline": {
+    "plan_id": "01J0PLANREFUSAL0000000000",
+    "format": { "sample_rate": 24000, "channels": 1, "encoding": "wav" },
+    "blocks": [
+      { "block_id": "b001", "start_ms": 0, "end_ms": 4000 },
+      { "block_id": "b002", "start_ms": 4000, "end_ms": 7000 }
+    ]
+  }
+}

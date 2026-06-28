@@ -718,3 +718,27 @@ scopes:
       and state-management (active-block as shared derived state across
       transport↔transcript; no persistence — deliberately throwaway). Plan
       persisted draft (awaiting user approval before sindri consumes).
+
+  - slug: earshot-scaffold-app-shell-111
+    title: Earshot scaffold — app shell + session pane + file pane (#111)
+    created: 2026-06-28
+    reasoning: |
+      Plan/build cycle for GitHub issue #111 — the FIRST real earshot/ web app
+      build scope (distinct from the throwaway earshot-mockup-artifact-115
+      fidelity prototype). Builds the SHELL: scaffold + tooling, the #108
+      Material list-detail layout (left session pane, center spoken transcript,
+      bottom transport placeholder), session pane (role=listbox; session ID ->
+      GET /sessions/{id}/messages -> click -> POST /narrate), file pane (drop/
+      pick -> POST /narrate/file), center transcript with Spoken|Source toggle,
+      and audio off GET /audio/{render_id}.wav. Server-driven off narrate-server
+      (#109); replaces deleted passive player/ (#107); mockup signed off #115.
+      Slug pre-supplied + pre-approved via --scope in the orchestration prompt
+      (build-session single-skill runner). earshot- prefix groups the Earshot
+      surface; scaffold-app-shell qualifier scopes this to the shell (deeper
+      transport interactions, per-block escalation, resume-across-reload are
+      explicit follow-on tickets, NOT this scope); issue-numbered suffix per
+      convention. Planned via mimir task depth with overlays phased-delivery
+      (6 per-phase commit boundaries; user wants per-phase commits not one
+      bundle) and accessibility (entire #108 spec is APG/ARIA/keyboard/focus/
+      screen-reader-grounded). Plan persisted draft (awaiting user approval
+      before sindri consumes).
