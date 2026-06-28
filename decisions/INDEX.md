@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-earshot-mockup-signed-off-design-approved-for-111
+    title: "Earshot listener-UI mockup signed off — design approved for the #111 build"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, mockup, sign-off, leveling-ui, transport-anchor, session-pane, file-pane, issue-115, issue-111]
+    path: architecture/2026-06-28-earshot-mockup-signed-off-design-approved-for-111.md
+    summary: "User signed off on the Earshot listener design via the clickable #115 mockup (earshot-mockup/EarshotMockup.jsx, served by make preview-mockup). Probe 1 (per-block L1/L2/L3 segmented level control — the inline escalation surface under Model A) accepted as-is; reads intuitively as a gist→detail ladder. Probe 2 (bottom-anchored transport) accepted — no confusion observed, bottom-anchor default held, no flip to top (REJECTED Option B top-anchor and Option C replacing the 3-state control). Two design-§4 gaps found during testing were fixed inline and are part of the approved surface: session-ID entry in the Session pane (honest glob-miss on unknown ID, never a fabricated session) and the File pane for use case 2 (drop-a-file → read out, with oversized-section chunking). Sign-off unblocks #111; the mockup is throwaway — approved patterns are hand-ported into earshot/, not wired in. Revisit if the 3-state control or bottom transport proves unworkable in the real app."
   - id: 2026-06-28-low-priority-mid-build-issues-fix-inline-or-drop
     title: "Low-priority mid-build issues: fix inline or drop — never defer to new tickets"
     date: 2026-06-28
