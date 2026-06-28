@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-earshot-mockup-signed-off-design-approved-for-111
+    title: "Earshot listener-UI mockup signed off — design approved for the #111 build"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, mockup, sign-off, leveling-ui, transport-anchor, session-pane, file-pane, issue-115, issue-111]
+    path: architecture/2026-06-28-earshot-mockup-signed-off-design-approved-for-111.md
+    summary: "User signed off on the Earshot listener design via the clickable #115 mockup (earshot-mockup/EarshotMockup.jsx, served by make preview-mockup). Probe 1 (per-block L1/L2/L3 segmented level control — the inline escalation surface under Model A) accepted as-is; reads intuitively as a gist→detail ladder. Probe 2 (bottom-anchored transport) accepted — no confusion observed, bottom-anchor default held, no flip to top (REJECTED Option B top-anchor and Option C replacing the 3-state control). Two design-§4 gaps found during testing were fixed inline and are part of the approved surface: session-ID entry in the Session pane (honest glob-miss on unknown ID, never a fabricated session) and the File pane for use case 2 (drop-a-file → read out, with oversized-section chunking). Sign-off unblocks #111; the mockup is throwaway — approved patterns are hand-ported into earshot/, not wired in. Revisit if the 3-state control or bottom transport proves unworkable in the real app."
   - id: 2026-06-28-shared-transcript-parser-lives-in-internal
     title: "Shared transcript parser lives in internal/transcript; speak_last skip is caller policy; Message.Turn is an emit-index, not a stable id"
     date: 2026-06-28
@@ -56,6 +64,22 @@ decisions:
     tags: [speak-to-file, tech-debt, package-naming, wavfile-sink, wavconcat, accepted-debt]
     path: architecture/2026-06-28-wavfilesink-in-persistent-package-debt.md
     summary: "The new single-wav WAVFileSink was placed in package sink/persistent, whose name now overstates its contents (it holds both the 3-file directory sink and the single-wav sink). Accepted as deliberate debt to reuse the extracted buildSegments core without a premature package split. REJECTED hoisting the core into internal/wavconcat now (premature). Trigger-on-objection follow-up: hoist the shared wav-concat core into internal/wavconcat. A self-describing code marker records this in wavfile.go (no issue number)."
+  - id: 2026-06-28-earshot-rebuild-server-driven-listener-ui
+    title: "Rebuild the listener as a server-driven UI (Earshot); delete the passive player/"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, player, listener-ui, narrate-server, http-bridge, rebuild, leveling-ui, playback]
+    path: architecture/2026-06-28-earshot-rebuild-server-driven-listener-ui.md
+    summary: "The passive fixture-driven player/ (no session loading, no real play/pause/seek, no resume) cannot serve the real use cases (listen to a chat session, read out a big file). REJECTED extending player/ (Option A) — its passive preview model can't drive session loading + live playback and carries irrelevant fixture/companion/sourcepane machinery. CHOSE Option B: build Earshot (new earshot/ web app) backed by a new local narrate-server HTTP bridge that runs the pipeline (browser can't run Kokoro) and serves audio; delete player/ and its escalate-CLI-card/source-pane/companion code. Narration core (planner, plan schema, per-block leveling+escalation/patch, render, ephemeral+persistent) reused unchanged; no plan-schema fork. New concern: render-id wav lifecycle (temp-dir GC). Companion to the session-source and speak_to_file decisions. Revisit if a hosted/multi-user deployment is ever wanted."
+  - id: 2026-06-28-earshot-session-id-via-local-transcript-glob
+    title: "Resolve a session ID to a local transcript file by glob — no cloud API"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [earshot, session-id, transcript-jsonl, claude-projects, glob, message-list, speak-last, no-cloud-api, no-auth]
+    path: architecture/2026-06-28-earshot-session-id-via-local-transcript-glob.md
+    summary: "Earshot's session pane needs full chat history for a session ID. User initially framed it as a cloud session ID (implying a claude.ai web API + auth). REJECTED Option A (cloud API) — unknown/unstable surface, auth+token handling, network dependency, scope creep none of it needed. CHOSE Option B: the transcript filename IS the session UUID (~/.claude/projects/<project-hash>/<session-id>.jsonl), so the ID maps to a file by glob; speak_last's lastAssistantText parser already reads these (16 MiB buffer, tool_use vs text handling) with zero auth/network. Generalize that parser into a shared function returning the FULL ordered message list (user+assistant turns); speak_last keeps calling it for last-assistant, narrate-server calls it for all-messages. Big messages chunked via the planner's existing oversized-block splitting (clean seams only). Limitation: only local-transcript sessions are reachable. Revisit if sessions that never touched this machine must be listened to."
   - id: 2026-06-28-speak-to-file-separate-mcp-tool
     title: "Ship speak_to_file as a separate MCP tool, not an option on speak"
     date: 2026-06-28

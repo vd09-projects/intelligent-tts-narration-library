@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro preview-mockup
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -7,6 +7,8 @@ ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
 PLAYER_FIXTURE_DIR ?= player/public/fixtures/sample
 PLAYER_FIXTURE_DURATION ?= 2.0
+MOCKUP_PORT ?= 8137
+MOCKUP_DIR ?= /tmp/earshot-preview
 
 help:
 	@echo "Targets:"
@@ -42,6 +44,9 @@ help:
 	@echo "  run-companion          — one-click visual companion: render \$$SAMPLE → \$$OUT (separate --sink persistent), start narrate-server, launch player against \$$OUT (#76)"
 	@echo "  player-fixture-silent  — regenerate $(PLAYER_FIXTURE_DIR)/audio.wav as silent 24kHz mono PCM-16"
 	@echo "  player-fixture-kokoro  — narrate \$$SAMPLE via persistent sink → $(PLAYER_FIXTURE_DIR)"
+	@echo ""
+	@echo "Earshot #115 sign-off mockup (throwaway artifact):"
+	@echo "  preview-mockup         — bundle earshot-mockup/EarshotMockup.jsx into a /tmp harness, serve on \$$MOCKUP_PORT, open browser (needs node/npx + network for esm.sh React)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -184,3 +189,17 @@ player-fixture-kokoro:
 	@mkdir -p $(PLAYER_FIXTURE_DIR)
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(PLAYER_FIXTURE_DIR)
 	@echo "Refreshed $(PLAYER_FIXTURE_DIR) from $(SAMPLE)"
+
+# Build + serve the throwaway #115 sign-off mockup. Generates an ephemeral harness
+# in $(MOCKUP_DIR) (never committed): an entry that mounts EarshotMockup and an
+# index.html whose importmap pulls React from esm.sh at runtime, so no node_modules
+# is needed — only npx (for esbuild) and network. Ctrl-C the server to stop.
+preview-mockup:
+	@mkdir -p $(MOCKUP_DIR)
+	@cp earshot-mockup/EarshotMockup.jsx $(MOCKUP_DIR)/EarshotMockup.jsx
+	@printf 'import React from "react";\nimport { createRoot } from "react-dom/client";\nimport EarshotMockup from "./EarshotMockup.jsx";\ncreateRoot(document.getElementById("root")).render(<EarshotMockup />);\n' > $(MOCKUP_DIR)/entry.jsx
+	@printf '<!doctype html><html><head><meta charset="utf-8"><title>Earshot mockup #115</title>\n<script type="importmap">\n{"imports":{"react":"https://esm.sh/react@18","react-dom/client":"https://esm.sh/react-dom@18/client"}}\n</script></head><body><div id="root"></div>\n<script type="module" src="./bundle.js"></script></body></html>\n' > $(MOCKUP_DIR)/index.html
+	npx --yes esbuild@0.21.5 $(MOCKUP_DIR)/entry.jsx --bundle --format=esm --external:react --external:react-dom/client --outfile=$(MOCKUP_DIR)/bundle.js
+	@echo "Serving http://localhost:$(MOCKUP_PORT) (Ctrl-C to stop)"
+	@command -v open >/dev/null 2>&1 && (sleep 1 && open http://localhost:$(MOCKUP_PORT)) &
+	@cd $(MOCKUP_DIR) && python3 -m http.server $(MOCKUP_PORT)
