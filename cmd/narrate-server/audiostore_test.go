@@ -11,15 +11,19 @@ import (
 	"time"
 )
 
-// mintWAV reserves an id, writes payload to its path, and commits — the
-// production /narrate sequence, condensed for store/serve tests.
+// mintWAV reserves an id, writes payload to {id}/audio.wav, and commits — the
+// production /narrate sequence (now a 3-file render_id DIR, #125), condensed for
+// store/serve tests.
 func mintWAV(t *testing.T, store *renderStore, payload []byte) string {
 	t.Helper()
-	id, path, err := store.reserve()
+	id, dir, err := store.reserve()
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir render dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "audio.wav"), payload, 0o600); err != nil {
 		t.Fatalf("write wav: %v", err)
 	}
 	store.commit(id)
@@ -94,15 +98,16 @@ func TestAudio_ServeAndContainment(t *testing.T) {
 	})
 
 	t.Run("symlink_escape_rejected", func(t *testing.T) {
-		// A registered id whose on-disk leaf is a symlink escaping tempRoot must be
-		// rejected by resolveWithin (EvalSymlinks + filepath.Rel), not served.
-		outside := filepath.Join(t.TempDir(), "secret.wav")
-		if err := os.WriteFile(outside, []byte("SECRET"), 0o600); err != nil {
+		// A registered id whose on-disk render dir is a symlink escaping tempRoot
+		// must be rejected by resolveWithin (EvalSymlinks + filepath.Rel) when it
+		// resolves {id}/audio.wav, not served.
+		outsideDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outsideDir, "audio.wav"), []byte("SECRET"), 0o600); err != nil {
 			t.Fatalf("write outside: %v", err)
 		}
 		evilID := strings.Repeat("a", 32)
-		link := filepath.Join(store.tempRoot, evilID+".wav")
-		if err := os.Symlink(outside, link); err != nil {
+		link := filepath.Join(store.tempRoot, evilID)
+		if err := os.Symlink(outsideDir, link); err != nil {
 			t.Fatalf("symlink: %v", err)
 		}
 		store.commit(evilID) // register it so the map check passes and resolveWithin is exercised
@@ -144,8 +149,8 @@ func TestRenderStore_ReapAndOpenFDSurvival(t *testing.T) {
 	if _, ok := store.entries[oldID]; ok {
 		t.Fatal("expired entry still in map after reap")
 	}
-	if _, err := os.Stat(filepath.Join(store.tempRoot, oldID+".wav")); !os.IsNotExist(err) {
-		t.Fatalf("expired wav still on disk after reap (err=%v)", err)
+	if _, err := os.Stat(filepath.Join(store.tempRoot, oldID)); !os.IsNotExist(err) {
+		t.Fatalf("expired render dir still on disk after reap (err=%v)", err)
 	}
 	if _, ok := store.entries[freshID]; !ok {
 		t.Fatal("fresh entry was reaped — should be kept inside its TTL")
@@ -165,28 +170,48 @@ func TestRenderStore_OrphanScan(t *testing.T) {
 	store.now = func() time.Time { return clock }
 	const ttl = time.Minute
 
-	// An untracked *.wav (e.g. crash between write and commit) with an OLD mtime.
-	orphan := filepath.Join(store.tempRoot, strings.Repeat("b", 32)+".wav")
-	if err := os.WriteFile(orphan, []byte("orphan"), 0o600); err != nil {
+	// An untracked render_id DIR (e.g. crash between sink write and commit) with
+	// an OLD mtime (#125 — orphans are now dirs, reaped by RemoveAll).
+	orphan := filepath.Join(store.tempRoot, strings.Repeat("b", 32))
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "audio.wav"), []byte("orphan"), 0o600); err != nil {
 		t.Fatalf("write orphan: %v", err)
 	}
 	oldMTime := clock.Add(-2 * time.Minute)
+	// Chtimes the dir itself (the orphan scan keys on the DIR mtime).
 	if err := os.Chtimes(orphan, oldMTime, oldMTime); err != nil {
 		t.Fatalf("chtimes orphan: %v", err)
 	}
-	// A recent untracked *.wav must be KEPT (inside the TTL window).
-	recent := filepath.Join(store.tempRoot, strings.Repeat("c", 32)+".wav")
-	if err := os.WriteFile(recent, []byte("recent"), 0o600); err != nil {
+	// A recent untracked render_id dir must be KEPT (inside the TTL window) — the
+	// crash-window mtime heuristic protects a just-created-not-yet-committed dir.
+	recent := filepath.Join(store.tempRoot, strings.Repeat("c", 32))
+	if err := os.MkdirAll(recent, 0o755); err != nil {
+		t.Fatalf("mkdir recent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(recent, "audio.wav"), []byte("recent"), 0o600); err != nil {
 		t.Fatalf("write recent: %v", err)
+	}
+	// A non-render_id directory (wrong name shape) must NEVER be reaped.
+	stranger := filepath.Join(store.tempRoot, "not-a-render-id")
+	if err := os.MkdirAll(stranger, 0o755); err != nil {
+		t.Fatalf("mkdir stranger: %v", err)
+	}
+	if err := os.Chtimes(stranger, oldMTime, oldMTime); err != nil {
+		t.Fatalf("chtimes stranger: %v", err)
 	}
 
 	store.reap(ttl)
 
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Fatalf("old orphan not reaped (err=%v)", err)
+		t.Fatalf("old orphan dir not reaped (err=%v)", err)
 	}
 	if _, err := os.Stat(recent); err != nil {
-		t.Fatalf("recent untracked wav was reaped — should be kept: %v", err)
+		t.Fatalf("recent untracked dir was reaped — should be kept: %v", err)
+	}
+	if _, err := os.Stat(stranger); err != nil {
+		t.Fatalf("non-render_id dir was reaped — orphan scan must ignore it: %v", err)
 	}
 }
 
@@ -222,9 +247,10 @@ func TestRenderStore_Liveness_SlowServeDoesNotBlockMint(t *testing.T) {
 	// A concurrent mint must complete well within a tight deadline.
 	done := make(chan struct{})
 	go func() {
-		_, p, _ := store.reserve()
-		_ = os.WriteFile(p, []byte("x"), 0o600)
-		store.commit(filepath.Base(strings.TrimSuffix(p, ".wav")))
+		id, dir, _ := store.reserve()
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, "audio.wav"), []byte("x"), 0o600)
+		store.commit(id)
 		// also exercise the reaper write-lock path concurrently
 		store.reap(time.Hour)
 		close(done)
@@ -291,9 +317,10 @@ func TestRenderStore_ConcurrentMintServeReap(t *testing.T) {
 				case <-stop:
 					return
 				default:
-					_, p, _ := store.reserve()
-					_ = os.WriteFile(p, []byte("c"), 0o600)
-					store.commit(strings.TrimSuffix(filepath.Base(p), ".wav"))
+					id, dir, _ := store.reserve()
+					_ = os.MkdirAll(dir, 0o755)
+					_ = os.WriteFile(filepath.Join(dir, "audio.wav"), []byte("c"), 0o600)
+					store.commit(id)
 				}
 			}
 		}()

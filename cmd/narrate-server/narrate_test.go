@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,30 +16,31 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
 )
 
-// installNarrateSeams swaps the /narrate factory + wav-writer seams for a test.
+// installNarrateSeams swaps the /narrate factory + dir-writer seams for a test.
 func installNarrateSeams(t *testing.T,
-	narrate func(text, voice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator,
-	write func(ctx context.Context, path string, p plan.NarrationPlan, res render.RenderResult) error,
+	narrate func(voice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator,
+	write func(ctx context.Context, dir, voice string, p plan.NarrationPlan, res render.RenderResult) error,
 ) {
 	t.Helper()
-	origN, origW := newNarratePipeline, writeRenderWAV
+	origN, origW := newNarratePipeline, writeRenderDir
 	if narrate != nil {
 		newNarratePipeline = narrate
 	}
 	if write != nil {
-		writeRenderWAV = write
+		writeRenderDir = write
 	}
-	t.Cleanup(func() { newNarratePipeline, writeRenderWAV = origN, origW })
+	t.Cleanup(func() { newNarratePipeline, writeRenderDir = origN, origW })
 }
 
 // narrateStub returns a /narrate factory seam producing a narrator that
 // populates the capturer with the given blocks (whole-doc path), plus a
-// matching writeRenderWAV that writes payload to the wav path.
+// matching writeRenderDir that writes payload to {dir}/audio.wav (the served
+// artifact in the new 3-file render_id layout).
 func narrateStub(blocks []plan.Block, narrateErr error, payload []byte) (
-	func(string, string, plan.Level, string, *capturingSink) pipeline.Narrator,
-	func(context.Context, string, plan.NarrationPlan, render.RenderResult) error,
+	func(string, plan.Level, string, *capturingSink) pipeline.Narrator,
+	func(context.Context, string, string, plan.NarrationPlan, render.RenderResult) error,
 ) {
-	narrate := func(_, _ string, _ plan.Level, _ string, capturer *capturingSink) pipeline.Narrator {
+	narrate := func(_ string, _ plan.Level, _ string, capturer *capturingSink) pipeline.Narrator {
 		return narratorFunc(func(_ context.Context, _ plan.SourceRef, _ pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
 			if narrateErr != nil {
 				return pipeline.NarrateResult{}, narrateErr
@@ -53,8 +55,8 @@ func narrateStub(blocks []plan.Block, narrateErr error, payload []byte) (
 			return pipeline.NarrateResult{}, nil
 		})
 	}
-	write := func(_ context.Context, path string, _ plan.NarrationPlan, _ render.RenderResult) error {
-		return os.WriteFile(path, payload, 0o600)
+	write := func(_ context.Context, dir, _ string, _ plan.NarrationPlan, _ render.RenderResult) error {
+		return os.WriteFile(filepath.Join(dir, "audio.wav"), payload, 0o600)
 	}
 	return narrate, write
 }
@@ -179,7 +181,7 @@ func TestNarrate_HappyPath(t *testing.T) {
 			if _, tracked := store.entries[id]; !tracked {
 				t.Fatalf("minted id %q not registered in store", id)
 			}
-			gotBytes, err := os.ReadFile(store.tempRoot + "/" + id + ".wav")
+			gotBytes, err := os.ReadFile(filepath.Join(store.tempRoot, id, "audio.wav"))
 			if err != nil {
 				t.Fatalf("read minted wav: %v", err)
 			}
@@ -244,7 +246,7 @@ func TestNarrate_RenderError(t *testing.T) {
 	t.Run("wav_write_error", func(t *testing.T) {
 		blocks := []plan.Block{{ID: "b1", Status: plan.StatusVoiced}}
 		narrate, _ := narrateStub(blocks, nil, nil)
-		writeErr := func(_ context.Context, _ string, _ plan.NarrationPlan, _ render.RenderResult) error {
+		writeErr := func(_ context.Context, _, _ string, _ plan.NarrationPlan, _ render.RenderResult) error {
 			return errors.New("disk full")
 		}
 		installNarrateSeams(t, narrate, writeErr)

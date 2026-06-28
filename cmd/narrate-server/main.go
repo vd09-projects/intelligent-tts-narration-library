@@ -29,7 +29,19 @@
 //	POST /narrate  {text, level, gender}  → 200 {audio_url, blocks[], timeline}   (inline TEXT only — R2)
 //	  200 refused → {audio_url, blocks[] (refused), timeline}   (refusal is data, HTTP 200 — R-NB1)
 //	  400 missing_field (no text / unknown gender) | 400 invalid_level | 408 cancelled | 500 render_failed
-//	GET  /audio/{render_id}.wav → 200 audio/wav bytes (Cache-Control: no-store)
+//	  Mints a PATCHABLE 3-file persistent dir per render_id ({tempRoot}/{id}/
+//	  {audio.wav, plan.json, manifest.json} + server-minted source.txt, #125/#110)
+//	  so POST /narrate/block can re-render one block by render_id.
+//	POST /narrate/block  {render_id, block_id, level}  → 200 {block, timing?, refusal?, audio_url}  (#110)
+//	  Re-renders ONE block at a new level via the shared escalate core
+//	  (sink/persistent.PatchBlock); sibling blocks stay byte-identical. render_id
+//	  resolves INTERNALLY to the server temp dir (never a user path — R2 holds);
+//	  audio_url is the unchanged /audio/{render_id}.wav (audio.wav rewritten in place).
+//	  200 refused → {block, refusal, audio_url} (timing ABSENT, refusal is data — R-NB1)
+//	  400 missing_field (bad render_id / block_id) | 400 invalid_level
+//	  404 source_not_found (unknown/expired render_id) | 408 cancelled
+//	  409 stale_patch|content_hash_mismatch|unknown_block|… | 500 internal|readback_failed
+//	GET  /audio/{render_id}.wav → 200 audio/wav bytes (Cache-Control: no-store), serves {id}/audio.wav
 //	  400 missing_field (id ≁ ^[0-9a-f]{32}$) | 404 source_not_found (unknown/expired) | 405 method_not_allowed
 //
 //	Containment (both /artifact and /audio): resolveWithin = EvalSymlinks +
@@ -488,6 +500,11 @@ func newMux(args serverArgs, store *renderStore) http.Handler {
 	// shared ErrorResponse envelope (not the mux's default 405 body).
 	mux.HandleFunc("/sessions/{id}/messages", messagesHandler)
 	mux.Handle("/narrate", narrateHandler(args, store))
+	// /narrate and /narrate/block are DISTINCT Go 1.22 exact patterns (neither
+	// has a trailing slash), so there is no subtree shadowing: POST /narrate
+	// routes to narrateHandler and POST /narrate/block to narrateBlockHandler.
+	// Guarded by TestMux_NarrateRoutesDoNotShadow.
+	mux.Handle("/narrate/block", narrateBlockHandler(args, store))
 	mux.HandleFunc("/audio/{file}", store.serveAudio)
 	return withCORS(args.CORSOrigin, mux)
 }
@@ -821,14 +838,29 @@ func runEscalate(reqCtx context.Context, args serverArgs, req escalateRequest) (
 	defer cancel()
 
 	// (b) Resolve dir to an absolute, cleaned path — the mutex key (keying
-	// hygiene, not a sandbox; local-trust model, R4) — then acquire the per-dir
-	// lock with defer Unlock BEFORE any fallible call (R2b: no lock leak on
-	// panic/early return; no deadlock for the dir's server lifetime).
+	// hygiene, not a sandbox; local-trust model, R4). The user-supplied dir is
+	// resolved here; the post-resolve body is shared with POST /narrate/block via
+	// escalateInDir (which receives an already-resolved, server-INTERNAL dir).
 	absDir, err := filepath.Abs(req.Dir)
 	if err != nil {
 		return escalateResponse{}, http.StatusBadRequest,
 			&ErrorResponse{Reason: reasonSourceNotFound, Message: "resolve dir: " + err.Error()}
 	}
+	return escalateInDir(ctx, args, absDir, req.BlockID, plan.Level(req.Level))
+}
+
+// escalateInDir is the shared single-block escalate core: per-dir lock →
+// readManifest → capturing-sink re-render with the level override → patchBlock →
+// ErrNothingToPatch/statusForErr mapping → on-disk read-back. Both POST /escalate
+// (user-supplied dir, resolved in runEscalate) and POST /narrate/block
+// (render_id → server-internal dir, resolved in runNarrateBlock) funnel through
+// it, so there is exactly ONE patch path. absDir MUST already be absolute. The
+// existing /escalate tests are this refactor's behavioral oracle.
+func escalateInDir(ctx context.Context, args serverArgs, absDir, blockID string, level plan.Level) (escalateResponse, int, *ErrorResponse) {
+	// Acquire the per-dir lock with defer Unlock BEFORE any fallible call (R2b:
+	// no lock leak on panic/early return; no deadlock for the dir's server
+	// lifetime). The render_id dir IS the mutex key, so a concurrent
+	// /narrate/block + GET /audio on the same id serialize correctly (#62).
 	muIface, _ := dirLocks.LoadOrStore(absDir, &sync.Mutex{})
 	mu := muIface.(*sync.Mutex)
 	mu.Lock()
@@ -861,8 +893,8 @@ func runEscalate(reqCtx context.Context, args serverArgs, req escalateRequest) (
 	pl := newPipeline(absDir, args, capturer)
 	_, err = pl.Narrate(ctx, ref, pipeline.NarrateRequest{
 		Voice:               genderToVoice[args.Gender],
-		BlockID:             req.BlockID,
-		LevelOverrides:      map[string]plan.Level{req.BlockID: plan.Level(req.Level)},
+		BlockID:             blockID,
+		LevelOverrides:      map[string]plan.Level{blockID: level},
 		ExpectedContentHash: manifest.ContentHash,
 	})
 	if err != nil {
@@ -871,10 +903,10 @@ func runEscalate(reqCtx context.Context, args serverArgs, req escalateRequest) (
 	}
 	if !capturer.captured {
 		return escalateResponse{}, http.StatusInternalServerError,
-			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result for block " + req.BlockID}
+			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result for block " + blockID}
 	}
 
-	_, perr := patchBlock(ctx, absDir, capturer.plan, capturer.result, req.BlockID,
+	_, perr := patchBlock(ctx, absDir, capturer.plan, capturer.result, blockID,
 		persistent.WithVoice(genderToVoice[args.Gender]))
 	// (e) ErrNothingToPatch → 4xx source_not_found, NOT a 200 no-op.
 	//
@@ -911,7 +943,7 @@ func runEscalate(reqCtx context.Context, args serverArgs, req escalateRequest) (
 	// is to re-issue the IDENTICAL POST, which re-renders the same block to
 	// content-identical bytes and re-patches, then reads back → 200 (B5
 	// convergence by re-render, NOT by an ErrNothingToPatch short-circuit).
-	resp, rerr := readBack(absDir, req.BlockID)
+	resp, rerr := readBack(absDir, blockID)
 	if rerr != nil {
 		return escalateResponse{}, http.StatusInternalServerError,
 			&ErrorResponse{Reason: reasonReadbackFailed, Message: "post-patch read-back failed: " + rerr.Error()}
