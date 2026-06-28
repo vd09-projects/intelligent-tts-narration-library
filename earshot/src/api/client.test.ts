@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ClientError, getMessages, postNarrate, postNarrateFile } from "./client";
+import {
+  ClientError,
+  getMessages,
+  postNarrate,
+  postNarrateBlock,
+  postNarrateFile,
+} from "./client";
 import { createMockFetch } from "../mocks/server";
 import narrateMixed from "../fixtures/narrate.mixed.json";
+import type { NarrateBlockResponse } from "./types";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -63,6 +70,49 @@ describe("api client — shape mapping", () => {
     expect(form.get("level")).toBe("2");
     // No Content-Type header — browser sets the multipart boundary.
     expect(init?.headers).toBeUndefined();
+  });
+
+  it("POST /narrate/block posts {render_id, block_id, level} and parses the 5-field response", async () => {
+    // review test — postNarrateBlock wrapper.
+    const blockResp: NarrateBlockResponse = {
+      block: { ...narrateMixed.blocks[0], level: 3 } as NarrateBlockResponse["block"],
+      timing: { block_id: "b001", start_ms: 0, end_ms: 5000 },
+      audio_url: narrateMixed.audio_url,
+      timeline: {
+        plan_id: "p1",
+        format: { sample_rate: 24000, channels: 1, encoding: "wav" },
+        blocks: [{ block_id: "b001", start_ms: 0, end_ms: 5000 }],
+      },
+    };
+    let body: unknown;
+    let url = "";
+    vi.stubGlobal(
+      "fetch",
+      createMockFetch({
+        narrateBlock: blockResp,
+        onRequest: (r) => {
+          if (r.url.endsWith("/narrate/block")) {
+            url = `${r.method} ${r.url}`;
+            body = JSON.parse(String(r.init?.body));
+          }
+        },
+      }),
+    );
+
+    const resp = await postNarrateBlock({ render_id: "abc", block_id: "b001", level: 3 });
+    expect(url).toBe("POST /narrate/block");
+    expect(body).toEqual({ render_id: "abc", block_id: "b001", level: 3 });
+    expect(resp.block.level).toBe(3);
+    expect(resp.timeline.blocks[0].end_ms).toBe(5000);
+    // audio_url passed through OPAQUE — verbatim, never reconstructed.
+    expect(resp.audio_url).toBe(narrateMixed.audio_url);
+  });
+
+  it("POST /narrate/block non-200 throws a ClientError like the other wrappers", async () => {
+    vi.stubGlobal("fetch", createMockFetch({ narrateBlock: "error" }));
+    await expect(
+      postNarrateBlock({ render_id: "abc", block_id: "b001", level: 3 }),
+    ).rejects.toMatchObject({ name: "ClientError", reason: "render_failed", status: 500 });
   });
 
   it("normalizes an HTTP error body into a ClientError with reason + status", async () => {

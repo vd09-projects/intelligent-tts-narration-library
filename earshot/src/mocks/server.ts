@@ -13,12 +13,19 @@ import messagesEmpty from "../fixtures/messages.empty.json";
 import narrateMixed from "../fixtures/narrate.mixed.json";
 import narrateRefusalFirst from "../fixtures/narrate.refusalFirst.json";
 import errorBody from "../fixtures/error.json";
+import type { NarrateBlockResponse } from "../api/types";
 
 export interface MockOptions {
   /** Which messages fixture GET /sessions returns. */
   messages?: "default" | "empty" | "error";
   /** Which narrate fixture POST /narrate and /narrate/file return. */
   narrate?: "mixed" | "refusalFirst" | "error";
+  /**
+   * POST /narrate/block (#113). A full custom response (test controls the
+   * post-patch timeline), or a canned outcome. Defaults to a no-op echo error
+   * if a test posts /narrate/block without configuring it.
+   */
+  narrateBlock?: NarrateBlockResponse | "error";
   /** Force a network-level reject (TypeError) instead of a Response. */
   reject?: boolean;
   /** Called with each request so a test can assert method/path/body. */
@@ -51,6 +58,13 @@ export function createMockFetch(options: MockOptions = {}) {
         return json(messagesEmpty);
       }
       return json(messages);
+    }
+
+    if (method === "POST" && url.endsWith("/narrate/block")) {
+      if (options.narrateBlock === "error" || options.narrateBlock == null) {
+        return json({ reason: "render_failed", message: "block re-render failed: boom" }, 500);
+      }
+      return json(options.narrateBlock);
     }
 
     if (method === "POST" && (url.endsWith("/narrate") || url.endsWith("/narrate/file"))) {

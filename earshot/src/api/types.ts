@@ -190,10 +190,46 @@ export interface NarrateRequest {
 /**
  * POST /narrate and POST /narrate/file 200 body (narrate.go narrateResponse).
  * `audio_url` is OPAQUE (D4): used verbatim as the <audio> source.
+ *
+ * `render_id` (#113) is the bare render id the server ALSO encodes inside
+ * audio_url. The client uses THIS to drive POST /narrate/block — it never
+ * parses render_id back out of the opaque audio_url (D4 preserved).
  */
 export interface NarrateResponse {
   audio_url: string;
+  render_id: string;
   blocks: Block[];
+  timeline: Timeline;
+}
+
+/**
+ * POST /narrate/block request body (narrate.go narrateBlockRequest, #110/#113).
+ * render_id keys the server-internal render dir; block_id + level select the one
+ * block to re-render at a new fidelity.
+ */
+export interface NarrateBlockRequest {
+  render_id: string;
+  block_id: string;
+  level: Level;
+}
+
+/**
+ * POST /narrate/block 200 body (narrate.go narrateBlockResponse, #110/#113).
+ *
+ * `block` carries the re-rendered block (status reflects voiced/degraded, or
+ * refused on an escalation-returned refusal — refusal is DATA, not an error).
+ * `timing` + `refusal` follow the same nullability as /escalate. `audio_url`
+ * is the SAME opaque stable URL (the combined wav is rewritten in place).
+ *
+ * `timeline` (#113) is the FULL post-patch document timeline — the patch shifts
+ * every downstream sibling's offset, so the client adopts this WHOLESALE
+ * (server-authoritative; no client-side offset recompute).
+ */
+export interface NarrateBlockResponse {
+  block: Block;
+  timing?: BlockTiming;
+  refusal?: Refusal;
+  audio_url: string;
   timeline: Timeline;
 }
 
