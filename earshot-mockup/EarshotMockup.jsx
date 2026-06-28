@@ -302,6 +302,14 @@ export default function EarshotMockup() {
   const [transcriptView, setTranscriptView] = useState("spoken"); // spoken | source
   const [sessionPaneCollapsed, setSessionPaneCollapsed] = useState(false);
 
+  // ---- session-ID entry (design §4: "input a session ID → message list") ----
+  // The mock can only resolve the hard-coded fixtures, so an ID that does not
+  // match a fixture yields the HONEST glob-miss notice — never a fabricated
+  // "loaded" session. This mirrors the real limitation: Earshot reaches only
+  // sessions whose .jsonl is on this machine.
+  const [sessionIdInput, setSessionIdInput] = useState("");
+  const [sessionIdNotice, setSessionIdNotice] = useState(null); // null | {kind, msg}
+
   // ---- local UI focus / menu state ----
   const [listboxFocusIndex, setListboxFocusIndex] = useState(0);
   const [toolbarFocusIndex, setToolbarFocusIndex] = useState(0); // 0=prev 1=play 2=slider 3=return
@@ -378,7 +386,34 @@ export default function EarshotMockup() {
     setEscalatingBlockId(null);
     setEscalationMsg({});
     setToolbarFocusIndex(0);
+    setSessionIdNotice(null);
   }, []);
+
+  // ---- resolve a typed session ID (design §4 + §6 glob model) ----
+  // Match is case-insensitive against the fixture ids (also accept a "load-by-id"
+  // alias of the title for convenience). A miss is reported honestly, not faked.
+  const loadSessionById = useCallback(() => {
+    const raw = sessionIdInput.trim();
+    if (!raw) {
+      setSessionIdNotice({ kind: "error", msg: "Enter a session ID to load." });
+      return;
+    }
+    const q = raw.toLowerCase();
+    const hit = SESSIONS.find(
+      (s) => s.id.toLowerCase() === q || s.title.toLowerCase() === q
+    );
+    if (hit) {
+      selectSession(hit.id);
+      setSessionIdInput("");
+      setSessionIdNotice({ kind: "ok", msg: `Loaded "${hit.title}".` });
+      return;
+    }
+    // Honest glob-miss: do not fabricate a "loaded" session for an unknown ID.
+    setSessionIdNotice({
+      kind: "error",
+      msg: `No local transcript found for "${raw}". Earshot reaches only sessions whose .jsonl is on this machine (glob ~/.claude/projects/*/{id}.jsonl). Mock fixtures: ${SESSIONS.map((s) => s.id).join(", ")}.`,
+    });
+  }, [sessionIdInput, selectSession]);
 
   // ---- compute whether the active block is within the transcript viewport ----
   const computeInView = useCallback(() => {
@@ -696,6 +731,45 @@ export default function EarshotMockup() {
               {sessionPaneCollapsed ? "»" : "«"}
             </button>
           </div>
+
+          {/* ---- session-ID entry (design §4) — load a session not in the list ---- */}
+          {!sessionPaneCollapsed && (
+            <form
+              style={{ margin: "4px 0 12px" }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                loadSessionById();
+              }}
+            >
+              <label htmlFor="session-id-input" style={{ ...st.paneTitle, display: "block", marginBottom: 4 }}>
+                Load by session ID
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  id="session-id-input"
+                  type="text"
+                  value={sessionIdInput}
+                  onChange={(e) => setSessionIdInput(e.target.value)}
+                  placeholder="paste session ID…"
+                  aria-describedby="session-id-notice"
+                  style={{ flex: 1, minWidth: 0, padding: "6px 8px", border: `1px solid ${C.line}`, borderRadius: 6, fontSize: 13 }}
+                />
+                <button type="submit" style={st.btnPrimary} aria-label="Load session by ID">
+                  Load
+                </button>
+              </div>
+              {sessionIdNotice && (
+                <div
+                  id="session-id-notice"
+                  role="status"
+                  aria-live="polite"
+                  style={{ marginTop: 6, fontSize: 12, lineHeight: 1.4, color: sessionIdNotice.kind === "error" ? C.refused : C.sub }}
+                >
+                  {sessionIdNotice.msg}
+                </div>
+              )}
+            </form>
+          )}
 
           {!sessionPaneCollapsed && (
             <ul
