@@ -170,6 +170,37 @@ func TestParseMessages_LargeLineSurvives(t *testing.T) {
 	}
 }
 
+// TestParseMessages_LineIdentityFields proves the additive #109 fields: the
+// line's top-level "uuid" / "timestamp" are captured verbatim, in file order,
+// and a line that omits them yields empty fields (tolerated, not an error — the
+// consumer supplies identity).
+func TestParseMessages_LineIdentityFields(t *testing.T) {
+	t.Parallel()
+	p := writeJSONL(t, []string{
+		`{"type":"user","uuid":"u-1","timestamp":"2026-06-28T00:00:01Z","message":{"content":"hi"}}`,
+		`{"type":"assistant","uuid":"a-2","timestamp":"2026-06-28T00:00:02Z","message":{"content":[{"type":"text","text":"reply"}]}}`,
+		`{"type":"user","message":{"content":"no uuid here"}}`,
+	})
+	got, err := ParseMessages(p)
+	if err != nil {
+		t.Fatalf("ParseMessages: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d messages, want 3", len(got))
+	}
+	want := []struct{ uuid, ts string }{
+		{"u-1", "2026-06-28T00:00:01Z"},
+		{"a-2", "2026-06-28T00:00:02Z"},
+		{"", ""},
+	}
+	for i, w := range want {
+		if got[i].UUID != w.uuid || got[i].Timestamp != w.ts {
+			t.Fatalf("message[%d]: got {UUID:%q Timestamp:%q}, want {UUID:%q Timestamp:%q}",
+				i, got[i].UUID, got[i].Timestamp, w.uuid, w.ts)
+		}
+	}
+}
+
 // TestParseMessages_OpenError surfaces an I/O failure as an error (the only
 // non-tolerant path) rather than swallowing it.
 func TestParseMessages_OpenError(t *testing.T) {

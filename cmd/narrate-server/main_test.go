@@ -238,7 +238,7 @@ func seedPersistentTriple(t *testing.T) (outDir, contentHash, sourceURI string) 
 // doPost drives one POST /escalate through the full mux and returns the recorder.
 func doPost(t *testing.T, args serverArgs, body string, origin string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := newMux(args)
+	mux := newMux(args, newRenderStore(t.TempDir()))
 	r := httptest.NewRequest(http.MethodPost, "/escalate", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	if origin != "" {
@@ -687,7 +687,7 @@ func TestEscalate_RequestValidation(t *testing.T) {
 
 func TestCORS_PinnedLiteral_NeverEchoesOrigin(t *testing.T) {
 	args := defaultArgs() // cors-origin = http://localhost:5173
-	mux := newMux(args)
+	mux := newMux(args, newRenderStore(t.TempDir()))
 
 	t.Run("preflight_from_configured_origin", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodOptions, "/escalate", nil)

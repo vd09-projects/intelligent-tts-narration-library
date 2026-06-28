@@ -29,15 +29,19 @@ import (
 // skipped. Text MAY be empty (e.g. a turn whose only blocks are tool_use), in
 // which case ToolNames carries the signal. Role is "user" or "assistant".
 //
-// Forward note: cmd/narrate-server #109 may additively widen Message with
-// per-message fields (e.g. timestamp / UUID) to build a stable wire DTO and
-// pagination cursors. Those fields exist on the transcript lines today; adding
-// them later is additive and schema-compatible (no existing field changes).
+// UUID and Timestamp are the line-derived raw identity fields (#109). They
+// carry the transcript line's own top-level "uuid" / "timestamp" VERBATIM —
+// empty when the line omits them. The parser stays tool-agnostic and reports
+// the raw line truthfully: it does NOT synthesise a fallback id when uuid is
+// absent. Identity policy (e.g. a content-hash fallback for a uuid-less line)
+// belongs to the consumer (cmd/narrate-server derives a StableID), not here.
 type Message struct {
 	Turn      int      // sequential index over all emitted messages, file order
 	Role      string   // "user" | "assistant"
 	Text      string   // joined text blocks; may be empty for tool-only turns
 	ToolNames []string // names of tool_use blocks in this turn, in order
+	UUID      string   // line's top-level "uuid" verbatim; "" when absent (#109)
+	Timestamp string   // line's top-level "timestamp" verbatim; "" when absent (#109)
 }
 
 // ParseMessages reads the transcript .jsonl at path and returns every user and
@@ -63,8 +67,10 @@ func ParseMessages(path string) ([]Message, error) {
 	turn := 0
 	for sc.Scan() {
 		var line struct {
-			Type    string `json:"type"`
-			Message struct {
+			Type      string `json:"type"`
+			UUID      string `json:"uuid"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -84,6 +90,8 @@ func ParseMessages(path string) ([]Message, error) {
 			Role:      line.Type,
 			Text:      text,
 			ToolNames: toolNames,
+			UUID:      line.UUID,
+			Timestamp: line.Timestamp,
 		})
 		turn++
 	}
