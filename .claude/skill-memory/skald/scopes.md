@@ -688,3 +688,33 @@ scopes:
       mimir never_overlays). Plan persisted draft (awaiting user approval before
       sindri consumes). NOTE: this run re-persisted after a prior run produced
       the mimir plan but failed to write the scope dir.
+  - slug: earshot-mockup-artifact-115
+    title: Earshot clickable mockup — free static-React Claude Artifact validating L1/L2/L3 control + transport anchor (issue #115)
+    created: 2026-06-28
+    reasoning: |
+      Plan cycle for GitHub issue #115 — the sign-off-gate mockup that informs
+      the real earshot/ app build (#111/#112/#113). Build ONE self-contained
+      static React file pasteable into a FREE Claude Artifact ($0 — no
+      Live/AI/MCP/persistent features; claude.ai Claude Design rejected on
+      no-recurring-spend) that makes the design's two weakest-grounded surfaces
+      clickable and user-testable: the per-block L1/L2/L3 radiogroup segmented
+      control (grade-F bounded-negative novel synthesis — radiogroup not a
+      disclosure because L2 is a real middle state) and the bottom-anchored
+      transport, with a cheap top/bottom anchor toggle so the comparison is
+      testable in-place. All data hard-coded fixtures; playback + escalation
+      SIMULATED in local state — never wired to narrate-server or the Go core
+      (fidelity prototype only). Honors the accepted "Earshot UI finalized"
+      decision (Material list-detail, bottom transport, APG-grounded controls,
+      free-Artifact mockup method) and the server-driven-rebuild / glob-session
+      decisions as context (mockup itself talks to nothing). Implements
+      research/earshot-ui-design-108/report.md §5–§9 wireframe + interaction
+      tables. earshot-mockup- prefix marks the throwaway fidelity-mockup surface
+      (distinct from the real earshot/ build scopes #111/#112/#113); artifact
+      qualifier captures the Claude-Artifact delivery medium; issue-numbered
+      suffix continues the convention. Slug pre-supplied + pre-approved via
+      --scope in the orchestration prompt (build-session single-skill runner).
+      Planned via mimir task depth with overlays accessibility (entire spec is
+      APG/ARIA/keyboard/focus/screen-reader + the radiogroup intuitiveness probe)
+      and state-management (active-block as shared derived state across
+      transport↔transcript; no persistence — deliberately throwaway). Plan
+      persisted draft (awaiting user approval before sindri consumes).
