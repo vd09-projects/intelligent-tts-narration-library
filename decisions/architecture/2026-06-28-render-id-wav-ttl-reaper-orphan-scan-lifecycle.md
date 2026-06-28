@@ -3,7 +3,7 @@
 | Field    | Value            |
 |----------|------------------|
 | Date     | 2026-06-28       |
-| Status   | accepted         |
+| Status   | superseded       |
 | Category | architecture     |
 | Tags     | narrate-server, http-bridge, render-store, ttl-reaper, orphan-scan, crash-window, wavfilesink, single-wav, os-remove-outside-lock, snapshot-under-lock, issue-109 |
 
@@ -39,6 +39,7 @@ Reasoning: TTL alone leaks files written in the window where a render completes 
 
 ## Related decisions
 
+- [POST /narrate/block escalation persists a 3-file persistent-sink dir per render_id (Option 1)](../architecture/2026-06-28-post-narrate-block-escalation-persists-a-3-file.md) — SUPERSEDES the single-wav claim in this file (in the Context and Decision paragraphs): under #110 the render must move to the 3-file persistent-sink dir per render_id so a block can be patched, so the single-wav `WAVFileSink`-no-sidecars model no longer holds for escalatable renders. This trips (does not violate) the WAVFileSink-no-sidecars revisit trigger.
 - [WAVFileSink reuses persistent-sink wav-concat math but writes only the combined wav, no JSON sidecars](../architecture/2026-06-28-wavfilesink-reuses-wav-concat-no-sidecars.md) — the single-wav sink variant this lifecycle manages; this decision records the server-side reaper/orphan-scan layer on top of it.
 - [GET /audio holds the store read-lock only across resolve+open, then streams lock-free](../concurrency/2026-06-28-audio-serve-releases-store-lock-before-streaming.md) — the serve path whose POSIX open-fd survival makes the lock-free reaper safe.
 

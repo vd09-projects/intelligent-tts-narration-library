@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-post-narrate-block-escalation-persists-a-3-file
+    title: "POST /narrate/block escalation persists a 3-file persistent-sink dir per render_id (Option 1)"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [narrate-server, http-bridge, escalation-endpoint, narrate-block, render-id, persistent-sink, patchblock, byte-preserving, three-file-dir, audio-url, posix-unlink, os-rename-atomic, content-hash-cache-dormant, supersedes, issue-110, issue-109]
+    path: architecture/2026-06-28-post-narrate-block-escalation-persists-a-3-file.md
+    summary: "#110 POST /narrate/block re-renders ONE block of a prior /narrate render, byte-preserving the rest. CHOSEN Option 1: narrate-server persists a 3-file persistent-sink directory per render_id (audio.wav+plan.json+manifest.json) under tempRoot/{render_id}/, keyed by render_id (NOT a user-supplied dir); the endpoint reuses the proven persistent.PatchBlock + readBack path and returns an escalateResponse with an audio_url field (not audio_ref+dir). Crux forcing a storage-model change: /narrate (#109) currently persists ONLY a combined wav + createdAt — plan, timeline, per-block wavs, AND source text are discarded [verified]; PatchBlock requires all 3 files present (ErrNothingToPatch on absence) [verified], so a full 3-file dir is mandatory. Byte-preserving via PatchBlock + manifest-derived byte ranges; POSIX open-fd survives unlink (Linux+macOS) and os.Rename is atomic same-dir/same-fs (EXDEV cross-fs; durability needs fsync) [verified]. Content-hash escalation cache stays DORMANT phase one (per-block hashes already rejected by 2026-06-20-pipeline-block-rerender-uses-document-hash; regen sub-100ms earns nothing). REJECTED Option 2 (in-memory plan/state between calls — reopens seam-gap R1, RSS balloon) and Option 3 (lazy materialization — unbuildable since /narrate discards plan AND source text, plus a new crash window + file/dir heterogeneity). SUPERSEDES the single-wav claim in 2026-06-28-render-id-wav-ttl-reaper-orphan-scan-lifecycle.md; trips (does not violate) the WAVFileSink-no-sidecars revisit trigger. All load-bearing claims adversarially verified in Stage 3; research/narrate-block-render-id-state-110/."
   - id: 2026-06-28-narrate-inline-text-only-source-path-dropped
     title: "POST /narrate accepts inline text only — server-side source path dropped as a CSRF/file-read vector"
     date: 2026-06-28
@@ -35,7 +43,7 @@ decisions:
   - id: 2026-06-28-render-id-wav-ttl-reaper-orphan-scan-lifecycle
     title: "render_id wav lifecycle — TTL reaper plus orphan-scan, deletes outside the store write-lock"
     date: 2026-06-28
-    status: accepted
+    status: superseded
     category: architecture
     tags: [narrate-server, http-bridge, render-store, ttl-reaper, orphan-scan, crash-window, wavfilesink, single-wav, os-remove-outside-lock, snapshot-under-lock, issue-109]
     path: architecture/2026-06-28-render-id-wav-ttl-reaper-orphan-scan-lifecycle.md
