@@ -157,6 +157,14 @@ export function useNarrationSession(): NarrationSession {
   // current level with the timeline authoritative at that level. Runs on initial
   // load AND after each escalate/de-escalate so return-to-any-seen-level is a
   // pure client swap that restores matching offsets (F1 never reintroduced).
+  //
+  // TODO: harden the (key,blockId,level) snapshot cache for SIMULTANEOUS
+  // multi-block divergence in useNarrationSession; a single (blockId,level)→
+  // timeline snapshot can't capture a state where two+ blocks are off-baseline at
+  // once, so a cross-block cache-hit could restore a timeline that pairs with a
+  // different combination. The planner chose this single-snapshot model and every
+  // transcript set re-seeds all current levels, so the tested single-divergence
+  // flows stay correct; only the untested 2+-block case is affected. Low-pri.
   const seedCache = useCallback((key: string, transcript: NarrateResponse) => {
     for (const block of transcript.blocks) {
       const timing = transcript.timeline.blocks.find((t) => t.block_id === block.id);
