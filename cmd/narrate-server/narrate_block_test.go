@@ -307,7 +307,7 @@ func TestNarrateBlock_RoundTrip_L1ToL2(t *testing.T) {
 
 func TestNarrateBlock_ResponseCarriesPostPatchTimeline(t *testing.T) {
 	store := newRenderStore(t.TempDir())
-	renderID, outDir := seedRenderDir(t, store) // b0 0–100, b1 100–300
+	renderID, outDir := seedRenderDir(t, store)    // b0 0–100, b1 100–300
 	installEscalateRerender(t, outDir, "b0", 0x33) // re-render b0 at 200 ms (grows +100)
 
 	w := postNarrateBlock(t, store, fmt.Sprintf(`{"render_id":%q,"block_id":"b0","level":2}`, renderID))
