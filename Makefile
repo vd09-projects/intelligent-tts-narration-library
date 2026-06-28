@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -7,6 +7,7 @@ ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
 MOCKUP_PORT ?= 8137
 MOCKUP_DIR ?= /tmp/earshot-preview
+EARSHOT_DIR ?= earshot
 
 help:
 	@echo "Targets:"
@@ -37,6 +38,12 @@ help:
 	@echo ""
 	@echo "Earshot #115 sign-off mockup (throwaway artifact):"
 	@echo "  preview-mockup         — bundle earshot-mockup/EarshotMockup.jsx into a /tmp harness, serve on \$$MOCKUP_PORT, open browser (needs node/npx + network for esm.sh React)"
+	@echo ""
+	@echo "Earshot web app (earshot/, #111 — needs node/npm):"
+	@echo "  earshot-dev            — Vite dev server (:5173) proxying /sessions,/narrate,/audio to narrate-server (run 'make run-server' first)"
+	@echo "  earshot-build          — type-check + production bundle (COMPILE/SMOKE CHECK ONLY — no proxy in the bundle, not a runnable deploy)"
+	@echo "  earshot-test           — Vitest unit + component + a11y suite (no audio)"
+	@echo "  earshot-lint           — ESLint (flat config)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -150,3 +157,24 @@ preview-mockup:
 	@echo "Serving http://localhost:$(MOCKUP_PORT) (Ctrl-C to stop)"
 	@command -v open >/dev/null 2>&1 && (sleep 1 && open http://localhost:$(MOCKUP_PORT)) &
 	@cd $(MOCKUP_DIR) && python3 -m http.server $(MOCKUP_PORT)
+
+# ---- Earshot web app (earshot/, #111) ----
+# These wrap the npm scripts in earshot/ so frontend actions stay consistent with
+# the repo Makefile convention (D3). Each target installs node_modules on first
+# run (gitignored). earshot-build is a COMPILE/SMOKE check only — the Vite dev
+# proxy exists only under earshot-dev, so a built bundle cannot reach the server.
+$(EARSHOT_DIR)/node_modules: $(EARSHOT_DIR)/package.json
+	cd $(EARSHOT_DIR) && npm install
+	@touch $(EARSHOT_DIR)/node_modules
+
+earshot-dev: $(EARSHOT_DIR)/node_modules
+	cd $(EARSHOT_DIR) && npm run dev
+
+earshot-build: $(EARSHOT_DIR)/node_modules
+	cd $(EARSHOT_DIR) && npm run build
+
+earshot-test: $(EARSHOT_DIR)/node_modules
+	cd $(EARSHOT_DIR) && npm run test
+
+earshot-lint: $(EARSHOT_DIR)/node_modules
+	cd $(EARSHOT_DIR) && npm run lint

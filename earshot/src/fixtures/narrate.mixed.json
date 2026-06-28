@@ -1,0 +1,91 @@
+{
+  "audio_url": "/audio/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+  "blocks": [
+    {
+      "id": "b001",
+      "order": 0,
+      "class": "prose",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "char_span",
+        "start_char": 0,
+        "end_char": 67,
+        "raw_excerpt": "Set the replica count to three in the deployment spec, then apply it."
+      },
+      "segments": [
+        { "id": "s0", "kind": "speech", "text": "Set the replica count to three, then apply the spec." }
+      ],
+      "provenance": { "voiced_by": "intelligence", "deterministic": false, "model": "test-model", "level_asked": 1 }
+    },
+    {
+      "id": "b002",
+      "order": 1,
+      "class": "code",
+      "level": 1,
+      "status": "voiced",
+      "source_map": {
+        "kind": "char_span",
+        "start_char": 68,
+        "end_char": 110,
+        "raw_excerpt": "```yaml\nspec:\n  replicas: 3\n```"
+      },
+      "segments": [
+        { "id": "s0", "kind": "speech", "text": "Code block, three lines. Replicas set to three." }
+      ],
+      "provenance": { "voiced_by": "planner", "deterministic": true, "level_asked": 1 }
+    },
+    {
+      "id": "b003",
+      "order": 2,
+      "class": "prose",
+      "level": 1,
+      "status": "degraded",
+      "source_map": {
+        "kind": "char_span",
+        "start_char": 111,
+        "end_char": 168,
+        "raw_excerpt": "Short note: remember to roll the change out gradually."
+      },
+      "segments": [
+        { "id": "s0", "kind": "speech", "text": "Short note: remember to roll the change out gradually." }
+      ],
+      "provenance": { "voiced_by": "verbatim", "deterministic": true, "level_asked": 1 }
+    },
+    {
+      "id": "b004",
+      "order": 3,
+      "class": "prose",
+      "level": 1,
+      "status": "refused",
+      "source_map": {
+        "kind": "line_range",
+        "start_line": 12,
+        "end_line": 60,
+        "raw_excerpt": "A very long block of prose that exceeds the verbatim threshold and has no intelligence adapter available to summarise it..."
+      },
+      "refusal": {
+        "reason": "no_intelligence_available",
+        "message": "This passage is too long to read verbatim and no summary engine is available.",
+        "spoken": true,
+        "source_map": {
+          "kind": "line_range",
+          "start_line": 12,
+          "end_line": 60,
+          "raw_excerpt": "A very long block of prose that exceeds the verbatim threshold..."
+        }
+      },
+      "provenance": { "voiced_by": "planner", "deterministic": true, "level_asked": 1 }
+    }
+  ],
+  "timeline": {
+    "plan_id": "01J0PLANMIXED0000000000000",
+    "format": { "sample_rate": 24000, "channels": 1, "encoding": "wav" },
+    "blocks": [
+      { "block_id": "b001", "start_ms": 0, "end_ms": 3200 },
+      { "block_id": "b002", "start_ms": 3200, "end_ms": 6100 },
+      { "block_id": "b003", "start_ms": 6100, "end_ms": 9000 },
+      { "block_id": "b004", "start_ms": 9000, "end_ms": 12500 }
+    ]
+  }
+}
