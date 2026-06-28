@@ -8,6 +8,46 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-29-escalation-refusal-keeps-control-mounted
+    title: "An escalation that RETURNS a refusal keeps the control mounted (error path), distinct from an originally-refused block"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-113, earshot, refusal, honesty-rule, blockrow, levelcontrol, originally-refused, escalation-refusal, role-alert, error-path, hide-on-refused]
+    path: architecture/2026-06-29-escalation-refusal-keeps-control-mounted.md
+    summary: "#113 distinguishes two refusal cases for the per-block LevelControl. An ORIGINALLY-refused document block (first /narrate returned it refused, e.g. a bare image) never gets a control — hide-on-refused applies ONLY here. A voiced/degraded block the user escalates whose higher level comes back REFUSED is treated like the error path: do NOT flip the block to refused, keep LevelControl mounted, keep the prior committed level selected and PLAYABLE, snap aria-checked back to the prior level, surface the refusal inline via role=alert ('Block can't be voiced at L{n}; still at L{prior}'); never blank the block. REJECTED v1 unconditional hide-on-refused — a user escalating a voiced block into a refusal would lose the control and be stranded with a blanked block. BlockRow branches on the ORIGIN of the refusal, not just block.status; review test escalate→refusal-keeps-control locks it. Honors the honesty rule (refusal still surfaced, just not as a block-blanking transition)."
+  - id: 2026-06-29-earshot-seed-level-snapshot-cache-no-model-rebill
+    title: "Seed a per-(blockId,level) snapshot cache with paired timeline; de-escalate-to-seen-level is a no-model-rebill swap"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-113, earshot, state-management, useNarrationSession, snapshot-cache, no-model-rebill, timeline-snapshot, de-escalation, in-memory-cache, f1-offset-bug]
+    path: architecture/2026-06-29-earshot-seed-level-snapshot-cache-no-model-rebill.md
+    summary: "#113 lets a listener return to a previously-seen level without re-paying intelligence. DECISION: seed cache[(blockId, block.level)] = {block, timing, timelineSnapshot} for EVERY block whenever a transcript is set (initial load AND after each escalate), pairing each cached level with the timeline authoritative AT THAT LEVEL. On a cache hit, restore {block, timing} AND replace the entry's whole transcript.timeline with the cached timelineSnapshot (so an offline de-escalate cannot reintroduce the F1 stale-offset bug), bump the reload nonce, reload() — no postNarrateBlock call, no model re-bill. 'No re-bill' CLARIFIED = no model/intelligence spend: under the single-shared-<audio> model a de-escalate MAY still POST so the server rewrites the combined wav, but the server's (block hash, level, model) cache returns it without billing the model; the client snapshot cache additionally enables a zero-network swap for return-to-seen-level. REJECTED caching {block, timing} WITHOUT the timeline snapshot — restores a block against the post-escalate timeline and reintroduces F1 on the offline path. Cache lives in useNarrationSession beside entries (single server-cache owner), in-memory/session-scoped, lost on reload by design. Review test cache-hit-timeline-snapshot locks it."
+  - id: 2026-06-29-levelcontrol-commit-on-activate-not-follow-focus
+    title: "LevelControl commits on Space/Enter/click; arrows move roving focus only"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-113, earshot, accessibility, a11y, radiogroup, apg, roving-tabindex, commit-on-activate, manual-selection, segmentedtoggle-divergence, billable-renarration, wcag]
+    path: architecture/2026-06-29-levelcontrol-commit-on-activate-not-follow-focus.md
+    summary: "#113's per-block L1/L2/L3 LevelControl is an APG role=radiogroup with three role=radio cells and roving tabindex (one Tab stop). ←/→ and ↑/↓ move roving FOCUS ONLY — they do NOT select. Selection is COMMIT-ON-ACTIVATE: Space/Enter or click of the focused cell, never on arrow traversal. Exactly one aria-checked=true held across the async window, snapped back on failure; focus ring is now meaningfully distinct from selection (focus ≠ commit). INTENTIONAL divergence from SegmentedToggle's select-follows-focus, justified because each commit triggers a BILLABLE re-narration (POST /narrate/block with model spend on an unseen level) — arrowing L1→L2→L3 under select-follows-focus would fire three escalations. APG Radio Group pattern explicitly permits the manual-selection variant; WCAG 2.1 AA baseline preserved. REJECTED select-follows-focus parity with SegmentedToggle (bills on every arrow keypress). role=status (polite) announces loading; role=alert (assertive) carries an escalation-returned refusal. Two visually similar Earshot radiogroups now have deliberately different keyboard semantics; review test arrow-moves-focus-no-escalation locks it."
+  - id: 2026-06-29-narrate-block-returns-full-post-patch-timeline
+    title: "/narrate/block returns the FULL post-patch timeline; client replaces its timeline wholesale"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-113, earshot, narrate-server, narrate-block, timeline, patchblock, downstream-offsets, whole-timeline-replace, frozen-escalate-core, block-level-sync, api-contract]
+    path: architecture/2026-06-29-narrate-block-returns-full-post-patch-timeline.md
+    summary: "#113 escalates one block in place via POST /narrate/block (capturingSink → sink/persistent.PatchBlock → on-disk readBack). VERIFIED: PatchBlock rewrites the single combined audio.wav and SHIFTS ALL DOWNSTREAM OFFSETS (a +60ms grow on b1 moves b2 410→460ms). Today runNarrateBlock's readBack returns only the ONE patched block's timing, so the client cannot learn the shifted sibling offsets and a downstream-sibling seek lands on the wrong audio. DECISION: add a full timeline field to narrateBlockResponse ONLY, built inside runNarrateBlock from the POST-PATCH manifest (the same on-disk manifest readBack already loads); the Earshot client replaces the entry's whole transcript.timeline WHOLESALE with response.timeline while replacing only the one patched block in transcript.blocks (by id) — the client NEVER recomputes offsets (honors block-level-sync-only / no-word-timing). The frozen escalateResponse and the shared escalateInDir core are NOT touched — the new field is assembled in the /narrate/block handler AFTER the shared core returns, so runEscalate stays byte-identical. AC6 reinterpreted: sibling CONTENT untouched, sibling OFFSETS track the server timeline. SUPERSEDES the initially-planned v1 per-block merge-isolation / 'stale-elsewhere accepted' approach (never journaled) — correct for a per-dir sink but wrong for the single-combined-wav render where one patch reflows the whole file. Older server lacking timeline falls back to single-timing merge (documented degrade)."
+  - id: 2026-06-29-earshot-render-id-additive-narrateresponse-field
+    title: "Expose render_id as an additive narrateResponse field, not parsed out of audio_url"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-113, earshot, narrate-server, render-id, audio-url-opaque, additive-field, types-ts, escalation, api-contract]
+    path: architecture/2026-06-29-earshot-render-id-additive-narrateresponse-field.md
+    summary: "#113 makes Earshot the first client of POST /narrate/block (#110), which needs the prior render's render_id. But D4 (2026-06-28-earshot-narrate-contract-pinned-audio-url-opaque) treats audio_url as OPAQUE — the client never parses render_id out of it. DECISION: add RenderID string (json:render_id) to the server's narrateResponse in cmd/narrate-server/narrate.go, populated from the render id already computed for the audio URL, and mirror it as render_id: string on NarrateResponse in earshot/src/api/types.ts. The escalation client reads entry.transcript.render_id directly and never touches audio_url, preserving the audio-url-opaque invariant (D4). The field is additive/ignorable within the major schema_version (other /narrate clients ignore it); an older response lacking render_id disables escalate gracefully (LevelControl disabled). REJECTED parsing render_id out of audio_url — violates D4, bakes the /audio/{render_id}.wav URL scheme into the client, breaks on any scheme change, pure downside. Client now holds a render for two separated reasons: playing audio (opaque url) and escalating a block (render_id)."
   - id: 2026-06-29-earshot-parallel-per-entry-narration-model
     title: "Earshot uses a parallel per-entry narration model with in-memory client-side dedup"
     date: 2026-06-29
