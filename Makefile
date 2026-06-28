@@ -1,12 +1,10 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server run-companion sanity clean player-dev player-build player-test player-fixture-silent player-fixture-kokoro preview-mockup
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
-PLAYER_FIXTURE_DIR ?= player/public/fixtures/sample
-PLAYER_FIXTURE_DURATION ?= 2.0
 MOCKUP_PORT ?= 8137
 MOCKUP_DIR ?= /tmp/earshot-preview
 
@@ -36,14 +34,6 @@ help:
 	@echo "  run-server             — start the localhost HTTP escalate server on \$$ADDR (Ctrl-C to stop)"
 	@echo "  sanity                 — go build + check scripts/kokoro present"
 	@echo "  clean                  — go clean -testcache"
-	@echo ""
-	@echo "Reference player (player/):"
-	@echo "  player-dev             — cd player && pnpm install && pnpm dev"
-	@echo "  player-build           — cd player && pnpm install && pnpm build"
-	@echo "  player-test            — cd player && pnpm install && pnpm test"
-	@echo "  run-companion          — one-click visual companion: render \$$SAMPLE → \$$OUT (separate --sink persistent), start narrate-server, launch player against \$$OUT (#76)"
-	@echo "  player-fixture-silent  — regenerate $(PLAYER_FIXTURE_DIR)/audio.wav as silent 24kHz mono PCM-16"
-	@echo "  player-fixture-kokoro  — narrate \$$SAMPLE via persistent sink → $(PLAYER_FIXTURE_DIR)"
 	@echo ""
 	@echo "Earshot #115 sign-off mockup (throwaway artifact):"
 	@echo "  preview-mockup         — bundle earshot-mockup/EarshotMockup.jsx into a /tmp harness, serve on \$$MOCKUP_PORT, open browser (needs node/npx + network for esm.sh React)"
@@ -137,29 +127,6 @@ run-observe-manual:
 run-server:
 	go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN)
 
-# One-click optional React visual companion (#76). Composes EXISTING pieces, no
-# new render path and never a `speak` tee (Risk 6 / AC6): a SEPARATE
-# `cmd/narrate --sink persistent` render into $(OUT), the localhost narrate-server
-# (which the player polls + re-fetches over HTTP), and the player itself targeting
-# $(OUT) via VITE_COMPANION_DIR. mkdir -p $(OUT) FIRST so the dir exists before
-# the player polls — `no_out_dir` then fires only on a genuine bad path, and the
-# spinner-then-load path is exercised because the render runs in the background
-# while the player spins.
-#
-# Cleanup: the whole recipe runs in ONE shell (backslash-joined) so `trap 'kill
-# 0' INT EXIT` reaps BOTH backgrounded `go run` processes (server + render) when
-# the foreground `pnpm dev` exits on Ctrl-C. Without this they were orphaned by
-# their already-exited per-line sub-shells, leaving the narrate-server port held
-# so a second `make run-companion` failed with "address already in use". `kill 0`
-# signals the whole process group, so the trap fires on both interrupt and a
-# normal exit.
-run-companion:
-	@mkdir -p $(OUT)
-	@trap 'kill 0' INT EXIT; \
-		go run ./cmd/narrate-server --addr $(ADDR) --cors-origin $(CORS_ORIGIN) & \
-		go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(OUT) & \
-		cd player && VITE_ESCALATE_BASE_URL=http://$(ADDR) VITE_COMPANION_DIR=$(OUT) pnpm install && pnpm dev
-
 # sanity proves the default build compiles, including the CGO_ENABLED=0 path for
 # cmd/narrate (the in-process oto v3 player runs through purego, so it must link
 # with no CGo — #101). The oto player is the default build now, so there is no
@@ -169,26 +136,6 @@ sanity:
 
 clean:
 	go clean -testcache
-
-# ----- Reference player (player/) ------------------------------------------
-
-player-dev:
-	cd player && pnpm install && pnpm dev
-
-player-build:
-	cd player && pnpm install && pnpm build
-
-player-test:
-	cd player && pnpm install && pnpm test
-
-player-fixture-silent:
-	@mkdir -p $(PLAYER_FIXTURE_DIR)
-	python3 player/public/fixtures/make_silent_wav.py $(PLAYER_FIXTURE_DURATION) $(PLAYER_FIXTURE_DIR)/audio.wav
-
-player-fixture-kokoro:
-	@mkdir -p $(PLAYER_FIXTURE_DIR)
-	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(PLAYER_FIXTURE_DIR)
-	@echo "Refreshed $(PLAYER_FIXTURE_DIR) from $(SAMPLE)"
 
 # Build + serve the throwaway #115 sign-off mockup. Generates an ephemeral harness
 # in $(MOCKUP_DIR) (never committed): an entry that mounts EarshotMockup and an
