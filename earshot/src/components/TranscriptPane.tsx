@@ -10,7 +10,7 @@ import { BlockRow } from "./BlockRow";
 import { SegmentedToggle, type TranscriptView } from "./SegmentedToggle";
 
 export function TranscriptPane() {
-  const { currentTranscript, activeBlockId, playFromBlock } = useNarration();
+  const { currentTranscript, activeBlockId, playFromBlock, request } = useNarration();
   const [view, setView] = useState<TranscriptView>("spoken");
   const firstBlockRef = useRef<HTMLDivElement>(null);
 
@@ -34,7 +34,14 @@ export function TranscriptPane() {
         ) : null}
       </div>
 
-      {blocks.length === 0 ? (
+      {request.status === "loading" && (
+        <div className="transcript-pane__loading" role="status" aria-live="polite" data-testid="transcript-loading">
+          <span className="transcript-pane__spinner" aria-hidden="true" />
+          Narrating…
+        </div>
+      )}
+
+      {blocks.length === 0 && request.status !== "loading" ? (
         <p className="transcript-pane__empty" data-testid="transcript-empty">
           Select a message or drop a file to hear it read out.
         </p>

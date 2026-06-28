@@ -234,9 +234,9 @@ body {
 
 /* ---- File pane ---- */
 .file-pane {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .file-pane__dropzone {
@@ -261,6 +261,31 @@ body {
   color: var(--text-dim);
   font-size: 0.85rem;
   margin: 0;
+}
+
+/* ---- Transcript loading indicator ---- */
+.transcript-pane__loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.transcript-pane__spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ---- Transcript pane ---- */

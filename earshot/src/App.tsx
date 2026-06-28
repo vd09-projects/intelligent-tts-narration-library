@@ -42,8 +42,8 @@ function Shell() {
       <AppHeader sessionOpen={sessionOpen} onToggleSession={() => setSessionOpen((o) => !o)} />
       <div className="app-shell__body">
         <aside id="session-pane" className="app-shell__aside" aria-label="Sessions and files">
-          <SessionPane />
           <FilePane />
+          <SessionPane />
         </aside>
         <div className="app-shell__center">
           <ErrorBanner message={globalError} />

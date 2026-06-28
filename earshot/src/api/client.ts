@@ -56,6 +56,9 @@ async function safeFetch(input: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(input, init);
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ClientError("Request timed out", "timeout", 0);
+    }
     const message = err instanceof Error ? err.message : "network request failed";
     throw new ClientError(message, "network_error", 0);
   }
@@ -75,6 +78,7 @@ export async function postNarrate(args: {
   text: string;
   level: Level;
   gender?: Gender;
+  signal?: AbortSignal;
 }): Promise<NarrateResponse> {
   const res = await safeFetch("/narrate", {
     method: "POST",
@@ -84,6 +88,7 @@ export async function postNarrate(args: {
       level: args.level,
       ...(args.gender ? { gender: args.gender } : {}),
     }),
+    signal: args.signal,
   });
   if (!res.ok) {
     throw await toClientError(res);
@@ -100,6 +105,7 @@ export async function postNarrateFile(args: {
   file: File;
   level: Level;
   gender?: Gender;
+  signal?: AbortSignal;
 }): Promise<NarrateResponse> {
   const form = new FormData();
   form.append("file", args.file);
@@ -108,7 +114,7 @@ export async function postNarrateFile(args: {
     form.append("gender", args.gender);
   }
   // NB: do not set Content-Type — the browser sets the multipart boundary.
-  const res = await safeFetch("/narrate/file", { method: "POST", body: form });
+  const res = await safeFetch("/narrate/file", { method: "POST", body: form, signal: args.signal });
   if (!res.ok) {
     throw await toClientError(res);
   }

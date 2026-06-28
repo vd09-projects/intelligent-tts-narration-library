@@ -66,12 +66,16 @@ export function useNarrationSession(): NarrationSession {
     [currentTranscript, audio.currentTimeMs],
   );
 
-  // Shared request runner: set loading, run, store transcript or honest error.
+  const NARRATE_TIMEOUT_MS = 30_000;
+
+  // Shared request runner: set loading, run with 30s timeout, store transcript or honest error.
   const run = useCallback(
-    async (source: RequestSource, fn: () => Promise<NarrateResponse>) => {
+    async (source: RequestSource, fn: (signal: AbortSignal) => Promise<NarrateResponse>) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), NARRATE_TIMEOUT_MS);
       setRequest({ status: "loading", error: null, source });
       try {
-        const resp = await fn();
+        const resp = await fn(controller.signal);
         setCurrentTranscript(resp);
         setRequest({ status: "idle", error: null, source: null });
       } catch (err) {
@@ -82,6 +86,8 @@ export function useNarrationSession(): NarrationSession {
               ? err.message
               : "Something went wrong";
         setRequest({ status: "error", error: message, source });
+      } finally {
+        clearTimeout(timer);
       }
     },
     [],
@@ -89,13 +95,13 @@ export function useNarrationSession(): NarrationSession {
 
   const narrateText = useCallback(
     (text: string, level: Level, gender?: Gender) =>
-      run("session", () => postNarrate({ text, level, gender })),
+      run("session", (signal) => postNarrate({ text, level, gender, signal })),
     [run],
   );
 
   const narrateFile = useCallback(
     (file: File, level: Level, gender?: Gender) =>
-      run("file", () => postNarrateFile({ file, level, gender })),
+      run("file", (signal) => postNarrateFile({ file, level, gender, signal })),
     [run],
   );
 
