@@ -85,8 +85,9 @@ intelligent-tts-narration-library/
 │   └── pipeline.go
 ├── cmd/
 │   ├── narrate/       #   CLI (cobra)                                        [phase 2/3]
-│   └── narrate-mcp/   #   MCP server (official go-sdk)                       [phase 4]
-└── player/            # React reference player; consumes plan + timeline JSON [phase 5]
+│   ├── narrate-mcp/   #   MCP server (official go-sdk)                       [phase 4]
+│   └── narrate-server/#   HTTP bridge (sessions/messages, narrate, audio)    [phase 5]
+└── earshot/           # Earshot web app; consumes narrate-server HTTP bridge  [phase 5]
 ```
 
 **Dependency rule (one direction):**

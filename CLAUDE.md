@@ -14,7 +14,7 @@ Go library that turns text into TTS narration by *meaning* rather than character
 
 ## Architecture
 
-Hub-and-spoke around the **narration plan** — one JSON-on-wire schema serving every input and output. `plan/` (contract, zero deps) ← `planner/` (pure, no I/O, depends only on `plan/` and the `IntelligenceAdapter` interface) ← `pipeline/` (composition root) ← `cmd/narrate`, `cmd/narrate-mcp`. Four edges own all I/O: `adapter/` (file, mcptext, ocr), `intelligence/` (mcpsampling, anthropic), `render/sherpa`, `sink/` (ephemeral, persistent). The `planner` cannot open a file or touch a socket because it has no dependency that can. Per-block leveling (L1 gist / L2 summary / L3 detail) flows as `Block.Level` data; escalation re-renders one block without re-planning the document. React reference player at `player/` consumes plan + timeline JSON.
+Hub-and-spoke around the **narration plan** — one JSON-on-wire schema serving every input and output. `plan/` (contract, zero deps) ← `planner/` (pure, no I/O, depends only on `plan/` and the `IntelligenceAdapter` interface) ← `pipeline/` (composition root) ← `cmd/narrate`, `cmd/narrate-mcp`. Four edges own all I/O: `adapter/` (file, mcptext, ocr), `intelligence/` (mcpsampling, anthropic), `render/sherpa`, `sink/` (ephemeral, persistent). The `planner` cannot open a file or touch a socket because it has no dependency that can. Per-block leveling (L1 gist / L2 summary / L3 detail) flows as `Block.Level` data; escalation re-renders one block without re-planning the document. Earshot web app (`earshot/`, #111) consumes plan + timeline JSON via narrate-server HTTP bridge.
 
 ## Quick conventions
 
