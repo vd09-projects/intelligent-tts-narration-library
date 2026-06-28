@@ -16,7 +16,7 @@ import (
 // recorder. Pulled out so every artifact test shares the CORS + routing path.
 func doArtifact(t *testing.T, args serverArgs, query, origin string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := newMux(args)
+	mux := newMux(args, newRenderStore(t.TempDir()))
 	r := httptest.NewRequest(http.MethodGet, "/artifact?"+query, nil)
 	if origin != "" {
 		r.Header.Set("Origin", origin)
@@ -108,7 +108,7 @@ func TestArtifact_PlanJSONServedTraversalRejected(t *testing.T) {
 
 func TestArtifact_MethodNotAllowed(t *testing.T) {
 	dir, _, _ := seedArtifactDir(t)
-	mux := newMux(defaultArgs())
+	mux := newMux(defaultArgs(), newRenderStore(t.TempDir()))
 	r := httptest.NewRequest(http.MethodPost, "/artifact?dir="+dir+"&name=audio.wav", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
@@ -295,7 +295,7 @@ func TestArtifact_CORS(t *testing.T) {
 	dir, _, _ := seedArtifactDir(t)
 
 	// OPTIONS preflight.
-	mux := newMux(args)
+	mux := newMux(args, newRenderStore(t.TempDir()))
 	pre := httptest.NewRequest(http.MethodOptions, "/artifact?dir="+dir+"&name=audio.wav", nil)
 	pre.Header.Set("Origin", "http://evil.example")
 	pw := httptest.NewRecorder()

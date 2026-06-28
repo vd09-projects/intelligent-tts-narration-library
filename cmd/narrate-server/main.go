@@ -20,6 +20,23 @@
 //	GET  /readiness?dir=  → 200 {"status":"rendered"|"rendering"}  (companion render handshake, #76)
 //	  404                  → ErrorResponse{reason:"no_out_dir"}    (dir absent — terminal token)
 //
+// # narrate-server HTTP bridge routes (#109 — the Earshot-UI-facing contract)
+//
+//	GET  /sessions/{id}/messages → 200 {session_id, messages[]}    (ordered, structurally pre-chunked)
+//	  messages[].id is a server StableID (line uuid, else "h:"-hash) — NEVER Turn (#106)
+//	  blocks carry source text + coarse class ONLY: no voicing, no refusal at this route (R3)
+//	  400 missing_field (bad/empty/".." id) | 404 source_not_found (no jsonl) | 500 internal (glob/parse)
+//	POST /narrate  {text, level, gender}  → 200 {audio_url, blocks[], timeline}   (inline TEXT only — R2)
+//	  200 refused → {audio_url, blocks[] (refused), timeline}   (refusal is data, HTTP 200 — R-NB1)
+//	  400 missing_field (no text / unknown gender) | 400 invalid_level | 408 cancelled | 500 render_failed
+//	GET  /audio/{render_id}.wav → 200 audio/wav bytes (Cache-Control: no-store)
+//	  400 missing_field (id ≁ ^[0-9a-f]{32}$) | 404 source_not_found (unknown/expired) | 405 method_not_allowed
+//
+//	Containment (both /artifact and /audio): resolveWithin = EvalSymlinks +
+//	filepath.Rel boundary check (never raw string-prefix). The minted-wav
+//	lifecycle is a TTL GC reaper (--audio-ttl) + shutdown RemoveAll back-stop.
+//	render_failed is the ONLY new reason token this surface adds.
+//
 // # Static artifact route (#62) — re-fetch the just-patched output over HTTP
 //
 //	After an in-place escalate the React player must re-read the patched
@@ -55,6 +72,7 @@
 //	cancelled               408  cancel   context.Canceled / context.DeadlineExceeded
 //	readback_failed         500  internal post-patch plan/manifest read failed
 //	no_out_dir              404  caller   GET /readiness ?dir does not exist (typo / wrong path / render never started)
+//	render_failed           500  internal POST /narrate hard render/sink fault (NOT a refusal — refusal is 200) (#109)
 //	internal                500  internal render/sink hard fault, corrupt manifest, …
 //
 //	source_not_found is ONE token with a DETERMINISTIC status: 404 iff the
@@ -187,6 +205,12 @@ const (
 	// render_failed terminal state immediately.
 	reasonNoOutDir = "no_out_dir"
 	reasonInternal = "internal"
+	// reasonRenderFailed is the SOLE new token added by #109 (the narrate-server
+	// HTTP bridge). POST /narrate returns it on a hard render/sink fault (Kokoro
+	// fault, wav-write failure) — distinct from a refusal, which is HTTP 200 with
+	// refused blocks (honesty rule), not an error token. Appended to the closed
+	// enum (never repurposing an existing token); the Earshot UI switches on it.
+	reasonRenderFailed = "render_failed"
 )
 
 // writeTimeoutCushion is the fixed headroom added to the per-request render
@@ -204,6 +228,9 @@ type serverArgs struct {
 	CORSOrigin     string
 	RequestTimeout time.Duration
 	Gender         string
+	// AudioTTL bounds how long a /narrate-minted wav lives in the server temp
+	// store before the GC reaper removes it (#109 Step 7, the AC5 "settle").
+	AudioTTL time.Duration
 }
 
 // escalateRequest — POST /escalate body. snake_case JSON tags (the #50
@@ -366,6 +393,7 @@ func parseFlags(argv []string, errOut io.Writer) (serverArgs, error) {
 	fs.StringVar(&a.Addr, "addr", "127.0.0.1:8080", "loopback host:port to bind (host must be 127.0.0.1, ::1, or localhost)")
 	fs.StringVar(&a.CORSOrigin, "cors-origin", "http://localhost:5173", "the single allowed CORS origin (emitted literally; the request Origin is never echoed)")
 	fs.DurationVar(&a.RequestTimeout, "request-timeout", 120*time.Second, "per-request render timeout (bounds a hung Kokoro render)")
+	fs.DurationVar(&a.AudioTTL, "audio-ttl", 30*time.Minute, "how long a /narrate-minted wav lives before the GC reaper removes it")
 	fs.StringVar(&a.Gender, "gender", "female", "voice gender for the re-render: female | male")
 	if err := fs.Parse(argv); err != nil {
 		return serverArgs{}, err
@@ -397,9 +425,21 @@ func validateAddr(addr string) error {
 // serve builds the mux and runs the http.Server until ctx is cancelled. The
 // addr is assumed already validated by validateAddr.
 func serve(ctx context.Context, args serverArgs, logOut io.Writer) error {
+	// Server-owned audio temp root for /narrate-minted wavs (#109). A fresh
+	// MkdirTemp per server lifetime; RemoveAll on shutdown is the back-stop GC.
+	tempRoot, err := os.MkdirTemp("", "narrate-server-audio-*")
+	if err != nil {
+		return fmt.Errorf("create audio temp root: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempRoot) }()
+	store := newRenderStore(tempRoot)
+	// TTL reaper: snapshots expired entries under the store write-lock then
+	// deletes lock-free (R1). Stops on ctx cancel.
+	go store.runReaper(ctx, defaultReaperInterval, args.AudioTTL)
+
 	srv := &http.Server{
 		Addr:    args.Addr,
-		Handler: newMux(args),
+		Handler: newMux(args, store),
 		// Belt-and-suspenders ceiling (R2c): the per-request context.WithTimeout
 		// in the handler is the primary render bound; WriteTimeout ≥ it backs it.
 		ReadHeaderTimeout: 10 * time.Second,
@@ -435,12 +475,20 @@ func serve(ctx context.Context, args serverArgs, logOut io.Writer) error {
 
 // newMux wires the routes with the CORS middleware. Exposed for tests so they
 // drive the handler in-process via httptest without binding a port.
-func newMux(args serverArgs) http.Handler {
+func newMux(args serverArgs, store *renderStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthzHandler)
 	mux.Handle("/escalate", escalateHandler(args))
 	mux.HandleFunc("/artifact", artifactHandler)
 	mux.HandleFunc("/readiness", readinessHandler)
+	// #109 narrate-server HTTP bridge — three new routes. Go 1.22 method+wildcard
+	// patterns: {id}/{file} are whole-segment wildcards (so /audio uses {file}
+	// and strips the ".wav" suffix inside, since a wildcard cannot be a partial
+	// segment). Method is checked inside each handler so a wrong method yields the
+	// shared ErrorResponse envelope (not the mux's default 405 body).
+	mux.HandleFunc("/sessions/{id}/messages", messagesHandler)
+	mux.Handle("/narrate", narrateHandler(args, store))
+	mux.HandleFunc("/audio/{file}", store.serveAudio)
 	return withCORS(args.CORSOrigin, mux)
 }
 
@@ -589,7 +637,7 @@ func artifactHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	served, status, errResp := resolveArtifactPath(absDir, name)
+	served, status, errResp := resolveWithin(absDir, name)
 	if errResp != nil {
 		writeError(w, status, errResp.Reason, errResp.Message)
 		return
@@ -624,18 +672,24 @@ func artifactHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
-// resolveArtifactPath resolves name inside absDir to a fully symlink-resolved
-// leaf and confirms it stays inside the symlink-resolved base via a
-// filepath.Rel boundary check. It returns the path to serve, or an
-// ErrorResponse + HTTP status drawn ONLY from the closed enum. A non-existent
-// dir/leaf or any containment failure is source_not_found (404) — never a 500.
-// internal (500) is reserved for unexpected faults at open time (handled by the
-// caller), not for resolution failures here.
-func resolveArtifactPath(absDir, name string) (string, int, *ErrorResponse) {
+// resolveWithin resolves name inside base to a fully symlink-resolved leaf and
+// confirms it stays inside the symlink-resolved base via a filepath.Rel boundary
+// check. It returns the path to serve, or an ErrorResponse + HTTP status drawn
+// ONLY from the closed enum. A non-existent dir/leaf or any containment failure
+// is source_not_found (404) — never a 500. internal (500) is reserved for
+// unexpected faults at open time (handled by the caller), not for resolution
+// failures here.
+//
+// Generalised from the original resolveArtifactPath (#62) so BOTH GET /artifact
+// (base = the user-supplied dir, name = an allowlisted filename) and GET /audio
+// (base = the server temp root, name = {render_id}.wav) share one containment
+// proof (#109 R-NB3). The existing /artifact symlink-escape tests re-run against
+// this helper unchanged.
+func resolveWithin(base, name string) (string, int, *ErrorResponse) {
 	// Build the FULL joined leaf, then EvalSymlinks the WHOLE thing — so a
-	// symlinked leaf whose target escapes the dir is caught by the boundary check
+	// symlinked leaf whose target escapes the base is caught by the boundary check
 	// below (resolution happens before, not after, the check).
-	leaf := filepath.Join(absDir, name)
+	leaf := filepath.Join(base, name)
 	resolvedLeaf, err := filepath.EvalSymlinks(leaf)
 	if err != nil {
 		// EvalSymlinks failure is a CLEAN reject, never a 500: ErrNotExist (file
@@ -650,7 +704,7 @@ func resolveArtifactPath(absDir, name string) (string, int, *ErrorResponse) {
 	// Independently resolve the base dir's symlinks so the boundary check
 	// compares fully-resolved against fully-resolved (otherwise a symlinked dir
 	// would spuriously fail containment).
-	resolvedBase, err := filepath.EvalSymlinks(absDir)
+	resolvedBase, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return "", http.StatusNotFound, &ErrorResponse{
 			Reason:  reasonSourceNotFound,

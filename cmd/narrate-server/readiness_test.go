@@ -12,7 +12,7 @@ import (
 // recorder. Pulled out so every readiness test shares the CORS + routing path.
 func doReadiness(t *testing.T, args serverArgs, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := newMux(args)
+	mux := newMux(args, newRenderStore(t.TempDir()))
 	r := httptest.NewRequest(http.MethodGet, "/readiness?"+query, nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
@@ -132,7 +132,7 @@ func TestReadiness_MissingDirParam(t *testing.T) {
 // TestReadiness_MethodNotAllowed — POST /readiness is rejected from the closed
 // enum, matching /healthz + /artifact discipline.
 func TestReadiness_MethodNotAllowed(t *testing.T) {
-	mux := newMux(defaultArgs())
+	mux := newMux(defaultArgs(), newRenderStore(t.TempDir()))
 	r := httptest.NewRequest(http.MethodPost, "/readiness?dir=/tmp", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
