@@ -133,7 +133,7 @@ func (e *Engine) Render(ctx context.Context, p plan.NarrationPlan, opts render.R
 			durMs = 0
 			audioRef = ""
 		} else {
-			if err := e.synthesize(ctx, perBlock, voice, text, outPath); err != nil {
+			if err := e.synthesize(ctx, perBlock, voice, text, outPath, format); err != nil {
 				return render.RenderResult{}, err
 			}
 			d, derr := wavDurationMs(outPath, format)
@@ -221,7 +221,7 @@ func (e *Engine) RenderBlock(ctx context.Context, p plan.NarrationPlan, blockID 
 	var audioRef string
 	files := []string{}
 	if text != "" {
-		if err := e.synthesize(ctx, perBlock, voice, text, outPath); err != nil {
+		if err := e.synthesize(ctx, perBlock, voice, text, outPath, format); err != nil {
 			return render.BlockRender{}, err
 		}
 		d, derr := wavDurationMs(outPath, format)
@@ -274,7 +274,7 @@ func spokenTextFor(blk plan.Block) (string, error) {
 // Kokoro audio is bounded — a 40 s clip is ~2 MB at 24 kHz mono s16le).
 // Using bytes.Buffer avoids the StdoutPipe drain race documented in
 // review-findings.md B1.
-func (e *Engine) synthesize(ctx context.Context, perBlock time.Duration, voice, text, outPath string) error {
+func (e *Engine) synthesize(ctx context.Context, perBlock time.Duration, voice, text, outPath string, format plan.AudioFormat) error {
 	callCtx, cancel := context.WithTimeout(ctx, perBlock)
 	defer cancel()
 
@@ -288,8 +288,13 @@ func (e *Engine) synthesize(ctx context.Context, perBlock time.Duration, voice, 
 		return classifySubprocessErr(err, callCtx, stderr.String())
 	}
 
+	// Snap the PCM payload to a whole-millisecond boundary so the persistent
+	// sink's ms<->byte round-trip stays exact (see frameAlignWAV) — otherwise a
+	// later single-block patch can refuse the container on sub-ms rounding drift.
+	aligned := frameAlignWAV(stdout.Bytes(), format)
+
 	tmpPath := outPath + ".tmp"
-	if err := os.WriteFile(tmpPath, stdout.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, aligned, 0o644); err != nil {
 		return fmt.Errorf("sherpa: write temp %q: %w", tmpPath, err)
 	}
 	if err := os.Rename(tmpPath, outPath); err != nil {
