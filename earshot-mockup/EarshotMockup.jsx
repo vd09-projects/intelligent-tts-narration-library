@@ -256,6 +256,77 @@ const SESSIONS = [
   },
 ];
 
+// Use case 2 (design §2/§4): "Drop a file in Earshot; it is read aloud." The
+// mock cannot parse a real file in a free Artifact, so the File pane loads this
+// illustrative narration and labels it SIMULATED — it never claims to have read
+// the user's actual bytes. Blocks f-b2/f-b3 show a single oversized section
+// chunked on a clean seam (design §6), so big-file splitting is visible.
+const FILE_FIXTURE = {
+  id: "file",
+  title: "example-doc.md",
+  date: "uploaded",
+  length: "1:10",
+  statusChip: null,
+  blocks: [
+    {
+      id: "file-b1",
+      klass: "heading",
+      status: "voiced",
+      defaultLevel: 1,
+      timeRange: { startMs: 0, endMs: 8000 },
+      sourceText: "# Architecture Notes",
+      levels: {
+        1: { spokenText: "Heading. Architecture Notes.", timeRange: { startMs: 0, endMs: 8000 } },
+        2: { spokenText: "Section heading: Architecture Notes — how the system is put together.", timeRange: { startMs: 0, endMs: 9000 } },
+        3: { spokenText: "Top-level heading, Architecture Notes, introducing how the system's components fit together.", timeRange: { startMs: 0, endMs: 11000 } },
+      },
+    },
+    {
+      // oversized prose, chunk 1 of 2 — split on a clean paragraph seam (§6).
+      id: "file-b2",
+      klass: "prose",
+      status: "voiced",
+      defaultLevel: 1,
+      timeRange: { startMs: 8000, endMs: 32000 },
+      sourceText:
+        "(chunk 1 of 2) The ingest service accepts events over HTTP, validates them against a schema, and writes accepted events to a durable log. Back-pressure is applied at the edge so a slow downstream never drops data on the floor.",
+      levels: {
+        1: { spokenText: "Ingest validates HTTP events against a schema and writes them to a durable log, with edge back-pressure.", timeRange: { startMs: 8000, endMs: 16000 } },
+        2: { spokenText: "The ingest service validates incoming HTTP events against a schema and appends accepted ones to a durable log; back-pressure at the edge keeps a slow downstream from dropping data.", timeRange: { startMs: 8000, endMs: 24000 } },
+        3: { spokenText: "The ingest service accepts events over HTTP, validates them against a schema, and writes accepted events to a durable log. Back-pressure is applied at the edge so a slow downstream never drops data on the floor.", timeRange: { startMs: 8000, endMs: 32000 } },
+      },
+    },
+    {
+      // oversized prose, chunk 2 of 2 — same source section, second clean seam.
+      id: "file-b3",
+      klass: "prose",
+      status: "voiced",
+      defaultLevel: 1,
+      timeRange: { startMs: 32000, endMs: 54000 },
+      sourceText:
+        "(chunk 2 of 2) Consumers read from the log at their own pace and checkpoint their offset, so a restarted consumer resumes exactly where it left off rather than reprocessing the whole stream.",
+      levels: {
+        1: { spokenText: "Consumers read the log at their own pace and checkpoint offsets, so restarts resume in place.", timeRange: { startMs: 32000, endMs: 40000 } },
+        2: { spokenText: "Consumers read from the durable log at their own pace and checkpoint their offset, so a restarted consumer resumes where it left off instead of reprocessing everything.", timeRange: { startMs: 32000, endMs: 48000 } },
+        3: { spokenText: "Consumers read from the log at their own pace and checkpoint their offset, so a restarted consumer resumes exactly where it left off rather than reprocessing the whole stream.", timeRange: { startMs: 32000, endMs: 54000 } },
+      },
+    },
+    {
+      id: "file-b4",
+      klass: "config",
+      status: "voiced",
+      defaultLevel: 1,
+      timeRange: { startMs: 54000, endMs: 70000 },
+      sourceText: "retention:\n  log_days: 7\n  checkpoint: offset",
+      levels: {
+        1: { spokenText: "Config. Log retention seven days. Checkpoint by offset.", timeRange: { startMs: 54000, endMs: 62000 } },
+        2: { spokenText: "Retention config: keep the log seven days, checkpoint by offset.", timeRange: { startMs: 54000, endMs: 66000 } },
+        3: { spokenText: "Retention configuration block. The log is kept for seven days; consumers checkpoint their position by offset.", timeRange: { startMs: 54000, endMs: 70000 } },
+      },
+    },
+  ],
+};
+
 const LEVEL_META = {
   1: { label: "L1 — gist", short: "L1" },
   2: { label: "L2 — summary", short: "L2" },
@@ -310,6 +381,10 @@ export default function EarshotMockup() {
   const [sessionIdInput, setSessionIdInput] = useState("");
   const [sessionIdNotice, setSessionIdNotice] = useState(null); // null | {kind, msg}
 
+  // ---- source mode (design §4: Session pane | File pane in ONE app) ----
+  const [sourceMode, setSourceMode] = useState("session"); // "session" | "file"
+  const [fileName, setFileName] = useState(null); // display name of the picked file
+
   // ---- local UI focus / menu state ----
   const [listboxFocusIndex, setListboxFocusIndex] = useState(0);
   const [toolbarFocusIndex, setToolbarFocusIndex] = useState(0); // 0=prev 1=play 2=slider 3=return
@@ -326,10 +401,13 @@ export default function EarshotMockup() {
   const radioRefs = useRef({}); // blockId -> {1,2,3} radio nodes
   const transcriptScrollRef = useRef(null);
 
-  const session = useMemo(
-    () => SESSIONS.find((s) => s.id === selectedSessionId) || SESSIONS[0],
-    [selectedSessionId]
-  );
+  // Active source = the picked file (File pane) or the selected session.
+  const session = useMemo(() => {
+    if (sourceMode === "file") {
+      return { ...FILE_FIXTURE, title: fileName || FILE_FIXTURE.title };
+    }
+    return SESSIONS.find((s) => s.id === selectedSessionId) || SESSIONS[0];
+  }, [sourceMode, fileName, selectedSessionId]);
   const blocks = session.blocks;
   const totalMs = blocks[blocks.length - 1].timeRange.endMs;
 
@@ -414,6 +492,41 @@ export default function EarshotMockup() {
       msg: `No local transcript found for "${raw}". Earshot reaches only sessions whose .jsonl is on this machine (glob ~/.claude/projects/*/{id}.jsonl). Mock fixtures: ${SESSIONS.map((s) => s.id).join(", ")}.`,
     });
   }, [sessionIdInput, selectSession]);
+
+  // ---- shared transport reset (used by source switches) ----
+  const resetTransport = useCallback(() => {
+    Object.values(escTimers.current).forEach((t) => clearTimeout(t));
+    escTimers.current = {};
+    setActiveInView(true);
+    setIsPlaying(false);
+    setPlayheadMs(0);
+    setPerBlockLevel({});
+    setEscalatingBlockId(null);
+    setEscalationMsg({});
+    setToolbarFocusIndex(0);
+  }, []);
+
+  // ---- switch between the Session pane and the File pane ----
+  const switchSourceMode = useCallback(
+    (mode) => {
+      if (mode === sourceMode) return;
+      resetTransport();
+      setSourceMode(mode);
+      setSessionIdNotice(null);
+    },
+    [sourceMode, resetTransport]
+  );
+
+  // ---- "pick" a file (mock: only the name is used; contents are not parsed) ----
+  const pickFile = useCallback(
+    (name) => {
+      if (!name) return;
+      resetTransport();
+      setSourceMode("file");
+      setFileName(name);
+    },
+    [resetTransport]
+  );
 
   // ---- compute whether the active block is within the transcript viewport ----
   const computeInView = useCallback(() => {
@@ -717,23 +830,84 @@ export default function EarshotMockup() {
       )}
 
       <div style={st.body}>
-        {/* ---- session pane (aside/nav landmark) ---- */}
-        <nav aria-label="Sessions" style={sessionPaneCollapsed ? st.sidePaneCollapsed : st.sidePane}>
+        {/* ---- source pane: Session pane | File pane in ONE app (design §4) ---- */}
+        <nav aria-label="Source" style={sessionPaneCollapsed ? st.sidePaneCollapsed : st.sidePane}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            {!sessionPaneCollapsed && <h2 style={st.paneTitle}>Sessions</h2>}
+            {!sessionPaneCollapsed && <h2 style={st.paneTitle}>{sourceMode === "file" ? "File" : "Sessions"}</h2>}
             <button
               type="button"
               style={st.btn}
               aria-expanded={!sessionPaneCollapsed}
-              aria-label={sessionPaneCollapsed ? "Expand sessions pane" : "Collapse sessions pane"}
+              aria-label={sessionPaneCollapsed ? "Expand source pane" : "Collapse source pane"}
               onClick={() => setSessionPaneCollapsed((c) => !c)}
             >
               {sessionPaneCollapsed ? "»" : "«"}
             </button>
           </div>
 
-          {/* ---- session-ID entry (design §4) — load a session not in the list ---- */}
+          {/* ---- source-mode switch: which use case (design §2) is active ---- */}
           {!sessionPaneCollapsed && (
+            <div role="group" aria-label="Source" style={{ display: "inline-flex", border: `1px solid ${C.line}`, borderRadius: 8, overflow: "hidden", margin: "8px 0 12px", width: "100%" }}>
+              <button
+                type="button"
+                aria-pressed={sourceMode === "session"}
+                style={{ ...st.radio(sourceMode === "session"), flex: 1 }}
+                onClick={() => switchSourceMode("session")}
+              >
+                Sessions
+              </button>
+              <button
+                type="button"
+                aria-pressed={sourceMode === "file"}
+                style={{ ...st.radio(sourceMode === "file"), flex: 1 }}
+                onClick={() => switchSourceMode("file")}
+              >
+                File
+              </button>
+            </div>
+          )}
+
+          {/* ---- File pane (design §4): drop / pick a file → read out ---- */}
+          {!sessionPaneCollapsed && sourceMode === "file" && (
+            <div>
+              <label
+                htmlFor="file-input"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+                  if (f) pickFile(f.name);
+                }}
+                style={{ display: "block", border: `1px dashed ${C.line}`, borderRadius: 8, padding: "18px 12px", textAlign: "center", cursor: "pointer", color: C.sub, fontSize: 13 }}
+              >
+                Drop a file here, or click to pick
+                <input
+                  id="file-input"
+                  type="file"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files && e.target.files[0];
+                    if (f) pickFile(f.name);
+                  }}
+                />
+              </label>
+              {fileName && (
+                <div style={{ marginTop: 10, fontSize: 13 }}>
+                  <div style={{ fontWeight: 600, wordBreak: "break-all" }}>{fileName}</div>
+                </div>
+              )}
+              <div role="note" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.4, color: C.degraded }}>
+                <span aria-hidden="true">⚠ </span>
+                Simulated — this mock does not parse file contents. It shows an
+                illustrative narration so the File-pane flow, leveling, and
+                transport can be tested. The real File pane renders your file via
+                narrate-server (design §5, POST /narrate/file).
+              </div>
+            </div>
+          )}
+
+          {/* ---- session-ID entry (design §4) — load a session not in the list ---- */}
+          {!sessionPaneCollapsed && sourceMode === "session" && (
             <form
               style={{ margin: "4px 0 12px" }}
               onSubmit={(e) => {
@@ -771,7 +945,7 @@ export default function EarshotMockup() {
             </form>
           )}
 
-          {!sessionPaneCollapsed && (
+          {!sessionPaneCollapsed && sourceMode === "session" && (
             <ul
               role="listbox"
               aria-label="Sessions"
