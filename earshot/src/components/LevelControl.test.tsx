@@ -78,8 +78,61 @@ describe("LevelControl — APG radiogroup, commit-on-activate (#113)", () => {
     // The in-flight target is shown checked across the async window.
     expect(screen.getByRole("radio", { name: "Level 3" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("status")).toHaveTextContent(/re-narrating block at l3/i);
-    // Cells disabled while busy.
-    expect(screen.getByRole("radio", { name: "Level 1" })).toBeDisabled();
+    // Busy is conveyed via aria-disabled (+ aria-busy on the group), NOT native
+    // `disabled` — so the committed cell keeps DOM focus across the async window.
+    const l1 = screen.getByRole("radio", { name: "Level 1" });
+    expect(l1).toHaveAttribute("aria-disabled", "true");
+    expect(l1).not.toBeDisabled();
+    expect(screen.getByRole("radiogroup")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("retains focus on the committed cell across the async commit→resolve window (Focus Management AC)", async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    const { rerender } = render(
+      <LevelControl current={1} leveling={IDLE_LEVELING} blockLabel="Block 1" onCommit={onCommit} />,
+    );
+    const l3 = screen.getByRole("radio", { name: "Level 3" });
+    l3.focus();
+    await user.keyboard(" "); // commit the focused cell (commit-on-activate)
+    expect(onCommit).toHaveBeenCalledWith(3);
+
+    // Async window opens: the in-flight target (L3) is held aria-checked and the
+    // group goes busy. Focus must NOT be blurred to <body> — it stays on the cell.
+    rerender(
+      <LevelControl
+        current={1}
+        leveling={{ phase: "loading", message: null, target: 3 }}
+        blockLabel="Block 1"
+        onCommit={onCommit}
+      />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Level 3" }));
+    expect(document.activeElement).not.toBe(document.body);
+
+    // Commit resolves (now at L3): focus is still on the committed cell, no loss
+    // across the loading→idle transition.
+    rerender(
+      <LevelControl current={3} leveling={IDLE_LEVELING} blockLabel="Block 1" onCommit={onCommit} />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Level 3" }));
+  });
+
+  it("a busy cell does NOT re-commit on click (guarded handler)", async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    render(
+      <LevelControl
+        current={1}
+        leveling={{ phase: "loading", message: null, target: 3 }}
+        blockLabel="Block 1"
+        onCommit={onCommit}
+      />,
+    );
+    // aria-disabled (not native disabled) keeps the cell clickable in the DOM, so
+    // the onClick guard is what prevents a second billable commit mid-window.
+    await user.click(screen.getByRole("radio", { name: "Level 2" }));
+    expect(onCommit).not.toHaveBeenCalled();
   });
 
   it("refusal-result: role=alert carries the message; aria-checked snaps back to committed", () => {

@@ -13,14 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClientError, postNarrate, postNarrateBlock, postNarrateFile } from "../api/client";
-import type {
-  Block,
-  BlockTiming,
-  Gender,
-  Level,
-  NarrateResponse,
-  Timeline,
-} from "../api/types";
+import type { Block, Gender, Level, NarrateResponse, Timeline } from "../api/types";
 import { deriveActiveBlockId } from "../state/activeBlock";
 import { useAudio } from "./useAudio";
 
@@ -43,10 +36,12 @@ export interface BlockLevelingState {
   target: Level | null;
 }
 
-/** A cached block render paired with the timeline authoritative AT that level. */
+/** A cached block render paired with the timeline authoritative AT that level.
+ *  The block's own offsets live inside `timelineSnapshot.blocks` (keyed by
+ *  block_id); the cache-hit restore re-applies that whole timeline, so no
+ *  separate per-block `timing` is stored. */
 interface LevelSnapshot {
   block: Block;
-  timing: BlockTiming | undefined;
   timelineSnapshot: Timeline;
 }
 
@@ -167,10 +162,8 @@ export function useNarrationSession(): NarrationSession {
   // flows stay correct; only the untested 2+-block case is affected. Low-pri.
   const seedCache = useCallback((key: string, transcript: NarrateResponse) => {
     for (const block of transcript.blocks) {
-      const timing = transcript.timeline.blocks.find((t) => t.block_id === block.id);
       cacheRef.current.set(`${key}::${block.id}::${block.level}`, {
         block,
-        timing,
         timelineSnapshot: transcript.timeline,
       });
     }
@@ -295,7 +288,13 @@ export function useNarrationSession(): NarrationSession {
             if (!e?.transcript) return prev;
             if (resp.audio_url !== e.transcript.audio_url) {
               // audio_url is expected stable (combined wav rewritten in place);
-              // trust the server response if it drifts and re-point.
+              // trust the server response if it drifts and re-point. Drift is the
+              // warned/unexpected case: the changed URL re-fires the currentAudioUrl
+              // setSource effect, which resets playback position — and on the drift
+              // path that position RESET is intentional (a different URL is a
+              // genuinely new clip, not the in-place rewrite the reload-nonce
+              // position-preserve was designed for). The nonce bump below is then a
+              // harmless no-op re-load of the freshly-sourced element.
               console.warn(
                 `narrate/block returned a different audio_url (${resp.audio_url} != ${e.transcript.audio_url}); re-pointing`,
               );

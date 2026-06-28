@@ -88,6 +88,7 @@ export function LevelControl({
       <div
         role="radiogroup"
         aria-label={`Narration level for ${blockLabel}`}
+        aria-busy={busy || undefined}
         className="level-control__group"
       >
         {LEVELS.map((lvl, i) => {
@@ -103,11 +104,23 @@ export function LevelControl({
               aria-checked={checked}
               aria-label={`Level ${lvl}`}
               tabIndex={i === focusIndex ? 0 : -1}
-              disabled={disabled || busy}
+              // Busy is conveyed via aria-disabled (NOT native `disabled`) so the
+              // just-committed cell keeps DOM focus across the async window — a
+              // native `disabled` would blur focus to <body> with nothing to
+              // restore it (Focus Management AC). The hard `disabled` prop (older
+              // server / no render_id) is a permanent, no-async-window disable, so
+              // it stays native `disabled`. Handlers are guarded so an aria-disabled
+              // cell cannot commit.
+              disabled={disabled}
+              aria-disabled={busy || undefined}
+              aria-busy={busy || undefined}
               className={"level-control__cell" + (checked ? " is-checked" : "")}
               // Commit on activate: native Space/Enter on a focused button fires
               // this click, as does a mouse click. Arrows do NOT (preventDefault).
-              onClick={() => onCommit?.(lvl)}
+              onClick={() => {
+                if (disabled || busy) return;
+                onCommit?.(lvl);
+              }}
               onKeyDown={(e) => onKeyDown(e, i)}
             >
               <span aria-hidden="true">L{lvl}</span>
