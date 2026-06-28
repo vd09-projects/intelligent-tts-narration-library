@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-29-earshot-parallel-per-entry-narration-model
+    title: "Earshot uses a parallel per-entry narration model with in-memory client-side dedup"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-111, earshot, state-management, parallel-narration, in-memory-cache, client-side-dedup, entries-map, issue-112, issue-126]
+    path: architecture/2026-06-29-earshot-parallel-per-entry-narration-model.md
+    summary: "Earshot's useNarrationSession owns an `entries` Map keyed by a stable string (message.id for session messages, file.name for files), each holding {status: loading|ready|error, transcript, error}, replacing the single-currentTranscript model. Multiple narrations run concurrently with per-row/per-file status badges; selecting an already-ready entry switches the transcript view INSTANTLY with no re-narrate (in-memory client-side dedup). The Map persists across session/tab switches for the page lifetime, so navigate-away-and-back reuses prior renders — the dedup the user asked about. Each request bounded by a 2-minute AbortController timeout (raised from 30s). LIMITATION parked, not solved: in-memory only (lost on reload); narrate-server re-renders every POST /narrate (no server-side content-hash audio reuse); persistent audio cache deferred (user accepted). REJECTED single shared currentTranscript (one narration at a time, re-narrates every revisit). #112 resume persistence should fold this into a localStorage store keyed by session+message — a persistent superset of this in-memory key; relates to #126 dormant content-hash escalation cache."
+  - id: 2026-06-28-earshot-narrate-contract-pinned-audio-url-opaque
+    title: "Earshot pins the narrate-server contract in types.ts and treats audio_url as an opaque URL"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [issue-111, earshot, narrate-server, http-bridge, contract-isolation, audio-url-opaque, message-ref, types-ts, divergence-point, issue-109]
+    path: architecture/2026-06-28-earshot-narrate-contract-pinned-audio-url-opaque.md
+    summary: "Earshot (#111) consumes the #109 HTTP bridge; all shape knowledge lives in earshot/src/api/types.ts and audio_url is treated as an OPAQUE URL used verbatim (fed to <audio src>, no render_id parsing, no /audio/{id}.wav reconstruction — D4). The assumed message_ref shape is the single clearly-commented mock↔live divergence point, so reconciling against live #109 is a one-line change. Open string-unions (| (string & {})) implement the schema-versioning rule so unknown enum values round-trip via a neutral fallback. REJECTED extracting a render_id to reconstruct the audio path (bakes the server URL scheme into the client; breaks on any scheme change; pure downside since the client never addresses audio by id). Known limitation parked to /verify: today's narrate path sends assembled text not message_ref, so returned block.ids are per-render not per-message. Sibling to the multipart file-input decision; server side is the sessions-messages structural-split decision."
+  - id: 2026-06-28-earshot-file-input-multipart-upload-not-path-json
+    title: "Earshot file input is multipart upload (FormData POST /narrate/file), not the design-doc {path} JSON variant"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [issue-111, earshot, narrate-server, http-bridge, file-input, multipart, formdata, decide-not-discover, csrf, file-read-vector, issue-109]
+    path: architecture/2026-06-28-earshot-file-input-multipart-upload-not-path-json.md
+    summary: "Earshot's (#111) file pane input mode is multipart upload: the picked/dropped File is packed into FormData (a file field plus level/gender form fields) and sent as multipart POST /narrate/file, same response shape as POST /narrate. The {path} JSON variant exists nowhere in the client or mock. Settled at the human gate (D1) as a decide-not-discover call because Phases 4–5 build against mocks with no server to probe, and FormData-vs-JSON is non-abstractable client code. A test asserts the request body is an actual FormData. REJECTED Option A {path} JSON (a browser drop/pick yields a File the browser reads in-process, but {path} only addresses server-local paths the browser cannot read — wrong trust model; and {path} is the dropped #109 server-side file-read/CSRF vector). Distinct CLIENT-side decision carrying the same trust-boundary reasoning as the #109 server-side source-path-dropped security decision to the browser edge."
   - id: 2026-06-28-post-narrate-block-escalation-persists-a-3-file
     title: "POST /narrate/block escalation persists a 3-file persistent-sink dir per render_id (Option 1)"
     date: 2026-06-28
