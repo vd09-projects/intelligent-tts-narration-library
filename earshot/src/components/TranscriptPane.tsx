@@ -7,12 +7,23 @@ import { BlockRow } from "./BlockRow";
 import { SegmentedToggle, type TranscriptView } from "./SegmentedToggle";
 
 export function TranscriptPane() {
-  const { currentTranscript, activeBlockId, playFromBlock, selectedEntry } = useNarration();
+  const {
+    currentTranscript,
+    activeBlockId,
+    playFromBlock,
+    selectedEntry,
+    selectedEntryId,
+    blockLeveling,
+    setBlockLevel,
+  } = useNarration();
   const [view, setView] = useState<TranscriptView>("spoken");
   const firstBlockRef = useRef<HTMLDivElement>(null);
 
   const blocks = currentTranscript?.blocks ?? [];
   const isLoading = selectedEntry?.status === "loading";
+  // Leveling needs render_id to drive /narrate/block; without it the control
+  // renders disabled (older server / pre-#113).
+  const canLevel = Boolean(currentTranscript?.render_id) && selectedEntryId != null;
 
   const transcriptKey = currentTranscript?.timeline.plan_id ?? "";
   useEffect(() => {
@@ -51,6 +62,12 @@ export function TranscriptPane() {
               view={view}
               isActive={block.id === activeBlockId}
               onPlay={playFromBlock}
+              leveling={blockLeveling.get(`${selectedEntryId}::${block.id}`)}
+              onCommitLevel={
+                canLevel
+                  ? (level) => setBlockLevel(selectedEntryId as string, block.id, level)
+                  : undefined
+              }
             />
           ))}
         </div>
