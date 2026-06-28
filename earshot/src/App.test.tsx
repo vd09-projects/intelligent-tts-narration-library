@@ -9,7 +9,9 @@ function stubFetch(opts: MockOptions = {}) {
   vi.stubGlobal("fetch", createMockFetch(opts));
 }
 
+/** Switch to the Sessions tab and load a session. */
 async function loadSession(user: ReturnType<typeof userEvent.setup>, id = "demo-session-001") {
+  await user.click(screen.getByRole("tab", { name: "Sessions" }));
   await user.type(screen.getByLabelText("Session ID"), id);
   await user.click(screen.getByRole("button", { name: "Load" }));
 }
@@ -26,19 +28,32 @@ describe("App shell — list-detail layout", () => {
     expect(screen.getByRole("banner")).toBeInTheDocument(); // <header>
     expect(screen.getAllByRole("main")).toHaveLength(1); // transcript
     expect(screen.getByRole("toolbar", { name: "Playback transport" })).toBeInTheDocument();
-    expect(screen.getByTestId("live-region")).toBeInTheDocument(); // mounted at load
+    expect(screen.getByTestId("live-region")).toBeInTheDocument();
     expect(screen.getByTestId("audio-element")).toBeInTheDocument();
   });
 
   it("collapse toggle flips the shell state via aria-expanded (CSS-only, no trap)", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
-    const toggle = screen.getByRole("button", { name: /sessions/i });
+    const toggle = screen.getByRole("button", { name: /sidebar/i });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".app-shell")).toHaveClass("session-open");
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".app-shell")).toHaveClass("session-collapsed");
+  });
+
+  it("aside shows File tab by default, Sessions tab switches pane", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    expect(screen.getByRole("tab", { name: "File" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Sessions" })).toHaveAttribute("aria-selected", "false");
+    // File tabpanel visible; session tabpanel hidden (element in DOM but not visible).
+    expect(screen.getByRole("button", { name: /choose a file/i })).toBeVisible();
+    expect(screen.queryByTestId("session-idle")).not.toBeVisible();
+    // Switch to Sessions.
+    await user.click(screen.getByRole("tab", { name: "Sessions" }));
+    expect(screen.getByTestId("session-idle")).toBeVisible();
   });
 });
 
@@ -47,6 +62,7 @@ describe("Session pane — listbox + listen path", () => {
     stubFetch({ messages: "empty" });
     const user = userEvent.setup();
     render(<App />);
+    await user.click(screen.getByRole("tab", { name: "Sessions" }));
     expect(screen.getByTestId("session-idle")).toBeInTheDocument();
     await loadSession(user, "empty-session-000");
     expect(await screen.findByTestId("session-empty")).toBeInTheDocument();
@@ -62,7 +78,7 @@ describe("Session pane — listbox + listen path", () => {
     const listbox = await screen.findByRole("listbox", { name: "Session messages" });
     const options = within(listbox).getAllByRole("option");
     expect(options).toHaveLength(3);
-    expect(listbox).toHaveAttribute("tabindex", "0"); // single tab stop
+    expect(listbox).toHaveAttribute("tabindex", "0");
     expect(listbox).toHaveAttribute("aria-activedescendant", "session-option-0");
     listbox.focus();
     await user.keyboard("{ArrowDown}");
@@ -97,11 +113,8 @@ describe("Session pane — listbox + listen path", () => {
     await user.click(options[1]);
     await screen.findByRole("radiogroup", { name: "Transcript view" });
 
-    // Scope assertions to the transcript <main> — the session row snippet also
-    // contains the source phrase, so a document-wide query would false-match.
     const transcript = screen.getByRole("main");
 
-    // Spoken default: b001 spoken text present, source-only phrase absent.
     expect(
       within(transcript).getByText(/Set the replica count to three, then apply the spec\./),
     ).toBeInTheDocument();
@@ -120,7 +133,6 @@ describe("Session pane — listbox + listen path", () => {
     await user.click(options[1]);
     await waitFor(() => expect(screen.getByTestId("degraded-marker")).toBeInTheDocument());
 
-    // Refused block: refusal message + source map; no per-block level control.
     expect(screen.getByText(/too long to read verbatim/i)).toBeInTheDocument();
     const refused = document.querySelector('[data-status="refused"]')!;
     expect(refused).toBeInTheDocument();
@@ -133,8 +145,8 @@ describe("Session pane — listbox + listen path", () => {
     render(<App />);
     await loadSession(user);
     const banner = await screen.findByTestId("error-banner");
-    expect(banner).toHaveAttribute("role", "alert"); // assertive
-    expect(banner).toHaveFocus(); // focus moved to actionable info
+    expect(banner).toHaveAttribute("role", "alert");
+    expect(banner).toHaveFocus();
   });
 });
 
@@ -169,13 +181,12 @@ describe("File pane — drop/pick → multipart", () => {
     );
     const user = userEvent.setup();
     render(<App />);
-
+    // File tab is active by default — no tab click needed.
     const file = new File(["# Doc\nbody text"], "doc.md", { type: "text/markdown" });
     await user.upload(screen.getByTestId("file-input"), file);
 
     await waitFor(() => expect(fileReqBody).toBeInstanceOf(FormData));
     expect(screen.getByTestId("file-selected")).toHaveTextContent("doc.md");
-    // Shared owner: the same transcript pane renders the result.
     await waitFor(() => expect(document.querySelectorAll("[data-block-id]").length).toBe(4));
   });
 
@@ -197,8 +208,41 @@ describe("Refusal-first focus target", () => {
     await user.click(options[0]);
     await waitFor(() => expect(document.querySelector('[data-status="refused"]')).toBeInTheDocument());
     const first = document.querySelector("[data-block-id]") as HTMLElement;
-    expect(first).toHaveAttribute("tabindex", "-1"); // programmatically focusable
+    expect(first).toHaveAttribute("tabindex", "-1");
     expect(first.getAttribute("data-status")).toBe("refused");
+  });
+});
+
+describe("Parallel narration", () => {
+  it("clicking a ready row switches transcript without re-narrating", async () => {
+    stubFetch();
+    const user = userEvent.setup();
+    render(<App />);
+    await loadSession(user);
+    const options = await screen.findAllByRole("option");
+
+    // Narrate option[0] and wait for its blocks.
+    await user.click(options[0]);
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-block-id]").length).toBeGreaterThan(0),
+    );
+
+    // Narrate option[1] and wait for its blocks.
+    await user.click(options[1]);
+    await waitFor(() => expect(document.querySelectorAll("[data-block-id]").length).toBe(4));
+
+    // Both entries are now ready. Clicking option[0] again should switch transcript
+    // instantly — no new fetch. We verify by counting fetch calls after the switch.
+    let extraFetchCalls = 0;
+    const origFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) => {
+      extraFetchCalls++;
+      return origFetch(...args);
+    });
+
+    await user.click(options[0]);
+    // Transcript switches (option[0] had 4 blocks in the mixed fixture too).
+    expect(extraFetchCalls).toBe(0);
   });
 });
 

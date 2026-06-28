@@ -1,10 +1,7 @@
-// SessionPane.tsx — session-ID input → message listbox → click/Enter to hear
-// (plan Step 4). APG listbox: one tab stop on the container, ArrowUp/Down move
-// the active option (aria-activedescendant), Enter activates. Activating a
-// message assembles its block text and dispatches POST /narrate into the SHARED
-// owner (useNarration) — the pane holds no transcript/audio state of its own.
-//
-// Distinct states: idle (no id), loading, empty (zero messages), error.
+// SessionPane.tsx — session-ID input → message listbox → click/Enter to hear.
+// Each row narrates independently (parallel). Clicking a ready row re-selects
+// it; clicking a loading row switches view to show its progress; clicking an
+// idle row starts narration. Never re-narrates if already in flight.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
@@ -22,7 +19,7 @@ function messageToText(message: SessionMessage): string {
 }
 
 export function SessionPane() {
-  const { narrateText } = useNarration();
+  const { narrateText, selectEntry, entries } = useNarration();
   const { announce } = useAnnouncer();
   const { status, messages, isEmpty, error, load } = useSessionMessages();
 
@@ -31,7 +28,6 @@ export function SessionPane() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Announce + manage focus as the message list resolves.
   useEffect(() => {
     if (status === "loading") {
       announce("Loading messages");
@@ -61,21 +57,27 @@ export function SessionPane() {
   const activate = useCallback(
     (index: number) => {
       const message = messages[index];
-      if (!message) {
-        return;
-      }
+      if (!message) return;
       setSelectedIndex(index);
       setActiveIndex(index);
-      void narrateText(messageToText(message), 1);
+      const existing = entries.get(message.id);
+      if (existing?.status === "ready" || existing?.status === "error") {
+        // Already done — just switch the view.
+        selectEntry(message.id);
+      } else if (existing?.status === "loading") {
+        // In flight — switch view so transcript shows the spinner.
+        selectEntry(message.id);
+      } else {
+        // Not started yet.
+        void narrateText(message.id, messageToText(message), 1);
+      }
     },
-    [messages, narrateText],
+    [messages, narrateText, selectEntry, entries],
   );
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (messages.length === 0) {
-        return;
-      }
+      if (messages.length === 0) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setActiveIndex((i) => Math.min(i + 1, messages.length - 1));
@@ -159,6 +161,7 @@ export function SessionPane() {
               optionId={optionId(i)}
               selected={selectedIndex === i}
               active={activeIndex === i}
+              entryStatus={entries.get(message.id)?.status}
               onActivate={() => activate(i)}
             />
           ))}

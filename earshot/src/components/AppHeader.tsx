@@ -20,7 +20,7 @@ export function AppHeader({
       >
         <span aria-hidden="true">☰</span>
         <span className="visually-hidden">
-          {sessionOpen ? "Hide sessions" : "Show sessions"}
+          {sessionOpen ? "Hide sidebar" : "Show sidebar"}
         </span>
       </button>
       <h1 className="app-header__title">Earshot</h1>

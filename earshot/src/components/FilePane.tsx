@@ -1,8 +1,5 @@
-// FilePane.tsx — drop/pick a file → read it out (plan Step 5). On drop or pick,
-// the File is sent as MULTIPART POST /narrate/file (D1) via the SHARED owner
-// (narrateFile), so the result flows into the same TranscriptPane + audio path
-// as the session flow. Keyboard path is a real <input type=file> + <button>
-// (no <div onClick> picker). The drop zone is a mouse affordance ON TOP of that.
+// FilePane.tsx — drop/pick a file → multipart POST /narrate/file via the shared
+// owner. Key = file.name; uploading the same name again re-narrates it.
 
 import { useCallback, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
@@ -10,7 +7,7 @@ import { useAnnouncer } from "../state/Announcer";
 import { ErrorBanner } from "./ErrorBanner";
 
 export function FilePane() {
-  const { narrateFile, request } = useNarration();
+  const { narrateFile, entries, selectedEntryId } = useNarration();
   const { announce } = useAnnouncer();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -20,7 +17,7 @@ export function FilePane() {
     (file: File) => {
       setFileName(file.name);
       announce(`Preparing audio for ${file.name}`);
-      void narrateFile(file, 1);
+      void narrateFile(file.name, file, 1);
     },
     [narrateFile, announce],
   );
@@ -28,9 +25,7 @@ export function FilePane() {
   const onPick = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) {
-        send(file);
-      }
+      if (file) send(file);
     },
     [send],
   );
@@ -40,14 +35,15 @@ export function FilePane() {
       e.preventDefault();
       setDragging(false);
       const file = e.dataTransfer.files?.[0];
-      if (file) {
-        send(file);
-      }
+      if (file) send(file);
     },
     [send],
   );
 
-  const fileError = request.source === "file" && request.status === "error" ? request.error : null;
+  // Show error for the currently selected file entry (if any).
+  const fileEntry = fileName ? entries.get(fileName) : null;
+  const fileError =
+    fileEntry?.status === "error" && selectedEntryId === fileName ? fileEntry.error : null;
 
   return (
     <section className="file-pane" aria-label="Read out a file">
@@ -86,6 +82,14 @@ export function FilePane() {
       {fileName ? (
         <p className="file-pane__selected" data-testid="file-selected">
           Selected: {fileName}
+          {fileEntry?.status === "loading" && (
+            <span className="file-pane__loading-badge" aria-label="Narrating">
+              {" "}<span className="transcript-pane__spinner" aria-hidden="true" style={{display:"inline-block",verticalAlign:"middle"}} />
+            </span>
+          )}
+          {fileEntry?.status === "ready" && (
+            <span className="file-pane__ready-badge" aria-label="Ready"> ✓</span>
+          )}
         </p>
       ) : null}
 

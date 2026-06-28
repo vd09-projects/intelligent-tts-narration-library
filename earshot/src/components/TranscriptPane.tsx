@@ -1,8 +1,5 @@
-// TranscriptPane.tsx — the center <main> (plan Step 3). Reads the shared owner;
-// renders ordered blocks with the Spoken/Source toggle (Spoken default). The
-// view state is local to the pane (a pure display choice), not shared narration
-// state. The first block is focusable so the on-load / file-loaded focus move
-// lands — including the refusal-first case (RefusalBlock is tabIndex -1).
+// TranscriptPane.tsx — center <main>. Shows loading state when the selected
+// entry is in flight, then renders ordered blocks with Spoken/Source toggle.
 
 import { useEffect, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
@@ -10,13 +7,13 @@ import { BlockRow } from "./BlockRow";
 import { SegmentedToggle, type TranscriptView } from "./SegmentedToggle";
 
 export function TranscriptPane() {
-  const { currentTranscript, activeBlockId, playFromBlock, request } = useNarration();
+  const { currentTranscript, activeBlockId, playFromBlock, selectedEntry } = useNarration();
   const [view, setView] = useState<TranscriptView>("spoken");
   const firstBlockRef = useRef<HTMLDivElement>(null);
 
   const blocks = currentTranscript?.blocks ?? [];
+  const isLoading = selectedEntry?.status === "loading";
 
-  // Move focus to the first block when a new transcript arrives (Focus Mgmt).
   const transcriptKey = currentTranscript?.timeline.plan_id ?? "";
   useEffect(() => {
     if (transcriptKey) {
@@ -34,14 +31,14 @@ export function TranscriptPane() {
         ) : null}
       </div>
 
-      {request.status === "loading" && (
+      {isLoading && (
         <div className="transcript-pane__loading" role="status" aria-live="polite" data-testid="transcript-loading">
           <span className="transcript-pane__spinner" aria-hidden="true" />
           Narrating…
         </div>
       )}
 
-      {blocks.length === 0 && request.status !== "loading" ? (
+      {blocks.length === 0 && !isLoading ? (
         <p className="transcript-pane__empty" data-testid="transcript-empty">
           Select a message or drop a file to hear it read out.
         </p>

@@ -1,13 +1,7 @@
-// useNarrationSession.ts — THE single owner of shared narration state (plan
-// State Ownership). Mounted once in App via NarrationProvider. Both SessionPane
-// and FilePane dispatch into this owner; neither holds its own transcript/audio
-// copy. TranscriptPane and TransportBar read from it.
-//
-// Owned state:
-//   - currentTranscript  : the active NarrateResponse view model
-//   - request status     : idle | loading | error (+ which source, + message)
-//   - playback (via useAudio): activeAudioUrl is OPAQUE (D4)
-//   - activeBlockId      : DERIVED from playback position vs timeline, NOT stored
+// useNarrationSession.ts — THE single owner of shared narration state.
+// Entry-based model: each (session message / file) gets its own NarrationEntry
+// keyed by a stable string. Multiple entries can be loading in parallel.
+// Selecting an entry switches the transcript view. Audio follows the selection.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClientError, postNarrate, postNarrateFile } from "../api/client";
@@ -15,19 +9,25 @@ import type { Gender, Level, NarrateResponse } from "../api/types";
 import { deriveActiveBlockId } from "../state/activeBlock";
 import { useAudio } from "./useAudio";
 
-export type RequestSource = "session" | "file";
+const NARRATE_TIMEOUT_MS = 120_000; // 2 minutes
 
-export interface RequestState {
-  status: "idle" | "loading" | "error";
-  /** Honest, human-readable error text for the assertive live region. */
+export interface NarrationEntry {
+  status: "loading" | "ready" | "error";
+  transcript: NarrateResponse | null;
   error: string | null;
-  /** Which pane's request is in flight / errored (for distinct messaging). */
-  source: RequestSource | null;
 }
 
 export interface NarrationSession {
+  /** All narrated items keyed by caller-supplied stable key. */
+  entries: Map<string, NarrationEntry>;
+  /** Which entry is currently displayed in the transcript pane. */
+  selectedEntryId: string | null;
+  /** Derived selected entry (null when nothing selected). */
+  selectedEntry: NarrationEntry | null;
+  /** Derived transcript for the selected entry. */
   currentTranscript: NarrateResponse | null;
-  request: RequestState;
+  /** Switch the transcript view to an existing entry. */
+  selectEntry: (key: string) => void;
   /** DERIVED active block id (aria-current), null when none under playhead. */
   activeBlockId: string | null;
   // playback (from useAudio)
@@ -37,47 +37,59 @@ export interface NarrationSession {
   audioError: string | null;
   play: () => void;
   pause: () => void;
-  /** Seek the shared clip to a block's start and play (BlockRow Space/Enter). */
+  /** Seek the shared clip to a block's start and play. */
   playFromBlock: (blockId: string) => void;
-  // dispatchers (both panes call these)
-  narrateText: (text: string, level: Level, gender?: Gender) => Promise<void>;
-  narrateFile: (file: File, level: Level, gender?: Gender) => Promise<void>;
+  /**
+   * Narrate text keyed by `key` (e.g. message.id).
+   * If an entry for `key` already exists and is loading, the call is a no-op.
+   * Otherwise starts a new narration and auto-selects the entry.
+   */
+  narrateText: (key: string, text: string, level: Level, gender?: Gender) => Promise<void>;
+  /**
+   * Narrate a file keyed by `key` (e.g. file.name).
+   * Same idempotency rule as narrateText.
+   */
+  narrateFile: (key: string, file: File, level: Level, gender?: Gender) => Promise<void>;
 }
 
 export function useNarrationSession(): NarrationSession {
-  const [currentTranscript, setCurrentTranscript] = useState<NarrateResponse | null>(null);
-  const [request, setRequest] = useState<RequestState>({
-    status: "idle",
-    error: null,
-    source: null,
-  });
+  const [entries, setEntries] = useState<Map<string, NarrationEntry>>(() => new Map());
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
   const audio = useAudio();
   const { setSource } = audio;
 
-  // When a new transcript lands, point the audio element at its opaque url.
-  const activeAudioUrl = currentTranscript?.audio_url ?? null;
+  const selectedEntry = selectedEntryId ? (entries.get(selectedEntryId) ?? null) : null;
+  const currentTranscript = selectedEntry?.transcript ?? null;
+
   useEffect(() => {
-    setSource(activeAudioUrl ?? "");
-  }, [activeAudioUrl, setSource]);
+    setSource(currentTranscript?.audio_url ?? "");
+  }, [currentTranscript, setSource]);
 
   const activeBlockId = useMemo(
     () => deriveActiveBlockId(currentTranscript?.timeline, audio.currentTimeMs),
     [currentTranscript, audio.currentTimeMs],
   );
 
-  const NARRATE_TIMEOUT_MS = 30_000;
-
-  // Shared request runner: set loading, run with 30s timeout, store transcript or honest error.
   const run = useCallback(
-    async (source: RequestSource, fn: (signal: AbortSignal) => Promise<NarrateResponse>) => {
+    async (key: string, fn: (signal: AbortSignal) => Promise<NarrateResponse>) => {
+      // Don't re-narrate if already in flight.
+      setEntries((prev) => {
+        if (prev.get(key)?.status === "loading") return prev;
+        return new Map(prev).set(key, { status: "loading", transcript: null, error: null });
+      });
+      // Auto-select so the transcript pane shows this entry's loading state.
+      setSelectedEntryId(key);
+
+      // Guard: if already loading (idempotency check above), bail out.
+      // Re-read via closure after the state update; use a sentinel approach.
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), NARRATE_TIMEOUT_MS);
-      setRequest({ status: "loading", error: null, source });
       try {
         const resp = await fn(controller.signal);
-        setCurrentTranscript(resp);
-        setRequest({ status: "idle", error: null, source: null });
+        setEntries((prev) =>
+          new Map(prev).set(key, { status: "ready", transcript: resp, error: null }),
+        );
       } catch (err) {
         const message =
           err instanceof ClientError
@@ -85,7 +97,9 @@ export function useNarrationSession(): NarrationSession {
             : err instanceof Error
               ? err.message
               : "Something went wrong";
-        setRequest({ status: "error", error: message, source });
+        setEntries((prev) =>
+          new Map(prev).set(key, { status: "error", transcript: null, error: message }),
+        );
       } finally {
         clearTimeout(timer);
       }
@@ -94,16 +108,20 @@ export function useNarrationSession(): NarrationSession {
   );
 
   const narrateText = useCallback(
-    (text: string, level: Level, gender?: Gender) =>
-      run("session", (signal) => postNarrate({ text, level, gender, signal })),
+    (key: string, text: string, level: Level, gender?: Gender) =>
+      run(key, (signal) => postNarrate({ text, level, gender, signal })),
     [run],
   );
 
   const narrateFile = useCallback(
-    (file: File, level: Level, gender?: Gender) =>
-      run("file", (signal) => postNarrateFile({ file, level, gender, signal })),
+    (key: string, file: File, level: Level, gender?: Gender) =>
+      run(key, (signal) => postNarrateFile({ file, level, gender, signal })),
     [run],
   );
+
+  const selectEntry = useCallback((key: string) => {
+    setSelectedEntryId(key);
+  }, []);
 
   const { seek, play } = audio;
   const playFromBlock = useCallback(
@@ -118,11 +136,14 @@ export function useNarrationSession(): NarrationSession {
   );
 
   return {
+    entries,
+    selectedEntryId,
+    selectedEntry,
     currentTranscript,
-    request,
+    selectEntry,
     activeBlockId,
     audioRef: audio.audioRef,
-    activeAudioUrl,
+    activeAudioUrl: currentTranscript?.audio_url ?? null,
     playbackState: audio.playbackState,
     audioError: audio.audioError,
     play: audio.play,

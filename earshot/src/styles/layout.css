@@ -202,13 +202,60 @@ body {
   border-left: 4px solid var(--accent);
 }
 
+.session-row__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .session-row__title {
   font-size: 0.92rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-row__meta {
   font-size: 0.75rem;
   color: var(--text-dim);
+}
+
+.session-row__badge {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.session-row__badge--ready {
+  color: #7ee787;
+}
+
+.session-row__badge--error {
+  color: var(--refused);
+}
+
+.session-row__spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.file-pane__loading-badge,
+.file-pane__ready-badge {
+  font-size: 0.85rem;
+  margin-left: 4px;
+}
+
+.file-pane__ready-badge {
+  color: #7ee787;
 }
 
 /* ---- Status chip (non-color: icon + label) ---- */
@@ -232,11 +279,41 @@ body {
   color: var(--refused);
 }
 
+/* ---- Aside tabs ---- */
+.aside-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.aside-tab {
+  flex: 1;
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 0;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: center;
+  margin-bottom: -1px;
+}
+
+.aside-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.aside-tab:hover:not(.is-active) {
+  color: var(--text);
+}
+
 /* ---- File pane ---- */
 .file-pane {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  padding-top: 4px;
 }
 
 .file-pane__dropzone {
