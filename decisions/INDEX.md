@@ -8,6 +8,38 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-28-narrate-inline-text-only-source-path-dropped
+    title: "POST /narrate accepts inline text only — server-side source path dropped as a CSRF/file-read vector"
+    date: 2026-06-28
+    status: accepted
+    category: security
+    tags: [narrate-server, http-bridge, csrf, dns-rebinding, ssrf, loopback, attack-surface, source-deferred, issue-109]
+    path: security/2026-06-28-narrate-inline-text-only-source-path-dropped.md
+    summary: "#109 POST /narrate accepts inline `text` ONLY; the original-AC `source` (server-side file path) input is DROPPED/deferred for phase one. The server is loopback-bound but browser-reachable, so a file-path argument is a CSRF / DNS-rebinding vector — an arbitrary-local-file read + render side effect that pinned CORS does not prevent (it blocks reading the response, not the side effect). Wider surface than the cmd/narrate --in CLI flag (whose trust boundary is the shell). The Earshot UI already has message text from GET /sessions, so inline text suffices. REJECTED/DEFERRED alternative: keep `source` constrained via a resolveWithin allowlisted base dir (still a CSRF-reachable file-read side effect + a security-critical config). A regression test asserts {text,source} -> HTTP 400. Mirrors the loopback-refuse-to-start posture: refuse capability, don't filter it after the fact."
+  - id: 2026-06-28-sessions-messages-structural-split-not-planner
+    title: "GET /sessions/{id}/messages pre-chunking is server-side structural-split-only, not a planner.Plan call"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [narrate-server, http-bridge, structural-split, planner-boundary, no-io-in-planner, read-endpoint, segment-unexported, refusal-boundary, step-0-spike, issue-109]
+    path: architecture/2026-06-28-sessions-messages-structural-split-not-planner.md
+    summary: "#109 GET /sessions/{id}/messages pre-chunking is STRUCTURAL-SPLIT-ONLY via a server-side splitter in package main, NOT a planner.Plan call. The Step 0 spike found the planner exposes no render-free / voice-free segmentation entry — planner.Plan is the only exported entry and it voices+levels+refuses (segment() is unexported). Routing big messages through it would REFUSE large prose (>120 words) instead of structurally splitting it, and would couple I/O/voicing into a read endpoint. The server-side splitter returns plain ordered blocks and keeps planner/ and plan/ imports untouched. REJECTED: calling planner.Plan from the endpoint (large prose comes back refused, not chunked; no voice-free seam since segment() is unexported)."
+  - id: 2026-06-28-audio-serve-releases-store-lock-before-streaming
+    title: "GET /audio/{render_id}.wav holds the store read-lock only across resolve+open, then streams lock-free"
+    date: 2026-06-28
+    status: accepted
+    category: concurrency
+    tags: [narrate-server, http-bridge, rwmutex, writer-starvation, liveness, servecontent, posix-unlink, render-store, reaper, wall-clock-test, issue-109]
+    path: concurrency/2026-06-28-audio-serve-releases-store-lock-before-streaming.md
+    summary: "#109 GET /audio/{render_id}.wav takes the render-store read-lock ONLY across resolve + os.Open, releases it, then http.ServeContent streams from the held *os.File. A read-lock spanning the whole ServeContent lets a slow/large download hold the store read-lock; a waiting reaper write-lock then starves ALL new /narrate mints and /audio serves, because Go's RWMutex blocks new readers once a writer is waiting — a liveness bug -race cannot detect. On POSIX the open fd survives unlink, so the TTL reaper os.Remove's lock-free while a serve is in flight. A wall-clock test asserts a slow in-flight serve does not block a concurrent mint. REJECTED: holding the read-lock across the entire ServeContent (writer-starvation chain)."
+  - id: 2026-06-28-render-id-wav-ttl-reaper-orphan-scan-lifecycle
+    title: "render_id wav lifecycle — TTL reaper plus orphan-scan, deletes outside the store write-lock"
+    date: 2026-06-28
+    status: accepted
+    category: architecture
+    tags: [narrate-server, http-bridge, render-store, ttl-reaper, orphan-scan, crash-window, wavfilesink, single-wav, os-remove-outside-lock, snapshot-under-lock, issue-109]
+    path: architecture/2026-06-28-render-id-wav-ttl-reaper-orphan-scan-lifecycle.md
+    summary: "#109 render_id WAV lifecycle: a TTL reaper PLUS an orphan-scan for the crash-between-write-and-mint window (render completes on disk but the process dies before the store records the mint — TTL alone never sees those, so they leak). The render uses the single-wav WAVFileSink variant (combined wav, no plan/manifest sidecars), distinct from the 3-file persistent sink. os.Remove I/O happens OUTSIDE the store write-lock — expired entries are snapshotted under the lock, then deleted after release — so eviction never blocks a /narrate mint, and the reaper deletes lock-free (POSIX open-fd survives unlink, pairing with the audio-serve path). REJECTED: TTL-only with os.Remove under the write-lock (leaks crash-window orphans; couples eviction disk-I/O into the mint path). Builds on the separately-recorded single-wav-no-sidecars WAVFileSink decision; this records the server-side reaper/orphan-scan layer."
   - id: 2026-06-28-shared-transcript-parser-lives-in-internal
     title: "Shared transcript parser lives in internal/transcript; speak_last skip is caller policy; Message.Turn is an emit-index, not a stable id"
     date: 2026-06-28
