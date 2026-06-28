@@ -634,6 +634,33 @@ scopes:
       field removed/renamed/retyped, no deprecation). Honesty boundary noted:
       capping an observability receipt, not fabrication — no Refusal involved.
       Plan persisted draft (awaiting user approval before sindri consumes).
+  - slug: narrate-block-escalation-110
+    title: narrate-server /narrate/block single-block escalation endpoint — re-render one block by render_id (issue #110)
+    created: 2026-06-28
+    reasoning: |
+      Plan cycle for GitHub issue #110 — add a narrate-server POST /narrate/block
+      {render_id, block_id, level} endpoint that re-renders a SINGLE block at a
+      higher/different level via the existing per-block patch path (no whole-doc
+      re-plan). The HTTP-bridge (#109, now merged) analog of the CLI/core escalate
+      shipped in #49/#50. Mimir task plan surfaced the load-bearing crux: #109's
+      POST /narrate mints a single combined wav keyed by render_id (R-NB4 — no
+      plan.json/manifest.json sidecars), so a render_id is NOT patchable by
+      sink/persistent.PatchBlock today; the dir-keyed /escalate handler already
+      implements the full capturingSink->PatchBlock->on-disk-readBack path.
+      Recommended resolution (decision-journal candidate, Open Q1, load-bearing):
+      switch the server /narrate render to a 3-file sink/persistent outDir per
+      render_id, map render_id->outDir in renderStore, extract runEscalate's
+      post-resolve body into a shared escalateInDir(...) core consumed by both
+      /escalate and /narrate/block, add a thin handler. Patch path (PatchBlock,
+      capturingSink, readBack, exported ReadManifest at sink/persistent/
+      manifest.go:96) reused UNCHANGED — ReadManifest already exists so the brief's
+      add-if-absent clause is moot. Overlay public-api-change (additive: one new
+      route + response struct, reused reason-token enum, no existing wire shape
+      changed). narrate-block- prefix marks the new escalation endpoint surface;
+      issue-numbered suffix continues the convention. Slug pre-supplied +
+      pre-approved via --scope in the orchestration prompt (build-session
+      single-skill runner). Plan persisted draft (awaiting user approval before
+      sindri consumes).
 
   - slug: integrate-oto-v3-player-101
     title: integrate oto v3 player + WAV-header-strip behind listen transport (#101)
