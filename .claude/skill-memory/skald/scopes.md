@@ -4,6 +4,19 @@
 
 ```yaml
 scopes:
+  - slug: speak-to-file-mcp-105
+    title: speak_to_file MCP tool — text/.md file to single wav at path (issue #105)
+    created: 2026-06-28
+    reasoning: |
+      Plan/build/review cycle for GitHub issue #105 — add a third MCP tool
+      speak_to_file to cmd/narrate-mcp that renders inline text or a text/.md
+      file into a single .wav at a caller-given output_path, with no-path
+      fallback delegating to ephemeral speak. Earshot use case 3 (priority
+      tool, built first). Factors a reusable single-wav WAVFileSink (no
+      plan.json/manifest.json sidecars) out of sink/persistent without
+      coupling to the ephemeral or 3-file persistent paths. Slug supplied
+      pre-resolved by the build-session orchestrator (<area>-<issue> form);
+      issue-numbered suffix continues convention.
   - slug: refusal-omission-accounting-98
     title: Refusal-aware transcript omission accounting for MCP speak receipt (issue #98)
     created: 2026-06-27

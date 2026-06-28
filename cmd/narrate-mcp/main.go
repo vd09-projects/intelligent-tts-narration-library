@@ -91,6 +91,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
+	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
 // genderToVoice — phase-one mapping per CLAUDE.md domain rules + sindri
@@ -708,6 +709,287 @@ func speakLastHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, 
 	}
 }
 
+// ----- speak_to_file: render to a single .wav at a caller-given path ---------
+//
+// The third tool (issue #105, Earshot use case 3). Renders inline text OR a
+// text/.md file into ONE combined .wav written at output_path; with no path it
+// falls back to ephemeral play (speak behavior). It is a NEW THIRD pipeline
+// path — it wires EITHER its own single-wav sink (persistent.WAVFileSink) OR
+// the ephemeral sink, never both in one pipeline, and never tees off the speak
+// path. The tool returns ONE uniform response shape (speakToFileResponse) for
+// both branches: output_path:"" is the sentinel for "played, not written".
+
+// speakToFileArgs — speak_to_file tool arguments. Declares its own fields
+// (rather than embedding speakArgs) so the JSON schema advertises EXACTLY the
+// args this tool accepts: text/source XOR, level, gender, intelligence, plus
+// the optional OutputPath. The sink is NOT a caller arg here — speak_to_file
+// always renders through the ephemeral-style internals and writes its own wav
+// via output_path, so exposing a sink would be misleading (and sink:persistent
+// would mis-error). toSpeakArgs forces sink=ephemeral for the shared internals.
+// An empty/omitted output_path means "play ephemerally, write no file".
+type speakToFileArgs struct {
+	Source       string `json:"source,omitempty"       jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
+	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
+	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
+	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
+	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
+	OutputPath   string `json:"output_path,omitempty"  jsonschema:"destination for the rendered .wav. A file path is written (a missing .wav extension is appended); an existing directory gets a derived filename inside it. Omit/empty to play the audio ephemerally and write no file."`
+}
+
+// toSpeakArgs projects speak_to_file's args into the shared speakArgs the
+// internals (runSpeakWithCache, inputAdapterAndRef, buildIntelligence) consume.
+// Sink is pinned to ephemeral: speak_to_file selects its sink via output_path,
+// never via a caller-supplied sink, so there is no persistent path to mis-route.
+func (a speakToFileArgs) toSpeakArgs() speakArgs {
+	return speakArgs{
+		Source:       a.Source,
+		Text:         a.Text,
+		Level:        a.Level,
+		Gender:       a.Gender,
+		Intelligence: a.Intelligence,
+		Sink:         "ephemeral",
+	}
+}
+
+// speakToFileResponse — the UNIFORM response envelope for speak_to_file,
+// returned for BOTH the with-path and no-path branches (BLOCKING-1: the tool
+// never emits two different structuredContent schemas).
+//
+//   - OutputPath — the resolved absolute .wav path that was written, or "" when
+//     the audio was played ephemerally (no file written).
+//   - BlocksWritten / TotalDurationMs — block-level accounting, same meaning as
+//     speak's receipt fields (BlocksWritten mirrors SinkReceipt.BlocksPlayed).
+//   - Transcript (+ the truncation signal fields) — the same after-the-fact,
+//     block-granularity spoken transcript speak returns, capped identically
+//     (issue #86 / #98), so honest refusal/degraded blocks are surfaced here too.
+type speakToFileResponse struct {
+	OutputPath      string            `json:"output_path"       jsonschema:"resolved absolute path of the written .wav, or empty string when the audio was played ephemerally and no file was written"`
+	BlocksWritten   int               `json:"blocks_written"    jsonschema:"number of blocks concatenated into the output (mirrors the sink's blocks_played)"`
+	TotalDurationMs int64             `json:"total_duration_ms" jsonschema:"total planned narration duration in milliseconds"`
+	Transcript      []transcriptEntry `json:"transcript"        jsonschema:"after-the-fact per-block spoken transcript in plan order: verbatim text, level, status, duration, and refusal reason for refused blocks; capped at 200 entries on very large documents"`
+
+	TranscriptTruncated           bool `json:"transcript_truncated,omitempty"             jsonschema:"true when the transcript was capped because the document exceeded the per-response entry limit; absent otherwise"`
+	TranscriptOmittedCount        int  `json:"transcript_omitted_count,omitempty"         jsonschema:"number of trailing transcript entries dropped by the cap; absent when none were dropped"`
+	TranscriptOmittedRefusedCount int  `json:"transcript_omitted_refused_count,omitempty" jsonschema:"number of refused blocks dropped from the trailing transcript tail by the cap; absent when none were dropped or no refusals fell in the dropped tail. The dropped refused blocks were still spoken and counted in blocks_written."`
+}
+
+// newFilePipeline — package-level factory hook for the WITH-PATH branch,
+// mirroring newPipeline (the ephemeral seam). Production wires the real
+// pipeline with persistent.WAVFileSink as the sink so the combined wav lands at
+// wavPath; tests swap this var to inject a stub narrator (or a real sink behind
+// a stub renderer) without spawning Kokoro. newPipeline is left UNTOUCHED — the
+// two paths share no sink (decoupling-regression contract).
+//
+// renderDir is the per-block render scratch dir (deleted by runSpeakToFile's
+// defer); wavPath is the resolved destination OUTSIDE that scratch, so the
+// scratch RemoveAll never deletes the output.
+var newFilePipeline = func(renderDir, wavPath string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
+	return pipeline.New(
+		input,
+		intel,
+		sherpa.New(sherpa.EngineConfig{}),
+		persistent.NewWAVFile(wavPath),
+		pipeline.PipelineDefaults{
+			Level:        plan.Level(args.Level),
+			OutDir:       renderDir,
+			Locale:       "en",
+			CodeMinLevel: listenCodeMinLevel,
+		},
+	)
+}
+
+// hasWAVSuffix reports whether p already ends in a .wav extension,
+// case-insensitively (so "foo.WAV" is NOT double-appended to "foo.WAV.wav").
+func hasWAVSuffix(p string) bool {
+	return strings.EqualFold(filepath.Ext(p), ".wav")
+}
+
+// derivedWAVName builds the filename to use when output_path is a directory.
+// File source → the source base name with its extension swapped to .wav
+// (notes.md → notes.wav). Inline text → narration-<first-8-hex-of-hash>.wav,
+// reading the sha256 hex back out of the mcptext URI. Any other / unknown
+// source kind → narration.wav.
+func derivedWAVName(src plan.SourceRef) string {
+	switch src.Kind {
+	case plan.SourceKindFile:
+		base := filepath.Base(src.URI)
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		if stem == "" || stem == "." {
+			stem = "narration"
+		}
+		return stem + ".wav"
+	case plan.SourceKindMCPText:
+		short, ok := mcptext.InlineHash(src.URI)
+		if !ok || short == "" {
+			short = "inline"
+		} else if len(short) > 8 {
+			short = short[:8]
+		}
+		return "narration-" + short + ".wav"
+	default:
+		return "narration.wav"
+	}
+}
+
+// resolveOutputPath turns a non-empty caller output_path into a concrete,
+// absolute .wav file path and MkdirAll's its parent (0o755).
+//
+// Rule (settled in the planner-task Decisions):
+//  1. Trailing path separator, ".", "..", OR an existing directory → treat as a
+//     directory; place derivedWAVName(src) inside it.
+//  2. Otherwise → treat as a target file; append ".wav" when missing (case-
+//     insensitive; never double-append on "foo.WAV").
+//  3. Always return a fully-resolved, Cleaned absolute path. An existing target
+//     is overwritten in place by the sink (deliberate; local-only trust model).
+//
+// The no-path branch never calls this (empty output_path is handled upstream);
+// an empty argument here is a programmer error and returns an internal error.
+func resolveOutputPath(outputPath string, src plan.SourceRef) (string, error) {
+	if outputPath == "" {
+		return "", fmt.Errorf("internal_error: resolveOutputPath called with empty output_path")
+	}
+
+	isDir := strings.HasSuffix(outputPath, string(os.PathSeparator)) ||
+		outputPath == "." || outputPath == ".."
+	if !isDir {
+		if fi, statErr := os.Stat(outputPath); statErr == nil && fi.IsDir() {
+			isDir = true
+		}
+	}
+
+	target := outputPath
+	if isDir {
+		target = filepath.Join(outputPath, derivedWAVName(src))
+	} else if !hasWAVSuffix(target) {
+		target += ".wav"
+	}
+
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("caller-error: invalid_argument: resolve output_path: %w", err)
+	}
+	abs = filepath.Clean(abs)
+
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", fmt.Errorf("caller-error: invalid_argument: create output_path parent: %w", err)
+	}
+	return abs, nil
+}
+
+// runSpeakToFile is the composition root for one speak_to_file call. Both
+// branches converge on a single speakToFileResponse.
+//
+// No-path branch (empty OutputPath): reuse runSpeak's ephemeral internals via
+// runSpeakWithCache (so defaults/validation/leveling/refusal/transcript are
+// single-sourced), then RE-WRAP the speakResponse into a speakToFileResponse
+// with output_path:"" — NOT returning runSpeak's own envelope (BLOCKING-1).
+//
+// With-path branch: validate, pick the input adapter, resolve output_path to an
+// absolute .wav OUTSIDE the render scratch, build the wav-file pipeline, narrate
+// (the sink writes the one combined wav), then build the response. The render
+// scratch is removed on return; the output wav survives.
+func runSpeakToFile(ctx context.Context, args speakToFileArgs, cache *mcpsampling.ServerCache) (speakToFileResponse, error) {
+	if args.OutputPath == "" {
+		resp, err := runSpeakWithCache(ctx, args.toSpeakArgs(), cache)
+		if err != nil {
+			return speakToFileResponse{}, err
+		}
+		return speakToFileResponseFromSpeak("", resp), nil
+	}
+
+	sa := args.toSpeakArgs()
+	sa.applyDefaults()
+	if err := sa.validate(); err != nil {
+		return speakToFileResponse{}, err
+	}
+
+	input, ref, err := inputAdapterAndRef(sa)
+	if err != nil {
+		return speakToFileResponse{}, err
+	}
+
+	wavPath, err := resolveOutputPath(args.OutputPath, ref)
+	if err != nil {
+		return speakToFileResponse{}, err
+	}
+
+	// Per-call render scratch for the per-block WAVs. The combined output wav
+	// lives at wavPath (outside this dir), so the deferred RemoveAll wipes only
+	// the scratch, never the caller's output.
+	renderDir, err := os.MkdirTemp("", "narrate-mcp-file-")
+	if err != nil {
+		return speakToFileResponse{}, fmt.Errorf("internal_error: create render dir: %w", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(renderDir)
+	}()
+
+	intel := buildIntelligence(sa, cache)
+	pl := newFilePipeline(renderDir, wavPath, sa, input, intel)
+
+	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
+		Voice: genderToVoice[sa.Gender],
+	})
+	if err != nil {
+		// Errors stop the pipeline; refusals are data and arrive on success.
+		return speakToFileResponse{}, classifyPipelineErr(err)
+	}
+
+	transcript, truncated, omitted, omittedRefused := capTranscript(transcriptFromResult(receipt), transcriptMaxEntries)
+	return speakToFileResponse{
+		OutputPath:                    wavPath,
+		BlocksWritten:                 receipt.BlocksPlayed,
+		TotalDurationMs:               receipt.TotalDurationMs,
+		Transcript:                    transcript,
+		TranscriptTruncated:           truncated,
+		TranscriptOmittedCount:        omitted,
+		TranscriptOmittedRefusedCount: omittedRefused,
+	}, nil
+}
+
+// speakToFileResponseFromSpeak re-wraps a speakResponse (from the ephemeral
+// no-path branch) into the uniform speakToFileResponse, carrying the chosen
+// output_path ("" for the no-path case). This is the BLOCKING-1 fix in code:
+// the no-path branch reuses speak's internals but never returns speak's own
+// envelope shape.
+func speakToFileResponseFromSpeak(outputPath string, r speakResponse) speakToFileResponse {
+	return speakToFileResponse{
+		OutputPath:                    outputPath,
+		BlocksWritten:                 r.Receipt.BlocksPlayed,
+		TotalDurationMs:               r.Receipt.TotalDurationMs,
+		Transcript:                    r.Transcript,
+		TranscriptTruncated:           r.TranscriptTruncated,
+		TranscriptOmittedCount:        r.TranscriptOmittedCount,
+		TranscriptOmittedRefusedCount: r.TranscriptOmittedRefusedCount,
+	}
+}
+
+// speakToFileHandler bridges the SDK's typed handler signature to
+// runSpeakToFile. Mirrors speakHandler's dual-channel success result (manual
+// serialized-JSON TextContent + auto-populated StructuredContent) and the
+// mcpsampling session threading. It closes over deps.cache directly (like
+// speakLastHandler) rather than the speakArgs-typed deps.run seam, since
+// speak_to_file has its own sink-selection composition; runSpeakToFile and its
+// helpers stay unit-testable via the newFilePipeline / newPipeline seams.
+func speakToFileHandler(deps runDeps) func(context.Context, *mcp.CallToolRequest, speakToFileArgs) (*mcp.CallToolResult, speakToFileResponse, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args speakToFileArgs) (*mcp.CallToolResult, speakToFileResponse, error) {
+		if args.Intelligence == "mcpsampling" && req != nil && req.Session != nil {
+			ctx = mcpsampling.WithSamplingClient(ctx, req.Session)
+		}
+		resp, err := runSpeakToFile(ctx, args, deps.cache)
+		if err != nil {
+			return nil, speakToFileResponse{}, err
+		}
+		blob, mErr := json.Marshal(resp)
+		if mErr != nil {
+			return nil, speakToFileResponse{}, fmt.Errorf("internal_error: marshal speak_to_file response: %w", mErr)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(blob)}},
+		}, resp, nil
+	}
+}
+
 // classifyPipelineErr — caller-error vs internal-error split, per
 // Decision v2. The split rule: anything the caller could fix by changing
 // the request maps to caller-error (and the wire message begins
@@ -868,6 +1150,16 @@ func newServer(deps runDeps) *mcp.Server {
 		Name:        speakLastToolName,
 		Description: "Narrate Claude's most recent completed assistant response via TTS, without being handed the text. The server reads its own Claude Code session transcript (newest .jsonl under the projects root) and voices the last assistant turn — excluding this speak_last call itself, so it speaks the PRIOR response, not its own preamble. Use it when the user asks to \"speak/read your last response\" out loud. Works from any repo. Args mirror speak: level (1 gist | 2 summary | 3 detail, default 1), gender (female | male, default female), intelligence (none | mcpsampling, default none); optional transcript_path pins a specific transcript instead of the newest. Returns the same receipt + per-block transcript envelope as speak. Caveats: locates the newest session by file mtime (with two live sessions, pass transcript_path); assumes one assistant message per turn.",
 	}, speakLastHandler(deps))
+
+	// speak_to_file — render inline text or a text/.md file into a single .wav
+	// at a caller-given output_path. The third tool (issue #105, Earshot use
+	// case 3). One uniform response shape for both outcomes: output_path is the
+	// written path, or "" when the audio was played ephemerally and no file was
+	// written. No plan.json / manifest.json sidecars are ever produced.
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "speak_to_file",
+		Description: "Render a markdown document (inline `text` or a `source` file path — exactly one) to a single .wav file via the intelligent-tts-narration-library pipeline. Pass `output_path` to write the audio: (a) omit or leave it empty to instead PLAY the audio ephemerally and write no file (the response then has output_path:\"\"); (b) a file path missing a .wav extension gets one appended; (c) an explicit path is overwritten in place and may sit anywhere you can write; (d) a directory path gets a derived filename inside it (the source's base name for a file, narration-<hash>.wav for inline text); (e) NO plan.json/manifest.json sidecars are written — only the one .wav. Buffer the COMPLETE response and pass it as one input — the planner needs the whole document and does not stream. Returns a single uniform shape for every outcome: the resolved output_path (or \"\"), blocks_written, total_duration_ms, and the same after-the-fact per-block transcript as speak (verbatim text, level, status, duration, and refusal reason for refused blocks; capped at 200 entries on very large documents). Refusals stay inside the plan (honesty rule) — the call still succeeds with refused blocks listed in the transcript.",
+	}, speakToFileHandler(deps))
 
 	return server
 }

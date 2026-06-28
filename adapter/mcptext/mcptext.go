@@ -42,11 +42,16 @@ import (
 // Bumped on any change to OffsetMap shape, hashing rule, or URI format.
 const Version = "mcptext@0.1.0"
 
-// uriScheme — required prefix for the URI passed to Read. The hex sha256
+// URIScheme — required prefix for the URI passed to Read. The hex sha256
 // of the text follows the scheme; the adapter cross-checks it against the
 // computed hash so callers cannot silently mismatch text and provenance.
 // Per #17 plan Decision v3: URI hash cross-check stays.
-const uriScheme = "mcp://inline/"
+//
+// Exported as the single source of truth for the inline-text URI format:
+// the composition root (cmd/narrate-mcp) recovers the hash suffix to derive
+// stable filenames, and must consume this symbol (or InlineHash) rather than
+// mirror the literal — a private mirror could silently drift from the scheme.
+const URIScheme = "mcp://inline/"
 
 // Adapter — in-memory text reader. Carries the text bytes from construction
 // time; not safe to mutate the underlying string between construction and
@@ -104,10 +109,10 @@ func (a *Adapter) Read(ctx context.Context, ref plan.SourceRef) (adapter.RawDocu
 	// URI hash cross-check (Decision v3 of #17 plan). The URI shape is
 	// mcp://inline/<hex-sha256>. We accept (and only accept) that exact
 	// prefix; any other shape is a wiring error.
-	if !strings.HasPrefix(ref.URI, uriScheme) {
-		return adapter.RawDocument{}, fmt.Errorf("mcptext adapter: uri must start with %s: uri=%s", uriScheme, ref.URI)
+	uriHash, ok := InlineHash(ref.URI)
+	if !ok {
+		return adapter.RawDocument{}, fmt.Errorf("mcptext adapter: uri must start with %s: uri=%s", URIScheme, ref.URI)
 	}
-	uriHash := strings.TrimPrefix(ref.URI, uriScheme)
 	if uriHash != computedHash {
 		return adapter.RawDocument{}, fmt.Errorf("mcptext adapter: uri hash mismatch: uri=%s computed=%s", ref.URI, computedHash)
 	}
@@ -198,5 +203,18 @@ func estimateLineCount(data []byte) int {
 // URI before constructing the adapter — circular otherwise.
 func URIFor(text string) string {
 	sum := sha256.Sum256([]byte(text))
-	return uriScheme + hex.EncodeToString(sum[:])
+	return URIScheme + hex.EncodeToString(sum[:])
+}
+
+// InlineHash recovers the hex-sha256 suffix from an inline-text URI minted by
+// URIFor. Returns (hash, true) when uri carries the URIScheme prefix, or
+// ("", false) otherwise. The single parse point for the URI shape: callers
+// (the mcptext adapter's own hash cross-check, and the composition root's
+// filename derivation) route through here so the scheme literal lives in
+// exactly one place and a real scheme drift is caught by every consumer.
+func InlineHash(uri string) (string, bool) {
+	if !strings.HasPrefix(uri, URIScheme) {
+		return "", false
+	}
+	return strings.TrimPrefix(uri, URIScheme), true
 }
