@@ -520,6 +520,81 @@ body {
   font-size: 0.85rem;
 }
 
+/* Visually-hidden shared <audio> — the deck drives it; no native controls. */
+.transport-bar__audio {
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* ---- Transport deck: roving-tabindex toolbar button group ---- */
+.transport-deck__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transport-deck__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.transport-deck__btn:hover {
+  background: var(--border);
+}
+
+.transport-deck__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.transport-deck__btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Block-quantized scrubber (role=slider) ---- */
+.block-scrubber {
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 720px;
+  padding: 10px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.block-scrubber:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.block-scrubber__track {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.block-scrubber__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
 /* ---- Responsive: mobile (<768px) aside collapses via CSS only ---- */
 @media (max-width: 767px) {
   .app-shell__body {
