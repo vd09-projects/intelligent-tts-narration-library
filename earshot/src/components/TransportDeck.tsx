@@ -14,14 +14,47 @@
 // deck drives it. All controls READ the one shared usePlayback instance from
 // context (R4); the deck never calls usePlayback() locally.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
 import { usePlaybackControls } from "../state/PlaybackContext";
+import { formatSpokenTime } from "../state/playbackMath";
 import { BlockScrubber } from "./BlockScrubber";
+
+// Elapsed / total time readout. Driven imperatively off the per-frame audio
+// clock (no React state → no per-frame re-render). aria-hidden: the slider's
+// aria-valuetext is the single spoken source for position (avoids double
+// announcement); this readout is the visual clock. Duration shows "--:--"
+// until the element reports it.
+function TransportClock() {
+  const { subscribeProgress } = usePlaybackControls();
+  const curRef = useRef<HTMLSpanElement>(null);
+  const durRef = useRef<HTMLSpanElement>(null);
+  useEffect(
+    () =>
+      subscribeProgress((p) => {
+        if (curRef.current) curRef.current.textContent = formatSpokenTime(p.currentMs);
+        if (durRef.current) {
+          durRef.current.textContent = p.durationMs > 0 ? formatSpokenTime(p.durationMs) : "--:--";
+        }
+      }),
+    [subscribeProgress],
+  );
+  return (
+    <span className="transport-clock" aria-hidden="true" data-testid="transport-clock">
+      <span ref={curRef} className="transport-clock__cur">
+        0:00
+      </span>
+      <span className="transport-clock__sep"> / </span>
+      <span ref={durRef} className="transport-clock__dur">
+        --:--
+      </span>
+    </span>
+  );
+}
 
 export function TransportDeck() {
   const { audioRef, activeAudioUrl } = useNarration();
-  const { isPlaying, blockCount, toggle, prevBlock, nextBlock, returnToPlayingBlock } =
+  const { activeBlockId, isPlaying, blockCount, toggle, prevBlock, nextBlock, returnToPlayingBlock } =
     usePlaybackControls();
 
   // Roving tabindex across the 4 toolbar buttons (single tab stop).
@@ -59,11 +92,19 @@ export function TransportDeck() {
   }
 
   // Button order in the roving group: prev, play/pause, next, return.
-  const buttons: { label: string; glyph: string; onClick: () => void }[] = [
+  // "Return to playing block" needs a playing block to return to — disable it
+  // until one exists, so an idle press isn't a silent no-op (it scrolls+focuses
+  // the active BlockRow, which is null before playback has placed the playhead).
+  const buttons: { label: string; glyph: string; onClick: () => void; disabled?: boolean }[] = [
     { label: "Previous block", glyph: "⏮", onClick: prevBlock },
     { label: isPlaying ? "Pause" : "Play", glyph: isPlaying ? "⏸" : "▶", onClick: toggle },
     { label: "Next block", glyph: "⏭", onClick: nextBlock },
-    { label: "Return to playing block", glyph: "⟲", onClick: returnToPlayingBlock },
+    {
+      label: "Return to playing block",
+      glyph: "⟲",
+      onClick: returnToPlayingBlock,
+      disabled: activeBlockId == null,
+    },
   ];
 
   return (
@@ -98,7 +139,7 @@ export function TransportDeck() {
             className="transport-deck__btn"
             tabIndex={i === roving ? 0 : -1}
             aria-label={b.label}
-            disabled={disabled}
+            disabled={disabled || b.disabled}
             onClick={b.onClick}
           >
             <span aria-hidden="true">{b.glyph}</span>
@@ -107,6 +148,8 @@ export function TransportDeck() {
       </div>
 
       <BlockScrubber />
+
+      <TransportClock />
 
       {!hasAudio ? <span className="transport-bar__hint">No audio loaded</span> : null}
     </div>

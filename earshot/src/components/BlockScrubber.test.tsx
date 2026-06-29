@@ -10,6 +10,7 @@ function makePlayback(over: Partial<PlaybackControls> = {}): PlaybackControls {
     activeBlockIndex: 0,
     blockCount: 4,
     blockStartsMs: [0, 3200, 6100, 105000],
+    subscribeProgress: vi.fn(() => () => {}),
     playbackState: "paused",
     isPlaying: false,
     play: vi.fn(),
@@ -59,6 +60,29 @@ describe("BlockScrubber — block-quantized slider semantics", () => {
     const slider = screen.getByRole("slider");
     expect(slider).toHaveAttribute("aria-valuenow", "0");
     expect(slider).toHaveAttribute("aria-valuetext", "No block selected");
+  });
+});
+
+describe("BlockScrubber — continuous progress fill (audio clock, not block index)", () => {
+  it("drives the fill width off the per-frame audio-progress channel, not the block index", () => {
+    // Capture the progress subscriber the scrubber registers, then push a
+    // mid-clip fraction and assert the fill reflects the CONTINUOUS position —
+    // proving the bar no longer jumps in block-index steps.
+    let emit: ((p: { currentMs: number; durationMs: number; fraction: number }) => void) | null = null;
+    const pb = makePlayback({
+      activeBlockIndex: 0, // index 0 would be ~0% under the OLD index-based fill
+      subscribeProgress: vi.fn((fn) => {
+        emit = fn;
+        return () => {};
+      }),
+    });
+    const { container } = renderScrubber(pb);
+    const fill = container.querySelector<HTMLElement>(".block-scrubber__fill");
+    expect(fill).not.toBeNull();
+    expect(fill!.style.width).toBe("0%"); // starts empty
+
+    emit!({ currentMs: 21000, durationMs: 42000, fraction: 0.5 });
+    expect(fill!.style.width).toBe("50%"); // continuous, independent of block index
   });
 });
 

@@ -53,6 +53,23 @@ export interface UsePlaybackInput {
   pause: () => void;
 }
 
+/**
+ * Continuous audio-clock snapshot, pushed every animation frame to subscribers
+ * (the scrubber fill + the transport clock). This is the AUDIO position, NOT a
+ * text-sync signal: it never maps to a sub-block / word offset and seeking stays
+ * block-quantized, so the block-level-sync invariant is untouched. Delivered
+ * imperatively (subscriber mutates its own DOM) so the moving bar costs ZERO
+ * per-frame React re-renders (Decision 2026-06-21 holds).
+ */
+export interface PlaybackProgress {
+  /** Current playhead position, ms. */
+  currentMs: number;
+  /** Total clip duration, ms; 0 until the element knows its duration. */
+  durationMs: number;
+  /** currentMs / durationMs, clamped to [0, 1]; 0 when duration unknown. */
+  fraction: number;
+}
+
 /** The transport command surface, distributed via context. */
 export interface PlaybackControls {
   activeBlockId: string | null;
@@ -61,6 +78,11 @@ export interface PlaybackControls {
   blockCount: number;
   /** Sorted block-start offsets (for the scrubber aria-valuetext). */
   blockStartsMs: number[];
+  /**
+   * Subscribe to the per-frame audio-clock snapshot. Returns an unsubscribe fn.
+   * Subscribers update their own DOM imperatively — no React state, no re-render.
+   */
+  subscribeProgress: (fn: (p: PlaybackProgress) => void) => () => void;
   playbackState: PlaybackState;
   isPlaying: boolean;
   play: () => void;
@@ -110,6 +132,16 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
   // range. Used to verify a 'seeked' actually landed inside the restored block
   // before the gate clears (a bare timer must never unmute into a stale 0).
   const restoreTargetRef = useRef<{ startMs: number; nextStartMs: number } | null>(null);
+
+  // Per-frame audio-clock subscribers (scrubber fill + transport clock). A Set
+  // so multiple consumers can register; each mutates its own DOM imperatively.
+  const progressSubsRef = useRef<Set<(p: PlaybackProgress) => void>>(new Set());
+  const subscribeProgress = useCallback((fn: (p: PlaybackProgress) => void) => {
+    progressSubsRef.current.add(fn);
+    return () => {
+      progressSubsRef.current.delete(fn);
+    };
+  }, []);
 
   const resumeKeyStr = resumeScope ? resumeKey(`entry:${resumeScope}`) : null;
 
@@ -238,10 +270,24 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     let raf = 0;
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      if (restoringRef.current) return;
       const el = audioRef.current;
       if (!el) return;
       const t = el.currentTime * 1000;
+
+      // Continuous audio-clock channel (moving bar + time readout). Pushed
+      // imperatively to subscribers every frame — NO React state write, so the
+      // no-per-frame-re-render decision holds. Emitted even while restoring so
+      // the clock stays live; it is display-only and never gates anything.
+      if (progressSubsRef.current.size > 0) {
+        const durMs = Number.isFinite(el.duration) ? el.duration * 1000 : 0;
+        const frac = durMs > 0 ? clamp(t / durMs, 0, 1) : 0;
+        const p: PlaybackProgress = { currentMs: t, durationMs: durMs, fraction: frac };
+        progressSubsRef.current.forEach((fn) => fn(p));
+      }
+
+      // Block derivation stays MUTED while restoring (R2): a not-yet-loaded
+      // element reports currentTime 0 and would clobber the restored block.
+      if (restoringRef.current) return;
       const idx = findActiveBlockIndex(geom.starts, geom.ends, t);
       const id = idx >= 0 ? geom.ids[idx] : null;
       if (id !== activeIdRef.current) {
@@ -342,6 +388,7 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       activeBlockIndex,
       blockCount: geom.ids.length,
       blockStartsMs: geom.starts,
+      subscribeProgress,
       playbackState,
       isPlaying,
       play,
@@ -360,6 +407,7 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       activeBlockIndex,
       geom.ids,
       geom.starts,
+      subscribeProgress,
       playbackState,
       isPlaying,
       play,

@@ -17,6 +17,7 @@ function makePlayback(over: Partial<PlaybackControls> = {}): PlaybackControls {
     activeBlockIndex: 0,
     blockCount: 4,
     blockStartsMs: [0, 3200, 6100, 9000],
+    subscribeProgress: vi.fn(() => () => {}),
     playbackState: "paused",
     isPlaying: false,
     play: vi.fn(),
@@ -123,6 +124,30 @@ describe("TransportDeck — controls", () => {
   it("renders the scrubber as a separate tab stop adjacent to the toolbar", () => {
     renderDeck(makePlayback());
     expect(screen.getByRole("slider", { name: "Block position" })).toBeInTheDocument();
+  });
+
+  it("disables 'Return to playing block' until a block is actually playing", () => {
+    // No active block yet → nothing to return to → button disabled (not a
+    // silent no-op). The other transport buttons stay enabled.
+    renderDeck(makePlayback({ activeBlockId: null }));
+    expect(screen.getByRole("button", { name: "Return to playing block" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous block" })).not.toBeDisabled();
+  });
+
+  it("enables 'Return to playing block' once a block is active", () => {
+    renderDeck(makePlayback({ activeBlockId: "b001" }));
+    expect(screen.getByRole("button", { name: "Return to playing block" })).not.toBeDisabled();
+  });
+
+  it("renders the elapsed/total time clock and subscribes to the audio progress channel", () => {
+    const pb = makePlayback();
+    renderDeck(pb);
+    const clock = screen.getByTestId("transport-clock");
+    expect(clock).toBeInTheDocument();
+    expect(clock).toHaveTextContent("0:00");
+    expect(clock).toHaveTextContent("--:--"); // duration unknown until the element reports it
+    // The clock drives itself off the per-frame progress channel.
+    expect(pb.subscribeProgress).toHaveBeenCalled();
   });
 
   it("shows the 'No audio loaded' hint and disables controls when there is no audio", () => {

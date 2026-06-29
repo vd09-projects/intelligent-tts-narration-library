@@ -325,3 +325,58 @@ describe("usePlayback — initialize-not-transition restore (R3)", () => {
     expect(stored).not.toHaveProperty("startMs"); // block-level only
   });
 });
+
+describe("usePlayback — continuous audio-progress channel (moving bar + clock)", () => {
+  it("emits currentMs/durationMs/fraction every frame WITHOUT a React re-render", () => {
+    const { input, audio } = makeInput();
+    (audio as unknown as { duration: number }).duration = 40; // 40s clip
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders++;
+      return usePlayback(input);
+    });
+
+    const got: { currentMs: number; durationMs: number; fraction: number }[] = [];
+    act(() => {
+      result.current.subscribeProgress((p) => got.push(p));
+    });
+
+    // Settle on block b001, then record the render count.
+    audio.currentTime = 0;
+    frame();
+    const rBefore = renders;
+
+    // Sweep WITHIN block b001 (0–3.2s) so the active block never changes: any
+    // render increment would have to come from the progress channel.
+    audio.currentTime = 1.0;
+    frame();
+    audio.currentTime = 2.0;
+    frame();
+
+    const last = got.at(-1)!;
+    expect(last.currentMs).toBe(2000);
+    expect(last.durationMs).toBe(40000);
+    expect(last.fraction).toBeCloseTo(0.05, 6); // continuous, not block-quantized
+    expect(renders).toBe(rBefore); // imperative channel — zero per-frame churn
+  });
+
+  it("reports fraction 0 while the duration is unknown (NaN), and unsubscribe stops delivery", () => {
+    const { input, audio } = makeInput(); // FakeAudio has no duration → NaN
+    const { result } = renderHook(() => usePlayback(input));
+    const got: { currentMs: number; durationMs: number; fraction: number }[] = [];
+    let unsub = () => {};
+    act(() => {
+      unsub = result.current.subscribeProgress((p) => got.push(p));
+    });
+
+    audio.currentTime = 5.0;
+    frame();
+    expect(got.at(-1)).toMatchObject({ currentMs: 5000, durationMs: 0, fraction: 0 });
+
+    act(() => unsub());
+    const n = got.length;
+    audio.currentTime = 8.0;
+    frame();
+    expect(got.length).toBe(n); // no further deliveries after unsubscribe
+  });
+});

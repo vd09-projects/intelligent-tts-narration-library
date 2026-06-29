@@ -447,11 +447,12 @@ body {
   cursor: pointer;
 }
 
-/* "⏯ from here" affordance — glyph + text, never color-only. Dim until the
-   row is hovered/focused so the transcript stays readable. */
+/* "⏯ from here" seek affordance — glyph + text, never color-only. Lives in the
+   heading row (not inline before the body text) so the text stays flush-left and
+   revealing the hint never shifts it. Hidden until the row is hovered/focused or
+   is the active block, so the transcript stays clean. */
 .block-row__play-affordance {
-  display: inline-block;
-  margin-right: 8px;
+  margin-left: auto; /* sit at the trailing end of the heading flex row */
   color: var(--accent);
   font-weight: 700;
   font-size: 0.78rem;
@@ -459,8 +460,8 @@ body {
   transition: opacity 0.1s ease-in;
 }
 
-.block-row__play:hover .block-row__play-affordance,
-.block-row__play:focus-visible .block-row__play-affordance,
+.block-row:hover .block-row__play-affordance,
+.block-row:focus-within .block-row__play-affordance,
 .block-row.is-active .block-row__play-affordance {
   opacity: 1;
 }
@@ -610,7 +611,25 @@ body {
 .block-scrubber__fill {
   display: block;
   height: 100%;
+  width: 0;
   background: var(--accent);
+}
+
+/* ---- Transport clock: elapsed / total (visual, continuous) ---- */
+.transport-clock {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 86px;
+  justify-content: flex-end;
+}
+
+.transport-clock__cur {
+  color: var(--text);
 }
 
 /* ---- Responsive: mobile (<768px) aside collapses via CSS only ---- */

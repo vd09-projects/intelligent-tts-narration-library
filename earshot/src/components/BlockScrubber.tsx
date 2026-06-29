@@ -9,16 +9,39 @@
 // (Left/Right change the block value) and stopPropagation()s every key it
 // handles so they never reach the toolbar's roving handler. APG Slider pattern.
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { usePlaybackControls } from "../state/PlaybackContext";
 import { PAGE_BLOCKS } from "../hooks/usePlayback";
 import { formatSpokenTime, nearestIndexFromPointer } from "../state/playbackMath";
 
 export function BlockScrubber() {
-  const { activeBlockIndex, blockCount, blockStartsMs, prevBlock, nextBlock, stepBlocks, seekToIndex } =
-    usePlaybackControls();
+  const {
+    activeBlockIndex,
+    blockCount,
+    blockStartsMs,
+    subscribeProgress,
+    prevBlock,
+    nextBlock,
+    stepBlocks,
+    seekToIndex,
+  } = usePlaybackControls();
   const trackRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLSpanElement>(null);
   const draggingRef = useRef(false);
+
+  // The visual fill tracks the CONTINUOUS audio clock (currentTime / duration),
+  // updated imperatively every animation frame — so the bar moves smoothly
+  // instead of jumping block-to-block. This is display only: aria-valuenow and
+  // all SEEKING stay block-quantized (below), so the block-level-sync invariant
+  // is untouched. Mutating style.width directly keeps it off the React render
+  // path (no per-frame re-render).
+  useEffect(
+    () =>
+      subscribeProgress((p) => {
+        if (fillRef.current) fillRef.current.style.width = `${p.fraction * 100}%`;
+      }),
+    [subscribeProgress],
+  );
 
   // No blocks → nothing to scrub. Render nothing (the deck shows its own hint).
   if (blockCount === 0) return null;
@@ -33,7 +56,6 @@ export function BlockScrubber() {
   const valueText = hasActive
     ? `Block ${index + 1} of ${blockCount}, ${formatSpokenTime(startMs)}`
     : "No block selected";
-  const fillPct = max > 0 ? (index / max) * 100 : 0;
 
   function onKeyDown(e: React.KeyboardEvent) {
     let handled = true;
@@ -107,7 +129,7 @@ export function BlockScrubber() {
       onPointerUp={onPointerUp}
     >
       <span className="block-scrubber__track" aria-hidden="true">
-        <span className="block-scrubber__fill" style={{ width: `${fillPct}%` }} />
+        <span ref={fillRef} className="block-scrubber__fill" style={{ width: "0%" }} />
       </span>
     </div>
   );
