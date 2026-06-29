@@ -69,6 +69,8 @@ export interface NarrationSession {
   audioError: string | null;
   play: () => void;
   pause: () => void;
+  /** Seek the shared clip to a position in ms (block-start, re-derived live). */
+  seek: (ms: number) => void;
   /** Seek the shared clip to a block's start and play. */
   playFromBlock: (blockId: string) => void;
   /**
@@ -358,6 +360,7 @@ export function useNarrationSession(): NarrationSession {
     audioError: audio.audioError,
     play: audio.play,
     pause: audio.pause,
+    seek: audio.seek,
     playFromBlock,
     narrateText,
     narrateFile,

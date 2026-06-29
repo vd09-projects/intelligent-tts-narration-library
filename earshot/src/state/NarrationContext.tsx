@@ -8,14 +8,27 @@ import {
   useNarrationSession,
   type NarrationSession,
 } from "../hooks/useNarrationSession";
+import { usePlayback } from "../hooks/usePlayback";
+import { PlaybackProvider } from "./PlaybackContext";
 
 const NarrationContext = createContext<NarrationSession | null>(null);
 
 export function NarrationProvider({ children }: { children: React.ReactNode }) {
   const session = useNarrationSession();
+  // SINGLE usePlayback instance (#112, R4): created once here and distributed
+  // via PlaybackContext. One rAF loop, one active-block writer, one <audio>.
+  const playback = usePlayback({
+    audioRef: session.audioRef,
+    timeline: session.currentTranscript?.timeline,
+    resumeScope: session.selectedEntryId,
+    playbackState: session.playbackState,
+    seek: session.seek,
+    play: session.play,
+    pause: session.pause,
+  });
   return (
     <NarrationContext.Provider value={session}>
-      {children}
+      <PlaybackProvider value={playback}>{children}</PlaybackProvider>
     </NarrationContext.Provider>
   );
 }
