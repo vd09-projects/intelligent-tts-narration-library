@@ -794,6 +794,39 @@ scopes:
       transport↔transcript; no persistence — deliberately throwaway). Plan
       persisted draft (awaiting user approval before sindri consumes).
 
+  - slug: earshot-keyboard-transport-134
+    title: Earshot keyboard transport shortcuts — Space play/pause + ←/→ ±10s seek (#134)
+    created: 2026-06-29
+    reasoning: |
+      Plan cycle for GitHub issue #134 — a low-priority convenience layer adding
+      YouTube-style keyboard shortcuts to the shipped #112 Earshot transport
+      (earshot/): Space = play/pause, Left/Right = seek ±10s. Mimir task plan
+      (accessibility overlay) RESOLVED the core design decision to issue Option
+      (a): Left/Right = ±10s TIME seek on the combined wav (a free-moving playhead
+      is transport/display only and violates no block-level-sync invariant, since
+      nothing sub-block is persisted), NOT block-step — block-step stays on the
+      slider's own native arrows. Plan adds seekBySeconds(deltaSec) to the
+      block-quantized PlaybackControls surface (reads audioRef currentTime/duration,
+      clamps [0,dur], no-ops when metadata unloaded), a new useTransportHotkeys hook
+      mounted once in Shell (document-level keydown reading the SINGLE usePlayback
+      via usePlaybackControls() — honors the single-instance decision), and a
+      deny-list focus guard that bails inside role=toolbar / role=slider / native-
+      Space owners so global keys never clash with the two #112 keyboard tab stops
+      (the load-bearing two-tab-stop decision). Discoverability via aria-keyshortcuts
+      + a visible legend (no help modal); no-audio/at-end/empty hardened. 5 ordered
+      steps; focus-guard table test is the regression net. Honors the four prior
+      Earshot decisions (two tab stops, single usePlayback at provider, block-level-
+      sync-only with the playhead-granularity nuance, APG-grounded controls) and the
+      standing order (low-pri mid-build: fix inline, no follow-up tickets). earshot-
+      prefix groups the Earshot surface; keyboard-transport qualifier scopes this to
+      the shortcut layer (distinct from earshot-playback-engine-112, the engine it
+      builds on); issue-numbered suffix continues the convention. Slug pre-supplied +
+      pre-approved via --scope by the build-session single-skill runner. Planned via
+      mimir task depth with the accessibility overlay (entire feature is keyboard /
+      APG / focus-guard / aria-keyshortcuts; state-management considered but NOT
+      activated — no new persistence/derivation, just reads the existing context
+      surface + ephemeral DOM focus checks). Plan persisted draft (awaiting user
+      approval before sindri consumes).
   - slug: earshot-scaffold-app-shell-111
     title: Earshot scaffold — app shell + session pane + file pane (#111)
     created: 2026-06-28
