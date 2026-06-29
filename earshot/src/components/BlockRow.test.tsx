@@ -70,3 +70,64 @@ describe("BlockRow status rendering (honesty invariant)", () => {
     expect(onPlay).toHaveBeenCalledWith("b1");
   });
 });
+
+describe("BlockRow — LevelControl mounting (#113)", () => {
+  it("mounts LevelControl on voiced and on degraded (degraded marker coexists)", () => {
+    const { rerender } = render(
+      <BlockRow block={makeBlock({})} view="spoken" isActive={false} onPlay={() => {}} onCommitLevel={() => {}} />,
+    );
+    expect(screen.getByRole("radiogroup", { name: /narration level/i })).toBeInTheDocument();
+
+    rerender(
+      <BlockRow
+        block={makeBlock({ status: "degraded", level: 1 })}
+        view="spoken"
+        isActive={false}
+        onPlay={() => {}}
+        onCommitLevel={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radiogroup", { name: /narration level/i })).toBeInTheDocument();
+    expect(screen.getByTestId("degraded-marker")).toBeInTheDocument();
+  });
+
+  it("does NOT mount LevelControl on an ORIGINALLY-refused block", () => {
+    const refused = makeBlock({
+      status: "refused",
+      segments: undefined,
+      refusal: {
+        reason: "no_intelligence_available",
+        message: "Too long.",
+        spoken: true,
+        source_map: { kind: "line_range", start_line: 1, end_line: 9, raw_excerpt: "..." },
+      },
+    });
+    render(<BlockRow block={refused} view="spoken" isActive={false} onPlay={() => {}} onCommitLevel={() => {}} />);
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+  });
+
+  it("an escalation-returned refusal keeps the control + shows a role=alert (block not blanked)", () => {
+    render(
+      <BlockRow
+        block={makeBlock({})} // still voiced — the hook did NOT flip it to refused
+        view="spoken"
+        isActive={false}
+        onPlay={() => {}}
+        onCommitLevel={() => {}}
+        leveling={{ phase: "refused-inline", message: "Block can't be voiced at L3; still at L1", target: null }}
+      />,
+    );
+    // Control still mounted, block text still present (not blanked).
+    expect(screen.getByRole("radiogroup", { name: /narration level/i })).toBeInTheDocument();
+    expect(screen.getByText("spoken words")).toBeInTheDocument();
+    // Refusal surfaced inline assertively.
+    expect(screen.getByRole("alert")).toHaveTextContent(/can't be voiced at l3/i);
+  });
+
+  it("renders the control DISABLED when no onCommitLevel (older server, no render_id)", () => {
+    render(<BlockRow block={makeBlock({})} view="spoken" isActive={false} onPlay={() => {}} />);
+    const radios = screen.getAllByRole("radio");
+    expect(radios.length).toBe(3);
+    radios.forEach((r) => expect(r).toBeDisabled());
+  });
+});

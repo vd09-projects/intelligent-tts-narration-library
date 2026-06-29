@@ -9,6 +9,8 @@ import type {
   Gender,
   Level,
   MessagesResponse,
+  NarrateBlockRequest,
+  NarrateBlockResponse,
   NarrateResponse,
   ServerError,
 } from "./types";
@@ -94,6 +96,32 @@ export async function postNarrate(args: {
     throw await toClientError(res);
   }
   return (await res.json()) as NarrateResponse;
+}
+
+/**
+ * POST /narrate/block {render_id, block_id, level} → {block, timing?, refusal?,
+ * audio_url (opaque), timeline} (#110/#113). Re-renders ONE block at a new level
+ * and rewrites the combined wav in place; the client adopts the returned full
+ * `timeline` wholesale. Same fetch/error shape as postNarrate — a non-200 throws
+ * a ClientError; a refusal arrives as a 200 with `refusal` populated (DATA).
+ */
+export async function postNarrateBlock(
+  req: NarrateBlockRequest & { signal?: AbortSignal },
+): Promise<NarrateBlockResponse> {
+  const res = await safeFetch("/narrate/block", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      render_id: req.render_id,
+      block_id: req.block_id,
+      level: req.level,
+    }),
+    signal: req.signal,
+  });
+  if (!res.ok) {
+    throw await toClientError(res);
+  }
+  return (await res.json()) as NarrateBlockResponse;
 }
 
 /**

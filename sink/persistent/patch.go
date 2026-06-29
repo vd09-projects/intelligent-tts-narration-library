@@ -246,8 +246,14 @@ func PatchBlock(ctx context.Context, outDir string, p plan.NarrationPlan, res re
 		startMs := cursorMs + leading
 		endMs := startMs + durMs
 
+		// Frame-align so the bytes written for this block equal
+		// silenceBytes(durMs) — the length the manifest's EndMs-StartMs implies
+		// and the F1 check derives. Without this a sub-ms re-render delta makes
+		// the NEXT patch's container-vs-manifest check refuse this container.
+		// Non-target blocks were harvested at silenceBytes(origDur) already, so
+		// this is a no-op for them.
 		segments = append(segments, wavSegment{
-			pcm:              pcmByIndex[i],
+			pcm:              frameAlignPCM(pcmByIndex[i], durMs, expectedFormat),
 			leadingSilenceMs: leading,
 		})
 
@@ -432,6 +438,38 @@ func pcmDurationMs(pcmBytes int, format plan.AudioFormat) int {
 		return 0
 	}
 	return int((int64(pcmBytes)*1000 + bytesPerSec/2) / bytesPerSec)
+}
+
+// frameAlignPCM pads or trims pcm so its length equals silenceBytes(durMs) —
+// the exact whole-millisecond byte count the manifest records for the block.
+//
+// The manifest stores each block's duration in whole ms (rounded to nearest),
+// but raw Kokoro PCM is not a whole-ms multiple, so the actual byte length and
+// the ms-derived length (silenceBytes(EndMs-StartMs)) disagree by up to <1ms
+// of bytes. That disagreement is invisible until PatchBlock's F1 check
+// (deriveBlockLayout) reconstructs byte ranges from manifest ms on a LATER
+// patch and refuses the uncorrupted container as an ErrContainerMismatch
+// (per-block rounding errors only happen to cancel for some documents). By
+// forcing on-disk bytes == silenceBytes(durMs) at write time, the ms<->byte
+// round-trip is exact for every block, so the F1 invariant always holds.
+//
+// Padding appends inaudible trailing silence; trimming drops <0.5 ms of tail.
+// silenceBytes(durMs) is always frame-aligned (a multiple of bytesPerFrame),
+// so a trim never cuts mid-sample. A block whose length already matches (the
+// synthetic whole-ms PCM the tests use, and any already-aligned harvest) is
+// returned unchanged.
+func frameAlignPCM(pcm []byte, durMs int, format plan.AudioFormat) []byte {
+	target := silenceBytes(durMs, format)
+	switch {
+	case len(pcm) == target:
+		return pcm
+	case len(pcm) < target:
+		out := make([]byte, target)
+		copy(out, pcm)
+		return out
+	default:
+		return pcm[:target]
+	}
 }
 
 // timingForBlock finds the BlockTiming row for blockID in the re-render

@@ -7,7 +7,7 @@ package main
 // text to a server-MINTED {id}/source.txt (never a user path — R2 holds) →
 // render through a fresh file-adapter pipeline with a capturingSink (no write) →
 // write the 3-file persistent-sink dir ({id}/{audio.wav, plan.json,
-// manifest.json}) → respond {audio_url, blocks, timeline}.
+// manifest.json}) → respond {audio_url, render_id, blocks, timeline}.
 //
 // Why a file source over source.txt (build-time correction to #109's R-NB4
 // single-wav choice, recorded in decision-journal): the dir must be re-renderable
@@ -62,8 +62,14 @@ type narrateRequest struct {
 // narrateResponse — the 200 body. blocks is the planner's roster (carrying
 // refused blocks as data); timeline is the renderer's block-level sync; audio_url
 // points at the minted wav. No word-level timing (block-level sync only).
+//
+// render_id (#113) is the bare 32-hex render id ALSO encoded inside audio_url.
+// It is exposed as its own additive field so a client (Earshot) can drive POST
+// /narrate/block WITHOUT parsing it back out of audio_url — audio_url stays
+// opaque (D4). Additive + unknown-field-safe: an older client ignores it.
 type narrateResponse struct {
 	AudioURL string        `json:"audio_url"`
+	RenderID string        `json:"render_id"`
 	Blocks   []plan.Block  `json:"blocks"`
 	Timeline plan.Timeline `json:"timeline"`
 }
@@ -216,6 +222,7 @@ func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, tex
 
 	return narrateResponse{
 		AudioURL: "/audio/" + id + ".wav",
+		RenderID: id,
 		Blocks:   capturer.plan.Blocks,
 		Timeline: capturer.result.Timeline,
 	}, http.StatusOK, nil
@@ -248,11 +255,20 @@ type narrateBlockRequest struct {
 // rewritten in place at the same render_id), so Earshot re-points only the
 // playing block to the same URL. /escalate's own escalateResponse stays FROZEN.
 // On a refusal, timing is omitted and refusal is populated (same nullability).
+//
+// timeline (#113) is the FULL post-patch document timeline, built ONLY here in
+// runNarrateBlock from the post-patch manifest — NOT inside the shared
+// escalateInDir core and NOT on /escalate's frozen escalateResponse. The
+// single combined audio.wav is rewritten in place and PatchBlock shifts every
+// downstream block's offset, so a single `timing` cannot carry the sibling
+// reflow; the client adopts this whole timeline wholesale (server-authoritative,
+// no client-side offset recompute). Additive + unknown-field-safe.
 type narrateBlockResponse struct {
 	Block    plan.Block        `json:"block"`
 	Timing   *plan.BlockTiming `json:"timing,omitempty"`
 	Refusal  *plan.Refusal     `json:"refusal,omitempty"`
 	AudioURL string            `json:"audio_url"`
+	Timeline plan.Timeline     `json:"timeline"`
 }
 
 // narrateBlockHandler returns the POST /narrate/block handler bound to args + the
@@ -321,10 +337,53 @@ func runNarrateBlock(reqCtx context.Context, args serverArgs, store *renderStore
 		return narrateBlockResponse{}, status, errResp
 	}
 
+	// Build the FULL post-patch timeline from the on-disk manifest the patch just
+	// rewrote (#113). This is assembled HERE, after the shared escalateInDir core
+	// returns — escalateResponse / escalateInDir stay byte-identical (frozen).
+	// PatchBlock has already shifted every downstream block's offset in the
+	// manifest, so this carries the sibling reflow the single `timing` cannot.
+	tl, terr := buildTimeline(absDir)
+	if terr != nil {
+		return narrateBlockResponse{}, http.StatusInternalServerError,
+			&ErrorResponse{Reason: reasonReadbackFailed, Message: "post-patch timeline build failed: " + terr.Error()}
+	}
+
 	return narrateBlockResponse{
 		Block:    esc.Block,
 		Timing:   esc.Timing,
 		Refusal:  esc.Refusal,
 		AudioURL: "/audio/" + req.RenderID + ".wav",
+		Timeline: tl,
 	}, http.StatusOK, nil
+}
+
+// buildTimeline assembles the full document Timeline from a render_id dir's
+// post-patch on-disk truth: plan.json for the PlanID + manifest.json for the
+// per-block offsets PatchBlock rewrote. It reuses the same readManifest /
+// readPlanFile seams escalateInDir's readBack uses, so a test stub covers both.
+// Block-level only — no word timing (CLAUDE.md). Refused blocks appear in the
+// manifest with their refusal-notice span, so they round-trip into the timeline.
+func buildTimeline(dir string) (plan.Timeline, error) {
+	manifest, err := readManifest(dir)
+	if err != nil {
+		return plan.Timeline{}, err
+	}
+	p, err := readPlanFile(dir)
+	if err != nil {
+		return plan.Timeline{}, err
+	}
+	tl := plan.Timeline{
+		PlanID: p.PlanID,
+		Format: manifest.AudioFormat,
+		Blocks: make([]plan.BlockTiming, 0, len(manifest.Blocks)),
+	}
+	for _, mb := range manifest.Blocks {
+		tl.Blocks = append(tl.Blocks, plan.BlockTiming{
+			BlockID:  mb.ID,
+			StartMs:  mb.StartMs,
+			EndMs:    mb.EndMs,
+			AudioRef: mb.AudioRef,
+		})
+	}
+	return tl, nil
 }

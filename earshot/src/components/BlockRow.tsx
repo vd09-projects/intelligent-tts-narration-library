@@ -1,16 +1,23 @@
 // BlockRow.tsx — one transcript block (plan Step 3).
 //
-//   - refused  → delegates to RefusalBlock (no level control, no play).
+//   - refused  → delegates to RefusalBlock (no level control, no play). This is
+//     the ORIGINALLY-refused case only: a block the document first rendered as
+//     refused. An escalation that later RETURNS a refusal does NOT reach here —
+//     the hook keeps the block at its prior voiced/degraded status and surfaces
+//     the refusal inline via LevelControl's role=alert (#113, F4).
 //   - degraded → renders the voiced text PLUS a NON-COLOR marker (icon + text
 //     label "Degraded") so it is never silently shown as fully voiced (D5).
 //   - voiced   → renders clean.
 //
 // voiced/degraded keep a real <button> play affordance (Space/Enter plays —
-// seeks the shared <audio> to this block's start). aria-current="true" marks the
-// DERIVED active block; it is paired with a non-color visual marker.
+// seeks the shared <audio> to this block's start) and mount the LevelControl
+// (#113). aria-current="true" marks the DERIVED active block; it is paired with
+// a non-color visual marker.
 
-import type { Block } from "../api/types";
+import type { Block, Level } from "../api/types";
+import { IDLE_LEVELING, type BlockLevelingState } from "../hooks/useNarrationSession";
 import { sourceText, spokenText } from "../state/blockText";
+import { LevelControl } from "./LevelControl";
 import { RefusalBlock } from "./RefusalBlock";
 import type { TranscriptView } from "./SegmentedToggle";
 
@@ -19,12 +26,19 @@ export function BlockRow({
   view,
   isActive,
   onPlay,
+  leveling = IDLE_LEVELING,
+  onCommitLevel,
 }: {
   block: Block;
   view: TranscriptView;
   isActive: boolean;
   onPlay: (blockId: string) => void;
+  /** Per-block leveling status (#113). Defaults to idle. */
+  leveling?: BlockLevelingState;
+  /** Commit a new level for this block. Absent → control disabled (no render_id). */
+  onCommitLevel?: (level: Level) => void;
 }) {
+  // Hide the control ONLY on an originally-refused block (RefusalBlock path).
   if (block.status === "refused") {
     return <RefusalBlock block={block} />;
   }
@@ -63,6 +77,13 @@ export function BlockRow({
       {isDegraded && view === "spoken" ? (
         <p className="block-row__degraded-note">Read verbatim — not summarised.</p>
       ) : null}
+      <LevelControl
+        current={block.level}
+        leveling={leveling}
+        blockLabel={`block ${block.order + 1}`}
+        onCommit={onCommitLevel}
+        disabled={!onCommitLevel}
+      />
     </article>
   );
 }

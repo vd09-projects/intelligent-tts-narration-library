@@ -178,6 +178,11 @@ func TestNarrate_HappyPath(t *testing.T) {
 			if !ok || !renderIDPattern.MatchString(id) {
 				t.Fatalf("audio_url = %q, want /audio/{32-hex}.wav", resp.AudioURL)
 			}
+			// #113 — render_id is the bare id, exposed additively so a client need
+			// not parse it out of the opaque audio_url. It must equal that id.
+			if resp.RenderID != id {
+				t.Fatalf("render_id = %q, want %q (must match the audio_url id)", resp.RenderID, id)
+			}
 			if _, tracked := store.entries[id]; !tracked {
 				t.Fatalf("minted id %q not registered in store", id)
 			}

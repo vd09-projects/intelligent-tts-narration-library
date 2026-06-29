@@ -298,6 +298,44 @@ func TestNarrateBlock_RoundTrip_L1ToL2(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// #113 — the /narrate/block response carries the FULL post-patch timeline, with
+// downstream sibling offsets SHIFTED by the patch. Escalating b0 (the first
+// block) to a longer render (100 ms → 200 ms) must move sibling b1's start
+// 100 → 200 in the returned timeline. This is the server oracle the client's
+// downstream-sibling-seek correctness depends on (reinterpreted AC6).
+// ---------------------------------------------------------------------------
+
+func TestNarrateBlock_ResponseCarriesPostPatchTimeline(t *testing.T) {
+	store := newRenderStore(t.TempDir())
+	renderID, outDir := seedRenderDir(t, store)    // b0 0–100, b1 100–300
+	installEscalateRerender(t, outDir, "b0", 0x33) // re-render b0 at 200 ms (grows +100)
+
+	w := postNarrateBlock(t, store, fmt.Sprintf(`{"render_id":%q,"block_id":"b0","level":2}`, renderID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /narrate/block status = %d, want 200 (body %q)", w.Code, w.Body.String())
+	}
+	resp := decodeNarrateBlock(t, w)
+
+	if len(resp.Timeline.Blocks) != 2 {
+		t.Fatalf("timeline must carry ALL blocks, got %d: %+v", len(resp.Timeline.Blocks), resp.Timeline.Blocks)
+	}
+	if resp.Timeline.PlanID == "" {
+		t.Fatal("post-patch timeline must carry plan_id (read back from plan.json)")
+	}
+	byID := map[string]plan.BlockTiming{}
+	for _, b := range resp.Timeline.Blocks {
+		byID[b.BlockID] = b
+	}
+	if b0 := byID["b0"]; b0.StartMs != 0 || b0.EndMs != 200 {
+		t.Fatalf("b0 timing = %+v, want {start 0, end 200} (the grown re-render)", b0)
+	}
+	// The load-bearing assertion: the DOWNSTREAM sibling b1 shifted by the patch.
+	if b1 := byID["b1"]; b1.StartMs != 200 {
+		t.Fatalf("downstream sibling b1 start = %d, want 200 (shifted by the longer b0) — sibling reflow missing", b1.StartMs)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Error table — unknown block_id (real PatchBlock → ErrUnknownBlock → 409) and
 // an incomplete render_id dir (manifest absent → 404 source_not_found, the
 // ErrNothingToPatch-class read-path failure).

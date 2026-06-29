@@ -31,6 +31,14 @@ export interface UseAudio {
   pause: () => void;
   /** Seek to a position in milliseconds (clamped to >= 0). */
   seek: (ms: number) => void;
+  /**
+   * Force the element to RE-FETCH its (unchanged, stable) src — the combined wav
+   * was rewritten in place at the same URL after a block escalation (#113).
+   * Preserves the current play position + play state across the load() so an
+   * escalate-while-playing does not jump to zero. No URL mutation (D4 — the URL
+   * is opaque; the server serves it Cache-Control: no-store).
+   */
+  reload: () => void;
 }
 
 const AUDIO_LOAD_FAILED = "Couldn't play audio";
@@ -115,5 +123,28 @@ export function useAudio(): UseAudio {
     }
   }, []);
 
-  return { audioRef, playbackState, audioError, currentTimeMs, setSource, play, pause, seek };
+  const reload = useCallback(() => {
+    const el = audioRef.current;
+    if (!el || !el.getAttribute("src")) {
+      return; // nothing loaded — nothing to refresh
+    }
+    const resumeAt = el.currentTime;
+    const wasPlaying = !el.paused && !el.ended;
+    setPlaybackState("loading");
+    const onReady = () => {
+      el.removeEventListener("loadeddata", onReady);
+      el.currentTime = resumeAt;
+      setCurrentTimeMs(Math.round(resumeAt * 1000));
+      if (wasPlaying) {
+        void el.play().catch(() => {
+          setPlaybackState("error");
+          setAudioError(AUDIO_LOAD_FAILED);
+        });
+      }
+    };
+    el.addEventListener("loadeddata", onReady);
+    el.load(); // re-fetch the rewritten bytes at the same opaque src
+  }, []);
+
+  return { audioRef, playbackState, audioError, currentTimeMs, setSource, play, pause, seek, reload };
 }

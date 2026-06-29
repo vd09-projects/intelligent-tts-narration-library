@@ -211,6 +211,11 @@ func compileLexiconCfg(cfg *voiceOptions) *compiledLex {
 // Replacements at the start/end of the input do not get leading/
 // trailing space.
 func voice(text string, lex *compiledLex) string {
+	// Strip inline markdown formatting FIRST so Segment.Text carries spoken
+	// words, not `code`/**bold** delimiters (CLAUDE.md voicing invariant). Done
+	// before the lexicon scan so a wrapped operator like **->** still resolves
+	// ("->" -> "arrow"). This runs even when the lexicon is empty.
+	text = stripInlineMarkdown(text)
 	if lex == nil || len(lex.keys) == 0 || text == "" {
 		return text
 	}

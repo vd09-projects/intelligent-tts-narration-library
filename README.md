@@ -63,6 +63,23 @@ go run ./cmd/narrate --file docs/samples/sample.md --block b002 --level 3
 
 The roster is suppressed on `--block` runs (you already know which block you're targeting). Downgrade is symmetric — `--level=1` is allowed on a block that voiced at L3.
 
+### What each level does, per class
+
+Escalation changes the voiced text only for some classes. A `list` or `heading` voices **identically at L1, L2, and L3** — L1 already speaks the full content, so escalating it is a no-op on the text (only the level label changes). The classes below that *do* grow with the level are where escalation earns its keep:
+
+| Class | L1 | L2 | L3 |
+|-------|----|----|----|
+| `heading` | `Section: {text}` | *same as L1* | *same as L1* |
+| `list` | all items, with ordinals | *same as L1* | *same as L1* |
+| `config` | `N top-level keys` | enumerate keys | read every key = value |
+| `code` | `N-line {lang} block` | one-line semantic gist¹ | line-by-line meaning¹ |
+| `table` | `C-column, R-row table` | meaning summary¹ | per-row reading¹ |
+| `prose` | comprehension¹ | comprehension¹ | comprehension¹ |
+
+¹ Needs an `IntelligenceAdapter`. Without one: structured classes (`code`, `table`) fall back to a deterministic reading; `prose` ≤ ~120 words is read verbatim (`degraded`), longer prose is `refused` (honesty rule — never an invented gist).
+
+So if you escalate a `list` and the text doesn't change, that's expected — try a `config`, `code`, or `table` block to see the level actually do work.
+
 Want to be sure the document hasn't changed under you between the roster and the re-render? Capture the `content_hash` from the stdout summary above and pass it back:
 
 ```sh
