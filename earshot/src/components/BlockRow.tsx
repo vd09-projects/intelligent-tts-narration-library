@@ -65,12 +65,19 @@ export function BlockRow({
             <span aria-hidden="true">△ </span>Degraded
           </span>
         ) : null}
+        {/* Seek affordance: lives in the heading (not inline before the text) so
+            the body text always starts flush-left, and revealing it on
+            hover/focus/active never reflows the text. Decorative — the whole
+            text below is the real play button. */}
+        <span className="block-row__play-affordance" aria-hidden="true">
+          ⏯ from here
+        </span>
       </h3>
       <button
         type="button"
         className="block-row__play"
         onClick={() => onPlay(block.id)}
-        aria-label={`Play block ${block.order + 1}`}
+        aria-label={`Play from block ${block.order + 1}`}
       >
         <span className="block-row__text">{text || <em>(no text)</em>}</span>
       </button>

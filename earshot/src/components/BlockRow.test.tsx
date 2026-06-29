@@ -66,7 +66,7 @@ describe("BlockRow status rendering (honesty invariant)", () => {
     render(<BlockRow block={makeBlock({})} view="spoken" isActive onPlay={onPlay} />);
     const article = screen.getByText("spoken words").closest("article");
     expect(article).toHaveAttribute("aria-current", "true");
-    screen.getByRole("button", { name: /play block 1/i }).click();
+    screen.getByRole("button", { name: /play from block 1/i }).click();
     expect(onPlay).toHaveBeenCalledWith("b1");
   });
 });

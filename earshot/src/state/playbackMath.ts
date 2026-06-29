@@ -1,0 +1,95 @@
+// playbackMath.ts — pure, framework-agnostic helpers for block-quantized
+// playback. All block sync is BLOCK-LEVEL ONLY (CLAUDE.md invariant): these
+// helpers map a clock position to a block INDEX and never expose or compute
+// any sub-block / word-level offset. Kept pure so they are table-testable and
+// reusable from the rAF hot loop, the scrubber, and the resume guard.
+
+/** Clamp `v` into the inclusive range [lo, hi]. */
+export function clamp(v: number, lo: number, hi: number): number {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+/**
+ * Index of the block under the playhead, using half-open intervals
+ * [start, end) so a boundary tick belongs to the NEXT block (matches
+ * deriveActiveBlockId). Binary search over the sorted `starts` for the
+ * rightmost start <= t, then confirm t < that block's end. Returns -1 before
+ * the first block, after the last, or for an empty timeline.
+ */
+export function findActiveBlockIndex(
+  starts: readonly number[],
+  ends: readonly number[],
+  t: number,
+): number {
+  const n = starts.length;
+  if (n === 0 || t < starts[0]) return -1;
+  // Rightmost i with starts[i] <= t.
+  let lo = 0;
+  let hi = n - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (idx < 0) return -1;
+  return t < ends[idx] ? idx : -1;
+}
+
+/**
+ * Snap a pointer position to the nearest block index. `ratio` is the fraction
+ * along the track (0 = first stop, 1 = last stop). Block stops are evenly laid
+ * out across the track regardless of audio duration — the scrubber is
+ * block-quantized, not time-proportional.
+ */
+export function nearestIndexFromRatio(ratio: number, count: number): number {
+  if (count <= 0) return -1;
+  if (count === 1) return 0;
+  return clamp(Math.round(ratio * (count - 1)), 0, count - 1);
+}
+
+/** Pointer X within a track rect → nearest block index (block-quantized). */
+export function nearestIndexFromPointer(
+  clientX: number,
+  rect: { left: number; width: number },
+  count: number,
+): number {
+  if (rect.width <= 0) return clamp(0, 0, Math.max(0, count - 1));
+  const ratio = (clientX - rect.left) / rect.width;
+  return nearestIndexFromRatio(ratio, count);
+}
+
+/**
+ * Spoken (mm:ss) form of a block-START offset, for the scrubber's
+ * aria-valuetext. Block-start time only — never a sub-block position (the
+ * block-level-sync invariant). Negative / NaN guarded to "0:00".
+ */
+export function formatSpokenTime(ms: number): string {
+  const totalSec = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${sec.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Stable signature of a document's block set, used as the staleness guard for
+ * resume (Decision 2026-06-22: reset/validate on the sorted block-id
+ * signature, not manifest identity). Order-independent: sorts ids before
+ * hashing so a pure re-render or reorder of equal ids yields the same
+ * signature, while an escalation that adds/removes/renames blocks changes it.
+ * djb2 → 8-char hex, short enough for a localStorage value.
+ */
+export function computeBlockSignature(blockIds: readonly string[]): string {
+  const joined = [...blockIds].sort().join("\n");
+  let h = 5381;
+  for (let i = 0; i < joined.length; i++) {
+    h = ((h << 5) + h + joined.charCodeAt(i)) | 0; // h * 33 + c, 32-bit
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}

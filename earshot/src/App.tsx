@@ -8,7 +8,7 @@ import { AppHeader } from "./components/AppHeader";
 import { SessionPane } from "./components/SessionPane";
 import { FilePane } from "./components/FilePane";
 import { TranscriptPane } from "./components/TranscriptPane";
-import { TransportBar } from "./components/TransportBar";
+import { TransportDeck } from "./components/TransportDeck";
 import { LiveRegion } from "./components/LiveRegion";
 import { ErrorBanner } from "./components/ErrorBanner";
 import "./styles/layout.css";
@@ -84,7 +84,7 @@ function Shell() {
           <TranscriptPane />
         </div>
       </div>
-      <TransportBar />
+      <TransportDeck />
     </div>
   );
 }

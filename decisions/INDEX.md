@@ -8,6 +8,38 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-29-restore-gate-clears-only-on-landed-seek
+    title: "Earshot resume restore gate clears only on a landed seek, never on a bare timeout"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-112, earshot, resume, restore-gate, useplayback, raf, seeked-event, preload-metadata, clobber, honest-over-clobber, code-review-found, playback-engine]
+    path: architecture/2026-06-29-restore-gate-clears-only-on-landed-seek.md
+    summary: "#112's Earshot resume uses a `restoring` gate in usePlayback that mutes the rAF active-block derivation AND the resume-writer until restore lands. DECISION: the gate clears ONLY when a real `seeked` event lands with currentTime inside the restored block's [start, nextStart) range — a bare 2s timeout must NOT clear it. With <audio preload=none/metadata> the issued seek can fail to land (currentTime stays 0); the first build cleared on timeout, which let rAF derive block 0 and let the resume-writer clobber the saved position — the exact bug the gate existed to prevent (found in code review round 1). Supporting changes: deck audio uses preload=metadata + load() so the seek has data to land against; the timeout RE-ASSERTS the seek rather than clearing; the resume-writer refuses to persist block 0 while readyState<1. Trade-off accepted (honest-over-clobber): on a genuinely unloadable URL the gate can stay muted for the session rather than clobbering the saved position with a fabricated block-0."
+  - id: 2026-06-29-earshot-transport-two-tab-stops-not-one
+    title: "Earshot transport deck exposes two keyboard tab stops, not one (APG toolbar + separate slider)"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-112, earshot, accessibility, a11y, apg, transport-deck, role-toolbar, roving-tabindex, role-slider, block-scrubber, tab-stop, stoppropagation, arrow-key-ownership, adr-108, playback-engine]
+    path: architecture/2026-06-29-earshot-transport-two-tab-stops-not-one.md
+    summary: "The #112 transport deck deliberately exposes TWO keyboard tab stops: a role=toolbar button group as a single roving-tabindex stop (Left/Right move between buttons), and the role=slider block scrubber as its own SEPARATE adjacent tab stop that owns its arrow keys and stopPropagation()s them so they never reach the toolbar roving handler. #108's original 'single composite tab stop for the whole deck' goal is explicitly RELAXED — this is the APG-conformant resolution of the toolbar-arrows (button traversal) vs slider-value-arrows (scrub) ownership conflict, which one composite stop cannot give two owners. Cost accepted: two Tab presses to cross the deck. Extends/implements ADR #108 rather than overturning it; the toolbar + roving-tabindex pattern stands."
+  - id: 2026-06-29-single-useplayback-instance-at-narrationcontext
+    title: "Single usePlayback instance lives at the NarrationContext provider"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-112, earshot, useplayback, narrationcontext, playbackcontext, single-instance, raf-sync-loop, restore-gate, transport-command-surface, shared-audio, context-provider, playback-engine]
+    path: architecture/2026-06-29-single-useplayback-instance-at-narrationcontext.md
+    summary: "usePlayback (the rAF sync loop + transport command surface + restoring gate) is instantiated EXACTLY ONCE, at the NarrationContext/PlaybackContext provider; all consumers (TransportDeck, BlockScrubber, BlockRow) read its command surface from context rather than calling usePlayback themselves. A second instance would fork the rAF loop, the restoring gate, and active-block truth over the single shared <audio> — three sources of truth fighting one element. Reinforces the whole-audio.wav playback-unit (2026-06-22) and rAF-transition-only-rerender (2026-06-21) decisions by ensuring a single owner. Breaks only if Earshot ever needs concurrent simultaneous playback (multiple audio elements)."
+  - id: 2026-06-29-earshot-resume-persists-block-identity-only
+    title: "Earshot resume persists block identity only (blockId + block-signature), never an ms offset"
+    date: 2026-06-29
+    status: accepted
+    category: convention
+    tags: [issue-112, earshot, resume, localstorage, block-level-sync, block-identity, block-signature, schema-version, self-healing, no-word-timing, no-ms-offset, playback-engine]
+    path: convention/2026-06-29-earshot-resume-persists-block-identity-only.md
+    summary: "#112's localStorage resume entry stores block IDENTITY only — blockId + blockOrder + blockSignature + schemaVersion — never a millisecond offset. startMs is re-derived LIVE from the current timeline on restore; on a blockSignature or schemaVersion mismatch the entry is dropped (self-healing). A stored ms offset would be a word/time-level position that contradicts the block-level-sync-only invariant (sync keyed by block_id; spoken text ≠ source text under gist mode, so sub-block timing is forbidden) and would go stale the instant a block re-renders (escalation reflows downstream offsets). Upholds block-level-sync-only for the persistence layer: the saved position is a block reference, not a time offset; resume granularity is block-start only, never mid-block."
   - id: 2026-06-29-escalation-refusal-keeps-control-mounted
     title: "An escalation that RETURNS a refusal keeps the control mounted (error path), distinct from an originally-refused block"
     date: 2026-06-29

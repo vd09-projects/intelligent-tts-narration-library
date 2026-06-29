@@ -447,6 +447,25 @@ body {
   cursor: pointer;
 }
 
+/* "⏯ from here" seek affordance — glyph + text, never color-only. Lives in the
+   heading row (not inline before the body text) so the text stays flush-left and
+   revealing the hint never shifts it. Hidden until the row is hovered/focused or
+   is the active block, so the transcript stays clean. */
+.block-row__play-affordance {
+  margin-left: auto; /* sit at the trailing end of the heading flex row */
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.78rem;
+  opacity: 0;
+  transition: opacity 0.1s ease-in;
+}
+
+.block-row:hover .block-row__play-affordance,
+.block-row:focus-within .block-row__play-affordance,
+.block-row.is-active .block-row__play-affordance {
+  opacity: 1;
+}
+
 /* Non-color markers — each carries a glyph + text label. */
 .block-row__marker--degraded {
   color: var(--degraded);
@@ -518,6 +537,99 @@ body {
 .transport-bar__hint {
   color: var(--text-dim);
   font-size: 0.85rem;
+}
+
+/* Visually-hidden shared <audio> — the deck drives it; no native controls. */
+.transport-bar__audio {
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* ---- Transport deck: roving-tabindex toolbar button group ---- */
+.transport-deck__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transport-deck__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.transport-deck__btn:hover {
+  background: var(--border);
+}
+
+.transport-deck__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.transport-deck__btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Block-quantized scrubber (role=slider) ---- */
+.block-scrubber {
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 720px;
+  padding: 10px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.block-scrubber:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.block-scrubber__track {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.block-scrubber__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+
+/* ---- Transport clock: elapsed / total (visual, continuous) ---- */
+.transport-clock {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 86px;
+  justify-content: flex-end;
+}
+
+.transport-clock__cur {
+  color: var(--text);
 }
 
 /* ---- Responsive: mobile (<768px) aside collapses via CSS only ---- */
