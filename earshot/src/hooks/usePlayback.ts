@@ -35,6 +35,13 @@ import {
 /** ±N blocks for the scrubber's PageUp / PageDown. */
 export const PAGE_BLOCKS = 5;
 /**
+ * Relative time-seek step for the keyboard transport (#134) — ←/→ skip ±this
+ * many seconds on the combined wav. Single source of truth: the TransportDeck
+ * legend ("10s") and the polite seek announcement both derive their number from
+ * this constant.
+ */
+export const SEEK_STEP_SECONDS = 10;
+/**
  * Fallback timeout for the restore gate. On fire it RE-ASSERTS the restore seek
  * (it never clears the gate / unmutes), so a deferred or aborted cold seek can
  * never silently let the rAF loop derive block 0 and clobber the saved resume.
@@ -98,6 +105,15 @@ export interface PlaybackControls {
   nextBlock: () => void;
   /** PageUp/PageDown: ±N blocks. */
   stepBlocks: (delta: number) => void;
+  /**
+   * Relative playhead skip in seconds; no-ops when audio element or duration
+   * metadata is absent. A free-moving playhead is transport/display only and
+   * persists nothing sub-block, so the block-level-sync invariant holds.
+   * Returns true when the playhead actually moved, false on a no-op (clamped at
+   * a track boundary, or metadata not yet loaded) so callers can suppress a
+   * "moved N seconds" announcement that didn't happen.
+   */
+  skipSeconds: (deltaSec: number) => boolean;
   /** Scroll + focus the active BlockRow (distinct from seeking). */
   returnToPlayingBlock: () => void;
 }
@@ -371,6 +387,28 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     else play();
   }, [isPlaying, play, pause]);
 
+  // Relative time-seek on the combined wav (#134). Reads the live element clock,
+  // clamps the target into [0, duration], and reuses the raw arbitrary-ms
+  // seek(ms) — quantization is the caller's job (e.g. seekToBlock/seekToIndex
+  // pass geom.starts[idx]); this deliberately passes an arbitrary clamped ms for
+  // the free-playhead ±N s behavior. No-ops when the element or its duration
+  // metadata is absent, so a keypress before loadedmetadata never throws or
+  // overshoots. Returns whether the playhead actually moved: a clamped boundary
+  // or pre-metadata no-op returns false so the caller skips a phantom "moved"
+  // announcement.
+  const skipSeconds = useCallback(
+    (deltaSec: number): boolean => {
+      const el = audioRef.current;
+      if (!el || !Number.isFinite(el.duration)) return false;
+      const currentMs = el.currentTime * 1000;
+      const targetMs = clamp((el.currentTime + deltaSec) * 1000, 0, el.duration * 1000);
+      if (targetMs === currentMs) return false; // clamped no-op — playhead did not move
+      seek(targetMs);
+      return true;
+    },
+    [audioRef, seek],
+  );
+
   const returnToPlayingBlock = useCallback(() => {
     if (!activeBlockId || typeof document === "undefined") return;
     const row = document.querySelector<HTMLElement>(`[data-block-id="${activeBlockId}"]`);
@@ -400,6 +438,7 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       prevBlock,
       nextBlock,
       stepBlocks,
+      skipSeconds,
       returnToPlayingBlock,
     }),
     [
@@ -419,6 +458,7 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       prevBlock,
       nextBlock,
       stepBlocks,
+      skipSeconds,
       returnToPlayingBlock,
     ],
   );

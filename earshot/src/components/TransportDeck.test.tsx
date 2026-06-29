@@ -29,6 +29,7 @@ function makePlayback(over: Partial<PlaybackControls> = {}): PlaybackControls {
     prevBlock: vi.fn(),
     nextBlock: vi.fn(),
     stepBlocks: vi.fn(),
+    skipSeconds: vi.fn(),
     returnToPlayingBlock: vi.fn(),
     ...over,
   };
@@ -155,5 +156,35 @@ describe("TransportDeck — controls", () => {
     renderDeck(makePlayback({ blockCount: 0 }));
     expect(screen.getByText("No audio loaded")).toBeInTheDocument();
     screen.getAllByRole("button").forEach((b) => expect(b).toBeDisabled());
+  });
+});
+
+describe("TransportDeck — keyboard transport discoverability (#134)", () => {
+  it("advertises aria-keyshortcuts=\"Space\" on the play/pause button only", () => {
+    renderDeck(makePlayback({ isPlaying: false }));
+    expect(screen.getByRole("button", { name: "Play" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Space",
+    );
+    // The ←/→ seek shortcuts belong on the transcript region, never the toolbar
+    // buttons (they would clash with the toolbar's own roving ←/→).
+    for (const name of ["Previous block", "Next block", "Return to playing block"]) {
+      expect(screen.getByRole("button", { name })).not.toHaveAttribute("aria-keyshortcuts");
+    }
+  });
+
+  it("shows the shortcut legend (with the step from SEEK_STEP_SECONDS) when audio is loaded", () => {
+    renderDeck(makePlayback());
+    const legend = screen.getByTestId("transport-legend");
+    expect(legend).toBeInTheDocument();
+    expect(legend).toHaveTextContent("Space play/pause");
+    expect(legend).toHaveTextContent("10s"); // derived from SEEK_STEP_SECONDS
+  });
+
+  it("hides the legend and shows the no-audio hint when nothing is loaded", () => {
+    h.url = null;
+    renderDeck(makePlayback({ blockCount: 0 }));
+    expect(screen.queryByTestId("transport-legend")).not.toBeInTheDocument();
+    expect(screen.getByText("No audio loaded")).toBeInTheDocument();
   });
 });

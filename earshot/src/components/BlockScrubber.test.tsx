@@ -22,6 +22,7 @@ function makePlayback(over: Partial<PlaybackControls> = {}): PlaybackControls {
     prevBlock: vi.fn(),
     nextBlock: vi.fn(),
     stepBlocks: vi.fn(),
+    skipSeconds: vi.fn(),
     returnToPlayingBlock: vi.fn(),
     ...over,
   };

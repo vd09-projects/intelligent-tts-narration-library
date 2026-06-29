@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { AnnouncerProvider, useAnnouncer } from "./state/Announcer";
 import { NarrationProvider, useNarration } from "./state/NarrationContext";
+import { useTransportHotkeys } from "./hooks/useTransportHotkeys";
 import { AppHeader } from "./components/AppHeader";
 import { SessionPane } from "./components/SessionPane";
 import { FilePane } from "./components/FilePane";
@@ -20,6 +21,11 @@ function Shell() {
   const { announce } = useAnnouncer();
   const [sessionOpen, setSessionOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<AsideTab>("file");
+
+  // Global keyboard transport (#134): Space play/pause, ←/→ ±10s. Mounted once
+  // here so it reads the single shared playback engine; the focus guard keeps it
+  // inert outside the body / the [data-transport-hotkeys] transcript region.
+  useTransportHotkeys();
 
   useEffect(() => {
     if (playbackState === "playing") {

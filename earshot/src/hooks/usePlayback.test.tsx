@@ -326,6 +326,107 @@ describe("usePlayback — initialize-not-transition restore (R3)", () => {
   });
 });
 
+describe("usePlayback — skipSeconds relative time-seek (#134)", () => {
+  // A loaded element: finite duration + a starting playhead. resumeScope is null
+  // (makeInput default) so no restore seek fires — `seek` is clean before the act.
+  function loaded(durationSec: number, atSec: number) {
+    const { input, audio, seek } = makeInput();
+    (audio as unknown as { duration: number }).duration = durationSec;
+    audio.currentTime = atSec;
+    const { result } = renderHook(() => usePlayback(input));
+    return { result, seek };
+  }
+
+  it("skips forward then back by the delta, calling seek(ms) and reporting moved=true", () => {
+    const { result, seek } = loaded(40, 10); // at 10s of a 40s clip
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(10);
+    });
+    expect(seek).toHaveBeenLastCalledWith(20000); // 10s + 10s
+    expect(moved).toBe(true);
+    // The seek mock moved currentTime to 20s; −10 lands at 10s.
+    act(() => {
+      moved = result.current.skipSeconds(-10);
+    });
+    expect(seek).toHaveBeenLastCalledWith(10000);
+    expect(moved).toBe(true);
+  });
+
+  it("clamps at the end — +10 near the end still moves (seek to duration), moved=true", () => {
+    const { result, seek } = loaded(40, 35);
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(10); // 45s → clamp to 40s, 35→40 is a real move
+    });
+    expect(seek).toHaveBeenLastCalledWith(40000);
+    expect(moved).toBe(true);
+  });
+
+  it("at-end (currentTime === duration) +10 is a no-op: no seek, moved=false, no throw", () => {
+    const { result, seek } = loaded(40, 40);
+    let moved: boolean | undefined;
+    expect(() =>
+      act(() => {
+        moved = result.current.skipSeconds(10);
+      }),
+    ).not.toThrow();
+    expect(seek).not.toHaveBeenCalled(); // already clamped to the boundary — playhead frozen
+    expect(moved).toBe(false);
+  });
+
+  it("clamps at zero — −10 near the start still moves (seek to 0), moved=true", () => {
+    const { result, seek } = loaded(40, 5);
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(-10); // −5s → clamp to 0, 5→0 is a real move
+    });
+    expect(seek).toHaveBeenLastCalledWith(0);
+    expect(moved).toBe(true);
+  });
+
+  it("at-zero −10 is a no-op: no seek, moved=false, symmetric with the at-end case", () => {
+    const { result, seek } = loaded(40, 0);
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(-10);
+    });
+    expect(seek).not.toHaveBeenCalled();
+    expect(moved).toBe(false);
+  });
+
+  it("no-ops when the duration metadata is absent (NaN): no seek, moved=false", () => {
+    const { input, seek } = makeInput(); // FakeAudio has no duration → NaN
+    const { result } = renderHook(() => usePlayback(input));
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(10);
+    });
+    expect(seek).not.toHaveBeenCalled();
+    expect(moved).toBe(false);
+  });
+
+  it("no-ops when the audio element is absent: no seek, moved=false", () => {
+    const seek = vi.fn();
+    const input: UsePlaybackInput = {
+      audioRef: { current: null },
+      timeline: TIMELINE,
+      resumeScope: null,
+      playbackState: "paused",
+      seek,
+      play: vi.fn(),
+      pause: vi.fn(),
+    };
+    const { result } = renderHook(() => usePlayback(input));
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.skipSeconds(10);
+    });
+    expect(seek).not.toHaveBeenCalled();
+    expect(moved).toBe(false);
+  });
+});
+
 describe("usePlayback — continuous audio-progress channel (moving bar + clock)", () => {
   it("emits currentMs/durationMs/fraction every frame WITHOUT a React re-render", () => {
     const { input, audio } = makeInput();

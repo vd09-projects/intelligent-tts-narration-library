@@ -32,6 +32,18 @@ describe("App shell — list-detail layout", () => {
     expect(screen.getByTestId("audio-element")).toBeInTheDocument();
   });
 
+  it("transcript region carries the global seek hotkeys; the toolbar does not (#134)", () => {
+    render(<App />);
+    const main = screen.getByRole("main");
+    // The transcript region is the opt-in anchor + the ←/→ shortcut carrier.
+    expect(main).toHaveAttribute("data-transport-hotkeys", "");
+    expect(main).toHaveAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight");
+    // The roving toolbar keeps its own ←/→ — it must NOT advertise the seek keys.
+    expect(screen.getByRole("toolbar", { name: "Playback transport" })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+  });
+
   it("collapse toggle flips the shell state via aria-expanded (CSS-only, no trap)", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);

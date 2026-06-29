@@ -37,7 +37,17 @@ export function TranscriptPane() {
   }, [transcriptKey]);
 
   return (
-    <main className="transcript-pane" aria-label="Transcript">
+    // The transcript region is the opt-in anchor for the global transport
+    // hotkeys (#134): [data-transport-hotkeys] wakes the handler here, and the
+    // seek shortcuts are advertised on this landmark (Space stays on the
+    // play/pause button). A visible legend in the TransportDeck backstops
+    // discoverability where aria-keyshortcuts on a landmark is not announced.
+    <main
+      className="transcript-pane"
+      aria-label="Transcript"
+      data-transport-hotkeys=""
+      aria-keyshortcuts="ArrowLeft ArrowRight"
+    >
       <div className="transcript-pane__bar">
         <h2 className="transcript-pane__title">Transcript</h2>
         {blocks.length > 0 ? (
