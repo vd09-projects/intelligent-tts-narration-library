@@ -4,6 +4,54 @@
 
 ```yaml
 scopes:
+  - slug: earshot-playback-engine-112
+    title: Earshot playback engine — block-quantized transport deck + scrubber + block-level resume persistence (issue #112)
+    created: 2026-06-29
+    reasoning: |
+      Plan cycle for GitHub issue #112 — the Earshot web-app playback ENGINE that
+      replaces the #111 scaffold's placeholder native <audio controls> with a real
+      transport: bottom-anchored APG role=toolbar deck + roving tabindex, a
+      block-quantized role=slider scrubber (aria-valuetext = spoken-time + block
+      index), a first-class "⟲ return to playing block" control, a rebuilt BlockRow
+      "⏯ from here" single-button affordance (and removal of the OLD player/ dual
+      aria-hidden mouse-only seek wrapper bug the ticket calls out), and block-level
+      resume persistence across reloads via client-side localStorage (keyed by
+      session+message / file). Resume granularity block-level ONLY — persists
+      blockId + blockSignature and re-derives startMs from the live timeline, never
+      a time offset (word-level timing forbidden invariant). mimir task depth, 6
+      ordered steps (usePlayback rAF loop writing SET_ACTIVE_BLOCK only on block-id
+      change → resumeStore localStorage module → resume wiring → TransportDeck
+      toolbar → BlockScrubber slider → BlockRow rebuild + player/ bug removal).
+      Overlays accessibility (APG toolbar/slider, action-label play/pause with NO
+      aria-pressed) + state-management (persistence shape + derivation DAG, no state
+      lib, listen path decoupled from persistent sink) force-relevant; phased-delivery
+      NOT activated (single atomic PR, not a multi-phase rollout). Honors ADR #108
+      (transport shape), ADR #77 (block-quantized seek), and the four playback
+      decisions (rAF block-transition writes, whole-wav blob unit, re-point playing
+      block on patch, block-id-signature reset). Slug pre-supplied + pre-approved via
+      --scope by the build-session orchestrator (<area>-<issue> form); issue-numbered
+      suffix continues convention. Distinct from earshot-leveling-ui-113 (leveling
+      control) and earshot-scaffold-app-shell-111 (the shell this builds on). Plan
+      persisted draft (awaiting user approval before sindri consumes).
+  - slug: earshot-leveling-ui-113
+    title: Earshot per-block L1/L2/L3 leveling control — escalate/de-escalate with in-place audio swap (issue #113)
+    created: 2026-06-28
+    reasoning: |
+      Plan/build cycle for GitHub issue #113 — the per-block L1/L2/L3 leveling
+      control in the Earshot React app (earshot/), letting a listener
+      escalate/de-escalate any voiced or degraded block's fidelity and swap just
+      that block's audio in place via the already-shipped POST /narrate/block
+      (#110). First client consumer of /narrate/block, so it also carries one
+      additive server field (render_id on narrateResponse) bundled in. mimir
+      task depth, 6 phases (server field -> earshot types+postNarrateBlock ->
+      useNarrationSession.escalateBlock + (blockId,level) cache + reload nonce ->
+      LevelControl APG role=radiogroup modeled on SegmentedToggle -> BlockRow
+      wiring hidden-on-refused -> tests). Overlays accessibility + state-management
+      force-relevant (APG radiogroup/roving tabindex/role=status loading; single-
+      owner server-cache merge). Slug pre-supplied + pre-approved via --scope by
+      the build-session orchestrator (<area>-<issue> form); issue-numbered suffix
+      continues convention. Plan persisted draft (awaiting user approval before
+      sindri consumes).
   - slug: speak-to-file-mcp-105
     title: speak_to_file MCP tool — text/.md file to single wav at path (issue #105)
     created: 2026-06-28
