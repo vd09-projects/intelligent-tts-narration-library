@@ -34,8 +34,12 @@ import {
 
 /** ±N blocks for the scrubber's PageUp / PageDown. */
 export const PAGE_BLOCKS = 5;
-/** Fallback gate-clear if neither seeked nor loadedmetadata ever fires. */
-const RESTORE_GATE_TIMEOUT_MS = 2000;
+/**
+ * Fallback timeout for the restore gate. On fire it RE-ASSERTS the restore seek
+ * (it never clears the gate / unmutes), so a deferred or aborted cold seek can
+ * never silently let the rAF loop derive block 0 and clobber the saved resume.
+ */
+export const RESTORE_GATE_TIMEOUT_MS = 2000;
 
 /** Inputs sourced from the single useNarrationSession owner. */
 export interface UsePlaybackInput {
@@ -102,11 +106,16 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
   // re-writes the entry it just read.
   const lastWrittenRef = useRef<string | null>(null);
   const gateTimerRef = useRef<number | null>(null);
+  // The block the restore is trying to land on, plus its [start, nextStart)
+  // range. Used to verify a 'seeked' actually landed inside the restored block
+  // before the gate clears (a bare timer must never unmute into a stale 0).
+  const restoreTargetRef = useRef<{ startMs: number; nextStartMs: number } | null>(null);
 
   const resumeKeyStr = resumeScope ? resumeKey(`entry:${resumeScope}`) : null;
 
   const clearGate = useCallback(() => {
     restoringRef.current = false;
+    restoreTargetRef.current = null;
     if (gateTimerRef.current != null) {
       clearTimeout(gateTimerRef.current);
       gateTimerRef.current = null;
@@ -118,6 +127,19 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     setActiveBlockId(id);
   }, []);
 
+  // Re-assert the restore: force metadata to load and re-issue the seek to the
+  // restored block's start. The gate STAYS set — only a 'seeked' that actually
+  // lands inside the block clears it (see the gate effect). Called from the
+  // bounded fallback timer so a deferred/aborted cold seek (preload defers a
+  // currentTime set at HAVE_NOTHING) never unmutes into a stale currentTime 0.
+  const reassertRestore = useCallback(() => {
+    const el = audioRef.current;
+    const target = restoreTargetRef.current;
+    if (!el || !target) return;
+    el.load?.(); // reach HAVE_METADATA so the seek can actually land
+    seek(target.startMs);
+  }, [audioRef, seek]);
+
   // initialize-not-transition (R3): seed the active block WITHOUT going through
   // the resume-persist transition writer. Sets the restoring gate so the rAF
   // loop stays muted until the seek lands, and re-derives startMs live from the
@@ -127,15 +149,22 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       const idx = geom.ids.indexOf(blockId);
       if (idx < 0) return;
       restoringRef.current = true;
+      restoreTargetRef.current = {
+        startMs: geom.starts[idx],
+        nextStartMs: idx + 1 < geom.starts.length ? geom.starts[idx + 1] : Number.POSITIVE_INFINITY,
+      };
       lastWrittenRef.current = blockId; // echo-guard belt
       setActive(blockId);
+      // preload="metadata" + this load() let the element reach HAVE_METADATA so
+      // the restore seek can land (a currentTime set at HAVE_NOTHING is deferred).
+      audioRef.current?.load?.();
       seek(geom.starts[idx]); // no autoplay — restore position only
-      // Bounded fallback so the gate can never stay stuck muted if neither a
-      // seeked nor a loadedmetadata event arrives.
+      // Bounded fallback: on fire it RE-ASSERTS the seek (does NOT clear the
+      // gate), so the gate can never unmute into a stale currentTime 0 / block 0.
       if (gateTimerRef.current != null) clearTimeout(gateTimerRef.current);
-      gateTimerRef.current = window.setTimeout(clearGate, RESTORE_GATE_TIMEOUT_MS);
+      gateTimerRef.current = window.setTimeout(reassertRestore, RESTORE_GATE_TIMEOUT_MS);
     },
-    [geom.ids, geom.starts, seek, setActive, clearGate],
+    [geom.ids, geom.starts, seek, setActive, reassertRestore, audioRef],
   );
 
   // On a document change (signature) reset tracking, then restore from a valid
@@ -154,24 +183,52 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     } else {
       setActive(null);
     }
-    // initializeActiveBlock is stable per geom; depend on the signature + scope.
+    // DELIBERATE exhaustive-deps disable (not incidental): initializeActiveBlock,
+    // clearGate and setActive are all stable for a given geom, and this effect
+    // must re-run ONLY when the document (signature) or the resume scope changes.
+    // Listing the callbacks would re-fire the restore on unrelated renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geom.signature, resumeKeyStr]);
 
-  // Clear the restoring gate on the first seeked / loadedmetadata from the
-  // shared <audio> — i.e. once currentTime has actually landed in the restored
-  // block (R2). Read-only subscription; does not touch useAudio's contract.
+  // Restore gate clear (R2): keep the rAF loop + resume writer muted until the
+  // restore seek has ACTUALLY landed inside the restored block. Read-only
+  // subscription; does not touch useAudio's contract.
+  //   - 'loadedmetadata' only means the element can now seek (under preload it
+  //     may have reset currentTime to 0), so we RE-ISSUE the restore seek there
+  //     rather than clearing the gate.
+  //   - 'seeked' clears the gate ONLY when currentTime lands in [start,
+  //     nextStart). A 'seeked' that did NOT land (e.g. a load() reset to 0)
+  //     keeps the gate set — never unmute into a stale currentTime 0 (the old
+  //     block-0 clobber). A bare timer never clears the gate (see reassertRestore).
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    const onLanded = () => clearGate();
-    el.addEventListener("seeked", onLanded);
-    el.addEventListener("loadedmetadata", onLanded);
-    return () => {
-      el.removeEventListener("seeked", onLanded);
-      el.removeEventListener("loadedmetadata", onLanded);
+    const onLoadedMetadata = () => {
+      if (!restoringRef.current) return;
+      const target = restoreTargetRef.current;
+      if (target) seek(target.startMs); // metadata ready — now the seek can land
     };
-  }, [audioRef, clearGate]);
+    const onSeeked = () => {
+      if (!restoringRef.current) return;
+      const target = restoreTargetRef.current;
+      if (!target) {
+        clearGate();
+        return;
+      }
+      const t = el.currentTime * 1000;
+      if (t >= target.startMs && t < target.nextStartMs) {
+        clearGate(); // landed inside the restored block — safe to unmute
+      }
+      // else: a seek that did NOT land in the restored block — stay muted; the
+      // loadedmetadata re-seek or the fallback re-assert will retry.
+    };
+    el.addEventListener("seeked", onSeeked);
+    el.addEventListener("loadedmetadata", onLoadedMetadata);
+    return () => {
+      el.removeEventListener("seeked", onSeeked);
+      el.removeEventListener("loadedmetadata", onLoadedMetadata);
+    };
+  }, [audioRef, clearGate, seek]);
 
   // rAF active-block derivation. Writes SET_ACTIVE_BLOCK only on a block-id
   // change (Decision 2026-06-21). While restoring, writes NOTHING (R2): a
@@ -202,8 +259,15 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     if (restoringRef.current) return;
     if (!resumeKeyStr || activeBlockId == null) return;
     if (activeBlockId === lastWrittenRef.current) return;
-    lastWrittenRef.current = activeBlockId;
     const idx = geom.ids.indexOf(activeBlockId);
+    // Belt-and-suspenders (R2/R3 backstop): never overwrite a real saved resume
+    // with a "fell back to block 0" position before the element has metadata. If
+    // we derived index 0 while readyState < HAVE_METADATA, the clock is an
+    // un-landed currentTime 0, not a genuine position — skip the write. Once the
+    // element has metadata, a genuine block-0 position persists normally.
+    const el = audioRef.current;
+    if (idx === 0 && el && el.readyState < 1 /* HAVE_METADATA */) return;
+    lastWrittenRef.current = activeBlockId;
     writeResume(resumeKeyStr, {
       schemaVersion: RESUME_SCHEMA_VERSION,
       blockId: activeBlockId,
@@ -211,7 +275,7 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
       blockSignature: geom.signature,
       updatedAt: Date.now(),
     });
-  }, [activeBlockId, resumeKeyStr, geom.ids, geom.signature]);
+  }, [activeBlockId, resumeKeyStr, geom.ids, geom.signature, audioRef]);
 
   useEffect(() => () => clearGate(), [clearGate]);
 
@@ -269,22 +333,45 @@ export function usePlayback(input: UsePlaybackInput): PlaybackControls {
     target?.focus();
   }, [activeBlockId]);
 
-  return {
-    activeBlockId,
-    activeBlockIndex,
-    blockCount: geom.ids.length,
-    blockStartsMs: geom.starts,
-    playbackState,
-    isPlaying,
-    play,
-    pause,
-    toggle,
-    seekToBlock,
-    seekToIndex,
-    playFromBlock,
-    prevBlock,
-    nextBlock,
-    stepBlocks,
-    returnToPlayingBlock,
-  };
+  // Memoize the command surface so an unrelated NarrationProvider re-render does
+  // not mint a fresh context value and re-render every consumer (incl. the whole
+  // BlockRow list). Identity changes only when a listed dependency actually does.
+  return useMemo(
+    () => ({
+      activeBlockId,
+      activeBlockIndex,
+      blockCount: geom.ids.length,
+      blockStartsMs: geom.starts,
+      playbackState,
+      isPlaying,
+      play,
+      pause,
+      toggle,
+      seekToBlock,
+      seekToIndex,
+      playFromBlock,
+      prevBlock,
+      nextBlock,
+      stepBlocks,
+      returnToPlayingBlock,
+    }),
+    [
+      activeBlockId,
+      activeBlockIndex,
+      geom.ids,
+      geom.starts,
+      playbackState,
+      isPlaying,
+      play,
+      pause,
+      toggle,
+      seekToBlock,
+      seekToIndex,
+      playFromBlock,
+      prevBlock,
+      nextBlock,
+      stepBlocks,
+      returnToPlayingBlock,
+    ],
+  );
 }

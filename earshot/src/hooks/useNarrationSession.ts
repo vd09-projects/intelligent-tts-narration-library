@@ -11,10 +11,9 @@
 // every transcript set, each level paired with its authoritative timeline —
 // makes returning to any previously-seen level a zero-network, zero-rebill swap.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClientError, postNarrate, postNarrateBlock, postNarrateFile } from "../api/client";
 import type { Block, Gender, Level, NarrateResponse, Timeline } from "../api/types";
-import { deriveActiveBlockId } from "../state/activeBlock";
 import { useAudio } from "./useAudio";
 
 const NARRATE_TIMEOUT_MS = 120_000; // 2 minutes
@@ -58,8 +57,6 @@ export interface NarrationSession {
   currentTranscript: NarrateResponse | null;
   /** Switch the transcript view to an existing entry. */
   selectEntry: (key: string) => void;
-  /** DERIVED active block id (aria-current), null when none under playhead. */
-  activeBlockId: string | null;
   /** Per-block leveling status keyed `${entryKey}::${blockId}`. */
   blockLeveling: Map<string, BlockLevelingState>;
   // playback (from useAudio)
@@ -71,8 +68,6 @@ export interface NarrationSession {
   pause: () => void;
   /** Seek the shared clip to a position in ms (block-start, re-derived live). */
   seek: (ms: number) => void;
-  /** Seek the shared clip to a block's start and play. */
-  playFromBlock: (blockId: string) => void;
   /**
    * Narrate text keyed by `key` (e.g. message.id).
    * If an entry for `key` already exists and is loading, the call is a no-op.
@@ -144,11 +139,6 @@ export function useNarrationSession(): NarrationSession {
     }
     reload();
   }, [reloadNonce, reload]);
-
-  const activeBlockId = useMemo(
-    () => deriveActiveBlockId(currentTranscript?.timeline, audio.currentTimeMs),
-    [currentTranscript, audio.currentTimeMs],
-  );
 
   // Seed the snapshot cache for EVERY block of a transcript, pairing each block's
   // current level with the timeline authoritative at that level. Runs on initial
@@ -334,25 +324,12 @@ export function useNarrationSession(): NarrationSession {
     setSelectedEntryId(key);
   }, []);
 
-  const { seek, play } = audio;
-  const playFromBlock = useCallback(
-    (blockId: string) => {
-      const timing = currentTranscript?.timeline.blocks.find((b) => b.block_id === blockId);
-      if (timing) {
-        seek(timing.start_ms);
-      }
-      play();
-    },
-    [currentTranscript, seek, play],
-  );
-
   return {
     entries,
     selectedEntryId,
     selectedEntry,
     currentTranscript,
     selectEntry,
-    activeBlockId,
     blockLeveling,
     audioRef: audio.audioRef,
     activeAudioUrl: currentTranscript?.audio_url ?? null,
@@ -361,7 +338,6 @@ export function useNarrationSession(): NarrationSession {
     play: audio.play,
     pause: audio.pause,
     seek: audio.seek,
-    playFromBlock,
     narrateText,
     narrateFile,
     setBlockLevel,

@@ -103,4 +103,19 @@ describe("computeBlockSignature — order-independent staleness guard", () => {
     expect(computeBlockSignature(["x", "y"])).toMatch(/^[0-9a-f]{8}$/);
     expect(computeBlockSignature([])).toMatch(/^[0-9a-f]{8}$/);
   });
+
+  it("joins on a real, non-empty delimiter (no id-concatenation collision)", () => {
+    // Two id sets that would COLLIDE if joined with an empty separator
+    // ("ab"+"c" === "a"+"bc") must yield different signatures — proves a
+    // genuine delimiter sits between ids. The delimiter is a visible "\n"
+    // (newline), NOT the literal NUL byte that previously made this source
+    // file read as binary to git.
+    expect(computeBlockSignature(["ab", "c"])).not.toBe(computeBlockSignature(["a", "bc"]));
+  });
+
+  it("never emits a NUL byte in the signature", () => {
+    for (const ids of [["b001", "b002"], ["x"], [], ["a", "b", "c"]]) {
+      expect(computeBlockSignature(ids)).not.toContain("\u0000");
+    }
+  });
 });

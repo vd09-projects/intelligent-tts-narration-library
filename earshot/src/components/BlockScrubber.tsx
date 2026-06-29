@@ -24,9 +24,15 @@ export function BlockScrubber() {
   if (blockCount === 0) return null;
 
   const max = blockCount - 1;
-  const index = activeBlockIndex >= 0 ? activeBlockIndex : 0;
+  const hasActive = activeBlockIndex >= 0;
+  const index = hasActive ? activeBlockIndex : 0;
   const startMs = blockStartsMs[index] ?? 0;
-  const valueText = `Block ${index + 1} of ${blockCount}, ${formatSpokenTime(startMs)}`;
+  // When nothing is active (-1), the slider falls back to index 0 for
+  // aria-valuenow but announces "No block selected" so a screen-reader user
+  // isn't told "Block 1" before playback has placed the playhead anywhere.
+  const valueText = hasActive
+    ? `Block ${index + 1} of ${blockCount}, ${formatSpokenTime(startMs)}`
+    : "No block selected";
   const fillPct = max > 0 ? (index / max) * 100 : 0;
 
   function onKeyDown(e: React.KeyboardEvent) {

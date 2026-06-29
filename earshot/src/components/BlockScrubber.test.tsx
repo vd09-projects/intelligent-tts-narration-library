@@ -54,9 +54,11 @@ describe("BlockScrubber — block-quantized slider semantics", () => {
     expect(container.querySelector('[role="slider"]')).toBeNull();
   });
 
-  it("falls back to index 0 when no block is active (-1)", () => {
+  it("falls back to index 0 and announces 'No block selected' when no block is active (-1)", () => {
     renderScrubber(makePlayback({ activeBlockIndex: -1, activeBlockId: null }));
-    expect(screen.getByRole("slider")).toHaveAttribute("aria-valuenow", "0");
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveAttribute("aria-valuenow", "0");
+    expect(slider).toHaveAttribute("aria-valuetext", "No block selected");
   });
 });
 

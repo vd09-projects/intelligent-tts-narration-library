@@ -69,11 +69,15 @@ export function TransportDeck() {
   return (
     <div className="transport-bar" data-testid="transport-bar">
       {/* The opaque audio_url (D4) is set imperatively by useAudio.setSource.
-          Visually hidden, no native controls — the deck drives it. */}
+          Visually hidden, no native controls — the deck drives it.
+          preload="metadata" (not "none") so the element reaches HAVE_METADATA on
+          its own: a cold resume restore can then land its seek and fire 'seeked',
+          instead of a deferred currentTime set that never lands (the block-0
+          clobber). Metadata only — no full audio prefetch. */}
       <audio
         ref={audioRef}
         className="transport-bar__audio"
-        preload="none"
+        preload="metadata"
         data-testid="audio-element"
         aria-label="Narration audio"
       />

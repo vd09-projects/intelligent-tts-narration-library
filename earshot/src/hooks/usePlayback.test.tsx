@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { usePlayback, type UsePlaybackInput } from "./usePlayback";
+import { RESTORE_GATE_TIMEOUT_MS, usePlayback, type UsePlaybackInput } from "./usePlayback";
 import type { Timeline } from "../api/types";
 import { computeBlockSignature } from "../state/playbackMath";
 import { RESUME_SCHEMA_VERSION, resumeKey } from "../state/resumeStore";
@@ -20,6 +20,9 @@ const SIG = computeBlockSignature(["b001", "b002", "b003", "b004"]);
 
 class FakeAudio extends EventTarget {
   currentTime = 0;
+  // Default to a loaded element (HAVE_METADATA). Tests simulating a cold,
+  // not-yet-loaded element set readyState = 0 (HAVE_NOTHING).
+  readyState = 1;
 }
 
 let rafCb: FrameRequestCallback | null = null;
@@ -148,22 +151,27 @@ describe("usePlayback — rAF active-block derivation (Decision 2026-06-21)", ()
 });
 
 describe("usePlayback — restoring gate (R2)", () => {
-  it("mutes active-block AND resume writes at currentTime 0 while restoring, clears on seeked", () => {
-    // Seed a valid resume entry for b003.
+  // Seed a valid resume entry for the given block and return its store key.
+  function seedResume(blockId: string, blockOrder: number): string {
     const key = resumeKey("entry:msg-1");
     localStorage.setItem(
       key,
       JSON.stringify({
         schemaVersion: RESUME_SCHEMA_VERSION,
-        blockId: "b003",
-        blockOrder: 2,
+        blockId,
+        blockOrder,
         blockSignature: SIG,
         updatedAt: 1,
       }),
     );
+    return key;
+  }
+
+  it("stays muted on a seeked that did NOT land in the restored block; clears on one that does", () => {
+    seedResume("b003", 2); // range 6100–9000
     const setSpy = vi.spyOn(window.localStorage, "setItem");
 
-    // seek is a NO-OP here: simulate a not-yet-loaded element stuck at time 0.
+    // seek is a NO-OP: simulate a not-yet-loaded element stuck at time 0.
     const audio = new FakeAudio();
     const input: UsePlaybackInput = {
       audioRef: { current: audio as unknown as HTMLAudioElement },
@@ -175,23 +183,105 @@ describe("usePlayback — restoring gate (R2)", () => {
       pause: vi.fn(),
     };
     const { result } = renderHook(() => usePlayback(input));
-
-    // Restored block is seeded via the initialize path.
     expect(result.current.activeBlockId).toBe("b003");
 
-    // Clock pinned at 0 → would derive b001, but the gate mutes the write.
+    // A premature 'seeked' while currentTime is still 0 must NOT clear the gate
+    // (0 is not inside b003's [6100, 9000)) — the rAF loop stays muted.
+    audio.currentTime = 0;
+    act(() => audio.dispatchEvent(new Event("seeked")));
+    frame();
+    expect(result.current.activeBlockId).toBe("b003"); // gate held — not clobbered
+    expect(setSpy).not.toHaveBeenCalled(); // no resume write while restoring
+
+    // A 'seeked' that LANDS inside b003 clears the gate.
+    audio.currentTime = 6.1; // 6100ms ∈ [6100, 9000)
+    act(() => audio.dispatchEvent(new Event("seeked")));
+    // Now the rAF loop is live again: drop the clock to 0 and it derives b001.
     audio.currentTime = 0;
     frame();
-    expect(result.current.activeBlockId).toBe("b003"); // NOT clobbered to b001
-    expect(setSpy).not.toHaveBeenCalled(); // NO resume write while restoring
+    expect(result.current.activeBlockId).toBe("b001");
+  });
 
-    // First seeked clears the gate.
-    act(() => {
-      audio.dispatchEvent(new Event("seeked"));
-    });
-    // Now the rAF loop is live again: at time 0 it derives b001.
+  it("timeout fallback RE-ASSERTS the seek and never clobbers the saved resume with block 0", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const key = seedResume("b003", 2);
+      const before = localStorage.getItem(key);
+
+      // Cold element: never loads metadata, and seek never moves currentTime
+      // (a currentTime set at HAVE_NOTHING is deferred → the seek never lands).
+      const audio = new FakeAudio();
+      audio.readyState = 0; // HAVE_NOTHING
+      const seek = vi.fn(); // no-op: simulates the deferred/aborted cold seek
+      const input: UsePlaybackInput = {
+        audioRef: { current: audio as unknown as HTMLAudioElement },
+        timeline: TIMELINE,
+        resumeScope: "msg-1",
+        playbackState: "playing",
+        seek,
+        play: vi.fn(),
+        pause: vi.fn(),
+      };
+      const { result } = renderHook(() => usePlayback(input));
+      expect(result.current.activeBlockId).toBe("b003");
+      expect(seek).toHaveBeenCalledTimes(1); // initial restore seek (did not land)
+
+      // No 'seeked' ever fires. rAF ticks read currentTime 0 but the gate mutes.
+      audio.currentTime = 0;
+      frame();
+      expect(result.current.activeBlockId).toBe("b003"); // gate held
+
+      // Advance past the fallback timeout.
+      act(() => vi.advanceTimersByTime(RESTORE_GATE_TIMEOUT_MS + 10));
+
+      // Fallback RE-ASSERTED the seek to b003's start — did NOT clear the gate.
+      expect(seek).toHaveBeenCalledTimes(2);
+      expect(seek).toHaveBeenLastCalledWith(6100);
+      frame();
+      expect(result.current.activeBlockId).toBe("b003"); // STILL the restored block
+
+      // The saved resume entry is UNCHANGED — block 0 was never persisted over it.
+      expect(localStorage.getItem(key)).toBe(before);
+      expect(JSON.parse(localStorage.getItem(key)!).blockId).toBe("b003");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("belt: writer skips block 0 while readyState < HAVE_METADATA, persists it once loaded", () => {
+    // No restore (no seeded entry) → the gate is NOT set. The belt guard alone
+    // must stop a "fell back to block 0" write while the element has no metadata,
+    // yet allow a genuine block-0 position once metadata is present.
+    const setSpy = vi.spyOn(window.localStorage, "setItem");
+    const audio = new FakeAudio();
+    const input: UsePlaybackInput = {
+      audioRef: { current: audio as unknown as HTMLAudioElement },
+      timeline: TIMELINE,
+      resumeScope: "msg-1",
+      playbackState: "playing",
+      seek: vi.fn(),
+      play: vi.fn(),
+      pause: vi.fn(),
+    };
+    const { result } = renderHook(() => usePlayback(input));
+
+    // Cold: HAVE_NOTHING + an un-landed currentTime 0 → derives block 0, NOT persisted.
+    audio.readyState = 0;
+    audio.currentTime = 0;
+    frame();
+    expect(result.current.activeBlockId).toBe("b001"); // derivation shows it
+    expect(setSpy).not.toHaveBeenCalled(); // block-0-at-readyState-0 skipped
+
+    // Metadata available now: a real transition to b002 persists, and a genuine
+    // return to block 0 persists too (the guard only gates readyState < 1).
+    audio.readyState = 1;
+    audio.currentTime = 4.0; // 4000ms ∈ b002 [3200, 6100)
+    frame();
+    audio.currentTime = 0; // back to block 0, with metadata
     frame();
     expect(result.current.activeBlockId).toBe("b001");
+    expect(setSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(localStorage.getItem(resumeKey("entry:msg-1"))!).blockId).toBe("b001");
   });
 });
 
