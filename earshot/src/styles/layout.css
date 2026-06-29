@@ -447,6 +447,24 @@ body {
   cursor: pointer;
 }
 
+/* "⏯ from here" affordance — glyph + text, never color-only. Dim until the
+   row is hovered/focused so the transcript stays readable. */
+.block-row__play-affordance {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.78rem;
+  opacity: 0;
+  transition: opacity 0.1s ease-in;
+}
+
+.block-row__play:hover .block-row__play-affordance,
+.block-row__play:focus-visible .block-row__play-affordance,
+.block-row.is-active .block-row__play-affordance {
+  opacity: 1;
+}
+
 /* Non-color markers — each carries a glyph + text label. */
 .block-row__marker--degraded {
   color: var(--degraded);

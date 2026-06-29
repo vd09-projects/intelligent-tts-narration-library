@@ -3,19 +3,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
+import { usePlaybackControls } from "../state/PlaybackContext";
 import { BlockRow } from "./BlockRow";
 import { SegmentedToggle, type TranscriptView } from "./SegmentedToggle";
 
 export function TranscriptPane() {
   const {
     currentTranscript,
-    activeBlockId,
-    playFromBlock,
     selectedEntry,
     selectedEntryId,
     blockLeveling,
     setBlockLevel,
   } = useNarration();
+  // Active block + the play affordance read the SINGLE shared playback engine
+  // (R4) — same instance the TransportDeck drives, so BlockRow and the deck
+  // move the one shared <audio> and the one shared activeBlockId.
+  const { activeBlockId, playFromBlock } = usePlaybackControls();
   const [view, setView] = useState<TranscriptView>("spoken");
   const firstBlockRef = useRef<HTMLDivElement>(null);
 

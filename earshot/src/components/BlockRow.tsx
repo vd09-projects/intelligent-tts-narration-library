@@ -70,8 +70,11 @@ export function BlockRow({
         type="button"
         className="block-row__play"
         onClick={() => onPlay(block.id)}
-        aria-label={`Play block ${block.order + 1}`}
+        aria-label={`Play from block ${block.order + 1}`}
       >
+        <span className="block-row__play-affordance" aria-hidden="true">
+          ⏯ from here
+        </span>
         <span className="block-row__text">{text || <em>(no text)</em>}</span>
       </button>
       {isDegraded && view === "spoken" ? (
