@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-06-29-global-hotkey-focus-guard-opt-in-allow-list
+    title: "Global hotkey focus guard is an opt-in allow-list"
+    date: 2026-06-29
+    status: accepted
+    category: convention
+    tags: [issue-134, earshot, keyboard, transport, playback, a11y, accessibility, aria, focus-guard, allow-list, data-transport-hotkeys, safe-by-default]
+    path: convention/2026-06-29-global-hotkey-focus-guard-opt-in-allow-list.md
+    summary: "#134's global transport handler (Space, ←/→) is INERT by default and acts ONLY when focus is on document.body/null OR inside an explicitly marked [data-transport-hotkeys] region (the transcript <main>). Load-bearing; SUPERSEDES the earlier deny-list approach (flagged incomplete in plan review). The allow-list makes the #111 role=listbox, #113 role=radiogroup, #112 role=toolbar/role=slider, and any FUTURE keyboard-interactive ARIA widget safe-by-default with no per-widget maintenance — versus a deny-list that must enumerate every widget and silently breaks when a new one is added. A trimmed native-control bail inside the marked region is defense-in-depth only (full role-by-role deny enumeration deliberately NOT the primary mechanism)."
+  - id: 2026-06-29-single-document-keydown-listener-via-ref-pattern
+    title: "Single document keydown listener via the ref pattern"
+    date: 2026-06-29
+    status: accepted
+    category: architecture
+    tags: [issue-134, earshot, keyboard, transport, playback, react, ref-pattern, event-listener, stale-closure, usetransporthotkeys]
+    path: architecture/2026-06-29-single-document-keydown-listener-via-ref-pattern.md
+    summary: "The global hotkey hook (useTransportHotkeys) keeps exactly ONE mount-time document keydown listener (useEffect [] cleanup on unmount) whose body reads latestRef.current rather than closing over render values; registered on the BUBBLE phase. Each render assigns latestRef.current = { hasAudio, controls }. Immune to controls-identity churn (one add/remove pair for the component's life), and it does NOT lift hasAudio into shell state, so playback progress ticks neither re-render the shell nor re-bind the listener. Chosen over dep-array re-binding. Bubble-phase registration means widget handlers run first; the focus-guard allow-list is the sole real guarantee (a React synthetic stopPropagation does not reliably stop a native document listener). A stale-closure regression test locks the pattern."
+  - id: 2026-06-29-arrow-keys-10s-time-seek-not-block-step
+    title: "Left/Right arrows do ±10s time seek on the wav playhead, not block-step"
+    date: 2026-06-29
+    status: accepted
+    category: tradeoff
+    tags: [issue-134, earshot, keyboard, transport, playback, seek, block-level-sync, media-convention]
+    path: tradeoff/2026-06-29-arrow-keys-10s-time-seek-not-block-step.md
+    summary: "Resolves #134's design question: Left/Right arrows perform a ±10-second TIME seek on the combined wav playhead, NOT a block-step. A free-moving audio playhead is transport/display only and plan↔text-mapping-neutral — it persists nothing sub-block, so it does NOT violate the block-level-sync invariant. Block-step stays on the slider's native role=slider arrow keys. Option (b) (←/→ = prev/next block, ±10s remapped to ,/. or J/L) REJECTED as less familiar and against media convention. Implemented via a new skipSeconds(deltaSec) command-surface method that clamps both ends and no-ops when the audio element or duration metadata is absent. No plan/timeline schema change."
   - id: 2026-06-29-restore-gate-clears-only-on-landed-seek
     title: "Earshot resume restore gate clears only on a landed seek, never on a bare timeout"
     date: 2026-06-29
