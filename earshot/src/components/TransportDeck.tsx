@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNarration } from "../state/NarrationContext";
 import { usePlaybackControls } from "../state/PlaybackContext";
 import { formatSpokenTime } from "../state/playbackMath";
+import { SEEK_STEP_SECONDS } from "../hooks/usePlayback";
 import { BlockScrubber } from "./BlockScrubber";
 
 // Elapsed / total time readout. Driven imperatively off the per-frame audio
@@ -95,9 +96,23 @@ export function TransportDeck() {
   // "Return to playing block" needs a playing block to return to — disable it
   // until one exists, so an idle press isn't a silent no-op (it scrolls+focuses
   // the active BlockRow, which is null before playback has placed the playhead).
-  const buttons: { label: string; glyph: string; onClick: () => void; disabled?: boolean }[] = [
+  const buttons: {
+    label: string;
+    glyph: string;
+    onClick: () => void;
+    disabled?: boolean;
+    keyShortcuts?: string;
+  }[] = [
     { label: "Previous block", glyph: "⏮", onClick: prevBlock },
-    { label: isPlaying ? "Pause" : "Play", glyph: isPlaying ? "⏸" : "▶", onClick: toggle },
+    // aria-keyshortcuts="Space" advertises the global play/pause hotkey (#134) on
+    // the play/pause control itself. The ←/→ seek shortcuts are advertised on the
+    // transcript region, not here, to avoid clashing with the toolbar's roving ←/→.
+    {
+      label: isPlaying ? "Pause" : "Play",
+      glyph: isPlaying ? "⏸" : "▶",
+      onClick: toggle,
+      keyShortcuts: "Space",
+    },
     { label: "Next block", glyph: "⏭", onClick: nextBlock },
     {
       label: "Return to playing block",
@@ -139,6 +154,7 @@ export function TransportDeck() {
             className="transport-deck__btn"
             tabIndex={i === roving ? 0 : -1}
             aria-label={b.label}
+            aria-keyshortcuts={b.keyShortcuts}
             disabled={disabled || b.disabled}
             onClick={b.onClick}
           >
@@ -151,7 +167,15 @@ export function TransportDeck() {
 
       <TransportClock />
 
-      {!hasAudio ? <span className="transport-bar__hint">No audio loaded</span> : null}
+      {hasAudio ? (
+        // Visible discoverability legend (#134). The "10s" derives from
+        // SEEK_STEP_SECONDS so the displayed step can never drift from the hook.
+        <span className="transport-bar__hint" data-testid="transport-legend">
+          Space play/pause · ← → {SEEK_STEP_SECONDS}s
+        </span>
+      ) : (
+        <span className="transport-bar__hint">No audio loaded</span>
+      )}
     </div>
   );
 }

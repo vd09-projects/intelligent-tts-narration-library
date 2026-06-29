@@ -27,6 +27,11 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* The shell is a fixed-height app frame: the transcript and aside panes own all
+     scrolling internally. Lock the document itself so no sub-pixel overflow can
+     leak a page-level scroll or a trailing gap below the bottom transport. */
+  overflow: hidden;
+  background: var(--bg);
 }
 
 body {
@@ -62,8 +67,9 @@ body {
 /* ---- Shell grid ---- */
 .app-shell {
   display: grid;
-  grid-template-rows: var(--header-h) 1fr var(--transport-h);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--transport-h);
   height: 100vh;
+  overflow: hidden;
 }
 
 .app-shell__body {
