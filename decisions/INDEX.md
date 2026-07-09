@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-10-voicespelled-seam-strip-before-spell-before-lexicon
+    title: "voiceSpelled seam orders strip → spellNumbersInProse → lexicon-scan"
+    date: 2026-07-10
+    status: accepted
+    category: convention
+    tags: [issue-138, planner, voicing, cardinal-spell-out, voiceSpelled, stripInlineMarkdown, spellNumbersInProse, scanLexicon, ordering-contract, pre-voice-transform, plan-review-regression]
+    path: convention/2026-07-10-voicespelled-seam-strip-before-spell-before-lexicon.md
+    summary: "#138's cardinal number pass MUST run on markdown-STRIPPED text and BEFORE the lexicon byte-scan, made explicit via a voiceSpelled seam. voice() calls stripInlineMarkdown() as its first internal line, so running the number pass on raw text made **24700** guard-out correctly as digits then get stripped to a bare digit stream (silent regression caught in plan review round 1 — the number pass and strip pass disagreed on the 'source' adjacency). REJECTED relying on stripInlineMarkdown idempotency (double-strip): idempotency is an implicit, untested invariant nothing guards. The seam names the ordering contract in code and shares one scanLexicon body so voice()/voiceSpelled() can't drift. Nearest precedent for any future pre-voice transform that inspects source adjacency."
+  - id: 2026-07-10-conservative-leave-as-digits-cardinal-spell-out
+    title: "Conservative 'leave as digits' scope for cardinal spell-out"
+    date: 2026-07-10
+    status: accepted
+    category: tradeoff
+    tags: [issue-138, planner, voicing, cardinal-spell-out, spellCardinal, leave-as-digits, conservative-scope, comma-grouped-deferred, negatives-deferred, ambiguity-resolves-to-leave]
+    path: tradeoff/2026-07-10-conservative-leave-as-digits-cardinal-spell-out.md
+    summary: "#138 spells ONLY plain standalone 1–6 digit integers/decimals in the no-intelligence verbatim prose path. Leaves as digits: comma-grouped (24,700), negatives (-5, sign-vs-hyphen ambiguous), dotted versions, hex, ≥7-digit runs, and any run adjacent to :/=// /- or a letter/_. Rationale: a wrong cardinal reading is worse than a clunky-but-correct digit stream, so ambiguity resolves to leave — keeping spellCardinal small and every spell-out provably safe. REJECTED aggressive spelling of grouped/negative/adjacent forms (confident mis-reads). Comma-grouped and negatives explicitly DEFERRED (follow-up ticket for comma-grouped), not rejected. Establishes the standing rule: ambiguity resolves to leave."
+  - id: 2026-07-10-cardinals-degradeprose-no-intelligence-only
+    title: "Cardinal spell-out applies to the degradeProse no-intelligence path only; adapter-voiced prose is out of scope"
+    date: 2026-07-10
+    status: accepted
+    category: architecture
+    tags: [issue-138, planner, voicing, cardinal-spell-out, degradeProse, no-intelligence-path, adapter-authoritative, no-double-processing, boundary]
+    path: architecture/2026-07-10-cardinals-degradeprose-no-intelligence-only.md
+    summary: "#138's cardinal spell-out runs ONLY on the degradeProse no-intelligence verbatim path (Status=degraded, short prose read verbatim). Adapter-voiced prose is explicitly out of scope: adapter output is authoritative spoken text and a second deterministic pass would risk double-processing (re-spelling numbers the adapter already voiced, or corrupting intended phrasing). The deterministic speller exists precisely to fill the gap where no intelligence adapter is available to voice numbers. REJECTED running cardinals on all voiced prose including adapter output (planner second-guessing the intelligence layer). Number handling is intentionally path-dependent; keeps the intelligence layer authoritative and the pass narrowly scoped."
   - id: 2026-06-29-global-hotkey-focus-guard-opt-in-allow-list
     title: "Global hotkey focus guard is an opt-in allow-list"
     date: 2026-06-29
