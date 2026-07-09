@@ -189,14 +189,19 @@ func parseDigits(s string) (uint64, bool) {
 
 // commaGroupedRun matches a well-formed US-style comma-grouped integer starting
 // at text[start] and returns the matched span, the comma-stripped digits, the
-// end index (exclusive, one past the last digit), and ok. Shape validation only
-// — no neighbour logic, no length gate, no spelling; the caller
+// end index, and ok. On the common accept the end index is exclusive, one past
+// the last digit; on the sentence-punctuation accept ("24,700, roughly") end
+// points AT that trailing comma (the last matched byte is still a digit, and the
+// comma is handed back to the caller's next-neighbour gate). Shape validation
+// only — no neighbour logic, no length gate, no spelling; the caller
 // (spellNumbersInProse step 0) applies those.
 //
 // Grammar (must all hold, else ok=false):
-//   - first group is 1-3 digits;
+//   - first group is 1-3 digits with no leading zero (a leading-zero first group
+//     like "0,000" is a format artifact, not a value);
 //   - followed by one or more groups of EXACTLY "," + 3 digits (>=1 comma);
-//   - the byte after the last triple is neither a digit nor another comma.
+//   - the byte after the last triple is not a digit, not a decimal point + digit,
+//     and not an identifier byte.
 //
 // A plain digit run (no comma) declines — that stays the maximal-run scan's job.
 // Malformed grouping declines wholesale so the caller LEAVEs the entire span
@@ -209,6 +214,10 @@ func parseDigits(s string) (uint64, bool) {
 //   - "12,3456"   -> ok=false (second group has 4 digits — the partial-spell
 //     hazard: declining the whole span keeps the plain path from voicing "12"
 //     and leaking ",3456")
+//   - "1,234.5"   -> ok=false (decimal point after the last triple — decline the
+//     whole span so it LEAVEs rather than spelling "1,234" and orphaning ".5")
+//   - "0,000"     -> ok=false (leading-zero first group — collapsing to "zero"
+//     would drop information)
 //   - "1234,567"  -> ok=false (first group has 4 digits)
 //   - "24,7000"   -> ok=false (group has 4 digits)
 //   - "24,700,"   -> ok=false (trailing comma after the last triple)
@@ -224,6 +233,15 @@ func commaGroupedRun(text string, start int) (span, joined string, end int, ok b
 		firstLen++
 	}
 	if firstLen == 0 {
+		return "", "", start, false
+	}
+	// Leading-zero first group ("0,000", "01,000") is not well-formed US grouping
+	// — a grouped number never writes its most-significant group starting with a
+	// zero, so this is a format artifact/typo. (A bare "0" only makes sense with no
+	// grouping, and a plain run is handled by the maximal scan, not here.) Decline
+	// so the caller LEAVEs the span rather than collapsing information
+	// ("0,000" -> "zero").
+	if text[start] == '0' {
 		return "", "", start, false
 	}
 	// A 4th consecutive digit here means the first group is oversized (e.g.
@@ -272,6 +290,13 @@ func commaGroupedRun(text string, start int) (span, joined string, end int, ok b
 		switch {
 		case t >= '0' && t <= '9':
 			// oversized final group
+			return "", "", start, false
+		case t == '.' && i+1 < len(text) && text[i+1] >= '0' && text[i+1] <= '9':
+			// Decimal point (e.g. "1,234.5"): the grouped span is the integer part
+			// of a decimal this validator does not model. Decline the WHOLE span so
+			// it LEAVEs byte-identity via the plain path — never spell "1,234" and
+			// orphan the raw ".5" (a value-altering partial render). Grouped decimals
+			// are a future ticket; #139 is grouped integers only.
 			return "", "", start, false
 		case isLetter(t) || t == '_':
 			// identifier boundary (e.g. "1,000x", "24,700px") — decline; the caller

@@ -194,15 +194,19 @@ func TestCommaGroupedRun_Direct(t *testing.T) {
 		{"1,000,000", "1,000,000", "1000000", 9, true},
 		{"12,345,678", "12,345,678", "12345678", 10, true},
 		// Decline: malformed grouping.
-		{"1,23", "", "", 0, false},     // 2 digits in second group
-		{"12,34", "", "", 0, false},    // 2 digits in second group
-		{"1,2345", "", "", 0, false},   // 5 digits after a valid triple boundary
-		{"12,3456", "", "", 0, false},  // partial-spell hazard: 4-digit group
-		{"1234,567", "", "", 0, false}, // 4-digit first group
-		{"24,7000", "", "", 0, false},  // 4-digit group
-		{"24,700,", "", "", 0, false},  // trailing comma
-		{"1,000x", "", "", 0, false},   // letter after last triple
-		{"24700", "", "", 0, false},    // no comma — a plain run
+		{"1,23", "", "", 0, false},      // 2 digits in second group
+		{"12,34", "", "", 0, false},     // 2 digits in second group
+		{"1,2345", "", "", 0, false},    // 5 digits after a valid triple boundary
+		{"12,3456", "", "", 0, false},   // partial-spell hazard: 4-digit group
+		{"1234,567", "", "", 0, false},  // 4-digit first group
+		{"24,7000", "", "", 0, false},   // 4-digit group
+		{"24,700,", "", "", 0, false},   // trailing comma
+		{"1,000x", "", "", 0, false},    // letter after last triple
+		{"1,234.5", "", "", 0, false},   // decimal point after last triple — decline whole span
+		{"24,700.99", "", "", 0, false}, // decimal point after last triple — decline whole span
+		{"0,000", "", "", 0, false},     // leading-zero first group — drops info if collapsed
+		{"01,000", "", "", 0, false},    // leading-zero first group
+		{"24700", "", "", 0, false},     // no comma — a plain run
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -282,6 +286,13 @@ func TestSpellNumbersInProse(t *testing.T) {
 		{"comma-grouped version leaves", "v1,024 build", "v1,024 build"},
 		{"comma-grouped config equals leaves", "set count=1,024 now", "set count=1,024 now"},
 		{"comma-grouped config colon leaves", "replicas: 1,024", "replicas: 1,024"},
+		// Comma-grouped DECIMAL (#139 out-of-scope): a grouped integer immediately
+		// followed by a decimal point must decline the WHOLE span and stay identity
+		// — never spell "1,234" and orphan the raw ".5" (value-altering partial).
+		{"comma-grouped decimal leaves whole span", "value 1,234.5 here", "value 1,234.5 here"},
+		{"comma-grouped decimal two-frac leaves whole span", "value 24,700.99 x", "value 24,700.99 x"},
+		// Leading-zero first group leaves (never collapse "0,000" -> "zero").
+		{"comma-grouped leading-zero first group leaves", "count 0,000 total", "count 0,000 total"},
 	}
 	for _, tc := range cases {
 		tc := tc
