@@ -47,7 +47,6 @@ func TestPlan_ProseSpellsCardinals_EndToEnd(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := Plan(context.Background(), stubDoc(tc.src, "prose.md"),
@@ -112,7 +111,6 @@ func TestSpellCardinal_Direct(t *testing.T) {
 		{1000000, "one million"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		if got := spellCardinal(tc.n); got != tc.want {
 			t.Errorf("spellCardinal(%d) = %q; want %q", tc.n, got, tc.want)
 		}
@@ -137,7 +135,6 @@ func TestSpellNumberToken_Direct(t *testing.T) {
 		{"24700", "twenty-four thousand seven hundred"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		got, ok := spellNumberToken(tc.tok)
 		if !ok {
 			t.Errorf("spellNumberToken(%q) ok=false; want true", tc.tok)
@@ -209,7 +206,6 @@ func TestCommaGroupedRun_Direct(t *testing.T) {
 		{"24700", "", "", 0, false},     // no comma — a plain run
 	}
 	for _, tc := range cases {
-		tc := tc
 		span, joined, end, ok := commaGroupedRun(tc.text, 0)
 		if ok != tc.wantOK {
 			t.Errorf("commaGroupedRun(%q) ok=%v; want %v", tc.text, ok, tc.wantOK)
@@ -295,7 +291,6 @@ func TestSpellNumbersInProse(t *testing.T) {
 		{"comma-grouped leading-zero first group leaves", "count 0,000 total", "count 0,000 total"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := voiceSpelled(tc.in, lex)
