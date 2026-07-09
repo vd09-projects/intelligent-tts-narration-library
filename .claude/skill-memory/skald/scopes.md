@@ -827,6 +827,60 @@ scopes:
       activated — no new persistence/derivation, just reads the existing context
       surface + ephemeral DOM focus checks). Plan persisted draft (awaiting user
       approval before sindri consumes).
+  - slug: planner-number-spellout
+    title: Deterministic cardinal number spell-out in planner voicing pass
+    created: 2026-07-09
+    reasoning: |
+      Plan cycle for a deterministic number→words spell-out step in the planner
+      voicing pass — plain standalone integers/decimals in PROSE spoken as
+      cardinals (24700 → "twenty-four thousand seven hundred"; 3.5 → "three point
+      five") instead of the Kokoro subprocess reading them digit-by-digit. Layer
+      decision was settled BEFORE mimir ran (not relitigated): belongs in the
+      deterministic planner voicing pass, NOT the intelligence layer — structured
+      classes voice at L1 with no adapter (adapter never sees those numbers),
+      number→words is deterministic + faithful (not fabrication → honesty rule
+      satisfied), same "deterministic, opinionated, faithful" bucket as the
+      lexicon. Verified seam: planner/voice.go voice(text,lex) strips markdown then
+      runs the longest-match lexicon byte-scan; the prose verbatim path
+      degradeProse() (planner/degrade.go:135) calls voice(TrimSpace(rb.text),lex);
+      no number-to-words logic anywhere. Numbers are unbounded → cannot be lexicon
+      entries → own pure pass. mimir task depth, 6 steps: new pure
+      planner/numwords.go (spellCardinal(uint64) with ones/teens/tens + scale
+      groups, no "and", hyphenated 21–99; decimal handling as "point" + per-digit
+      fractional readout; spellNumbers(text) guard+tokenizer). Conservative scope
+      — spell ONLY plain standalone numeric tokens; the guard LEAVES as digits
+      anything `:`/`=`/`/`-adjacent, dotted-version (1.25 / v2.4.0, multi-dot), hex
+      (0x…), ≥7-digit runs (ID/phone/port/epoch), or letter/`_`-adjacent; unsure →
+      leave (a wrong cardinal is worse than clunky-but-correct digits). Negatives
+      conservatively NOT spelled (`-5` sign-vs-hyphen ambiguity). Two load-bearing
+      decisions surfaced in planning: (1) ORDERING per the planner-classifier-
+      sniff-order precedent — the number pass is a DISTINCT function sequenced
+      BEFORE the lexicon voice() call in degradeProse (voice(spellNumbers(
+      TrimSpace(rb.text)),lex)) so the guard reads original source adjacency (the
+      lexicon scan pads operators with spaces and would erase the colon/equals/
+      slash signal) AND cardinals don't leak into structured-class gists (voice()
+      is shared by code/table/diagram degrade paths); (2) BOUNDARY — a `.` is a
+      decimal point only if a digit immediately follows, so "24700." at sentence
+      end spells 24700 and preserves the terminal `.`, while 3.5 is a decimal.
+      Table-driven test matrix (plain/decimal/thousands spells + version/hex/port/
+      long-run/colon-adjacent leaves + boundaries 0 / single-digit / exactly-7-
+      digits / trailing-punct) + golden plan.json check on any affected prose
+      fixture; no golden audio. Tension recorded vs the 2026-06-21 list-ordinal-cue
+      decision (which deliberately AVOIDED a general number speller, hand-rolling
+      ordinals 1–10 + numeric "item N" fallback): this work INTRODUCES the general
+      integer/decimal speller that decision punted on, but scope is cardinals-in-
+      prose ONLY — level.go's list path is untouched (a future ticket could back-
+      fill ordinals). Honors DefaultLexicon frozen+overridable spirit (deterministic,
+      opinionated, faithful) and the no-I/O-in-planner invariant (pure string
+      function). planner- prefix marks the package under change and disambiguates
+      from planner-issue-4 (the original core build) and planner-list-ordinals-45;
+      number-spellout qualifier captures the crux; NON-issue-numbered descriptive
+      slug (no GH issue cited in the brief). Slug pre-supplied + pre-approved via
+      --scope by the build-session single-skill runner. Planned via mimir task
+      depth, no overlays triggered (pure-function internal planner change, no
+      public-API / migration / concurrency / perf surface). Plan persisted draft
+      (awaiting user approval before sindri consumes). Genuine FIRST persist —
+      version:1, scope dir newly created.
   - slug: earshot-scaffold-app-shell-111
     title: Earshot scaffold — app shell + session pane + file pane (#111)
     created: 2026-06-28
