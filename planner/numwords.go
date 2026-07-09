@@ -187,6 +187,113 @@ func parseDigits(s string) (uint64, bool) {
 	return n, true
 }
 
+// commaGroupedRun matches a well-formed US-style comma-grouped integer starting
+// at text[start] and returns the matched span, the comma-stripped digits, the
+// end index (exclusive, one past the last digit), and ok. Shape validation only
+// — no neighbour logic, no length gate, no spelling; the caller
+// (spellNumbersInProse step 0) applies those.
+//
+// Grammar (must all hold, else ok=false):
+//   - first group is 1-3 digits;
+//   - followed by one or more groups of EXACTLY "," + 3 digits (>=1 comma);
+//   - the byte after the last triple is neither a digit nor another comma.
+//
+// A plain digit run (no comma) declines — that stays the maximal-run scan's job.
+// Malformed grouping declines wholesale so the caller LEAVEs the entire span
+// rather than partial-spelling it. Worked examples:
+//   - "24,700"    -> span "24,700", joined "24700", ok=true
+//   - "1,000,000" -> span "1,000,000", joined "1000000", ok=true (shape only;
+//     the caller's 1-6 length gate then LEAVEs the 7-digit count)
+//   - "1,23"      -> ok=false (second group has 2 digits, not 3)
+//   - "1,2345"    -> ok=false (5 digits after a valid triple boundary)
+//   - "12,3456"   -> ok=false (second group has 4 digits — the partial-spell
+//     hazard: declining the whole span keeps the plain path from voicing "12"
+//     and leaking ",3456")
+//   - "1234,567"  -> ok=false (first group has 4 digits)
+//   - "24,7000"   -> ok=false (group has 4 digits)
+//   - "24,700,"   -> ok=false (trailing comma after the last triple)
+//   - "1,000x"    -> ok=false (letter after the last triple)
+//   - "24700"     -> ok=false (no comma — a plain run)
+func commaGroupedRun(text string, start int) (span, joined string, end int, ok bool) {
+	i := start
+
+	// First group: 1-3 digits.
+	firstLen := 0
+	for i < len(text) && text[i] >= '0' && text[i] <= '9' && firstLen < 3 {
+		i++
+		firstLen++
+	}
+	if firstLen == 0 {
+		return "", "", start, false
+	}
+	// A 4th consecutive digit here means the first group is oversized (e.g.
+	// "1234,567") — not well-formed grouping.
+	if i < len(text) && text[i] >= '0' && text[i] <= '9' {
+		return "", "", start, false
+	}
+
+	// One or more "," + exactly 3 digits. A comma continues the group ONLY when
+	// followed by EXACTLY three digits at a clean boundary; any other comma
+	// (dangling, or sentence punctuation like "24,700, roughly") terminates the
+	// group before it — the comma then belongs to the following context.
+	commas := 0
+	for i < len(text) && text[i] == ',' {
+		// Need three digits at i+1..i+3, and NOT a 4th digit at i+4 (that would be
+		// an oversized group, e.g. "24,7000" / "12,3456"). If any of those fail,
+		// this comma is not a continuation: stop and let the terminator check
+		// below decide accept-vs-decline.
+		if i+3 >= len(text) {
+			break
+		}
+		d0, d1, d2 := text[i+1], text[i+2], text[i+3]
+		if d0 < '0' || d0 > '9' || d1 < '0' || d1 > '9' || d2 < '0' || d2 > '9' {
+			break
+		}
+		if i+4 < len(text) && text[i+4] >= '0' && text[i+4] <= '9' {
+			return "", "", start, false
+		}
+		i += 4
+		commas++
+	}
+	if commas == 0 {
+		// Plain run (no comma) — not our job; the maximal-run scan handles it.
+		return "", "", start, false
+	}
+
+	// Terminator. The byte after the last complete group must not be a digit (an
+	// oversized final group) and must not be an identifier byte. A dangling comma
+	// with no valid triple after it (e.g. isolated "24,700,") is rejected; a comma
+	// that is genuine sentence punctuation between tokens ("24,700, roughly") is
+	// left for the caller's next-neighbour gate — so the terminator here is
+	// accepted only when it is a digit-run boundary the plain path would also
+	// accept.
+	if i < len(text) {
+		t := text[i]
+		switch {
+		case t >= '0' && t <= '9':
+			// oversized final group
+			return "", "", start, false
+		case isLetter(t) || t == '_':
+			// identifier boundary (e.g. "1,000x", "24,700px") — decline; the caller
+			// would LEAVE anyway, and the direct-call contract wants ok=false here.
+			return "", "", start, false
+		case t == ',':
+			// A comma here is one the continuation loop refused. If it is genuine
+			// sentence punctuation (a non-digit within three bytes, e.g.
+			// "24,700, roughly"), accept the group and hand the comma to the caller.
+			// If it is a dangling separator with nothing meaningful after (isolated
+			// "24,700,"), decline.
+			if i+3 >= len(text) {
+				return "", "", start, false
+			}
+		}
+	}
+
+	span = text[start:i]
+	joined = strings.ReplaceAll(span, ",", "")
+	return span, joined, i, true
+}
+
 // spellNumbersInProse rewrites plain standalone integer/decimal runs in text
 // as spoken cardinals, leaving every other byte identical.
 //
@@ -201,6 +308,14 @@ func parseDigits(s string) (uint64, bool) {
 //
 // Fallback: when spellNumberToken returns ok=false the ORIGINAL run bytes are
 // emitted verbatim (identity) — never a partial or guessed rendering.
+//
+// Step 0 pre-pass (#139): BEFORE the maximal-run scan, each digit run is first
+// offered to commaGroupedRun. A well-formed comma-grouped integer ("24,700")
+// that clears the same neighbour + 1-6-length + token gates (applied to its
+// comma-stripped digits) spells as a single cardinal. Anything else — no comma,
+// malformed grouping, oversized count — falls through to the plain scan below
+// unchanged. This is a pre-pass, not a 6th run-guard: the guard predicate
+// (spellableRun) is unchanged and reused as-is.
 //
 // A run R (maximal \d + optional single interior ".") is SPELLED iff ALL hold:
 //  1. R matches ^\d+(\.\d+)?$ (enforced by spellNumberToken);
@@ -230,6 +345,39 @@ func spellNumbersInProse(text string) string {
 			b.WriteByte(c)
 			i++
 			continue
+		}
+
+		// Step 0 pre-pass (#139): before the plain maximal-run scan, try to read a
+		// well-formed comma-grouped integer starting here ("24,700"). The maximal
+		// scan below stops at ",", so without this pre-pass a grouped number could
+		// never spell. i is the first digit of the FIRST group and is the anchor
+		// for ALL neighbour reasoning (prev-neighbour + config-key back-scan),
+		// NOT the first-triple boundary — else "set count=1,024" / "replicas:
+		// 1,024" would miss their "="/":" and wrongly spell.
+		if _, joined, groupEnd, ok := commaGroupedRun(text, i); ok {
+			prevG := byte(0)
+			if i > 0 {
+				prevG = text[i-1]
+			}
+			nextG := byte(0)
+			if groupEnd < len(text) {
+				nextG = text[groupEnd]
+			}
+			// Reuse the plain-run neighbour gate, anchored on the grouped span's
+			// start (i) and end (groupEnd). The 1-6 length check runs against the
+			// comma-stripped digits, so "1,000,000" (7 digits) LEAVEs at the gate.
+			if spellableRun(joined, prevG, nextG, i, groupEnd, text) {
+				if spoken, tok := spellNumberToken(joined); tok {
+					b.WriteString(spoken)
+					i = groupEnd
+					continue
+				}
+			}
+			// Any failure (neighbour gate, length gate, or token reject) falls
+			// through to the plain path below, which re-scans from this same i and
+			// LEAVEs via the comma-far-digit rejection in spellableRun — the
+			// conservative-LEAVE net and the guard against partial-spelling
+			// malformed spans like "12,3456".
 		}
 
 		// Found the start of a digit run. Extend it maximally, allowing at most
@@ -319,10 +467,12 @@ func spellableRun(run string, prev, next byte, runStart, runEnd int, text string
 	case prev == ',':
 		// Comma-grouped (e.g. "24,700"): a digit on the far side of the comma
 		// means this run is a thousands group — leave the whole thing as digits.
-		// TODO: spell comma-grouped integers ("24,700" -> "twenty-four thousand
-		// seven hundred") in spellNumbersInProse; deferred this PR, currently
-		// left as digits because the tokenizer breaks on "," and spelling the
-		// halves would mis-read them.
+		// Well-formed comma-grouped integers are now spelled upstream in
+		// spellNumbersInProse's step 0 pre-pass (#139); this rejection remains the
+		// fallback for the plain path — when the pre-pass declines a malformed
+		// span (e.g. "12,3456") and the maximal scan re-enters on a thousands
+		// group, this is what keeps it from partial-spelling. Load-bearing; do not
+		// delete.
 		if runStart >= 2 {
 			far := text[runStart-2]
 			if far >= '0' && far <= '9' {
