@@ -132,7 +132,14 @@ func degradeProse(rb rawBlock, target plan.Level, sm plan.SourceMap, lex *compil
 			Message:  fmt.Sprintf("prose block over %d words refused without an intelligence adapter", proseVerbatimMaxWords),
 		}
 	}
-	spoken := voice(strings.TrimSpace(rb.text), lex)
+	// voiceSpelled (not plain voice): the no-intelligence verbatim prose path is
+	// the ONLY place a deterministic number spell-out runs. Sequence is
+	// strip -> spellNumbersInProse -> lexicon scan (see voiceSpelled). The
+	// number pass runs post-strip and BEFORE the lexicon scan; spelled cardinals
+	// are then lexicon-scanned, so a user WithLexicon "point" key could in
+	// theory mutate them — low risk (user's own lexicon on their own text),
+	// accepted. Structured degrade paths below keep plain voice().
+	spoken := voiceSpelled(strings.TrimSpace(rb.text), lex)
 	return plan.Block{
 			Class:     plan.ClassProse,
 			Level:     target,

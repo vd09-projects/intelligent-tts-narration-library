@@ -46,8 +46,18 @@ trivially correct.
 - Adding spelled ordinals past ten later is a localized change (extend/replace the
   table or add a speller) with no schema impact.
 
+## Related decisions
+
+- [Conservative "leave as digits" scope for cardinal spell-out](../tradeoff/2026-07-10-conservative-leave-as-digits-cardinal-spell-out.md) — TENSION / consistency debt. This decision deliberately avoided building a general speller; issue #138 (2026-07-10) ships `spellCardinal`, a general *cardinal* speller for the no-intelligence prose path. The two now diverge in philosophy (this one avoids a general speller; #138 introduces one). Accepted for the #138 PR as consistency debt, with a follow-up ticket to converge the list-ordinal cue and the cardinal speller later. This decision STANDS for now (list ordinals still use the frozen 1–10 table + numeric fallback); #138 does not supersede it.
+
 ## Revisit trigger
 
 Revisit if user feedback shows the spelled/numeric boundary at 10 reads as
 jarring, or if a general ordinal-spelling capability is introduced for another
 reason (then the numeric fallback could be reconsidered).
+
+**Trigger update (2026-07-10, issue #138):** the "general spelling capability
+introduced for another reason" condition is now partially TRIPPED — #138 ships a
+general *cardinal* speller (`spellCardinal`). It is a cardinal, not an ordinal,
+speller, so the list ordinal cue is not auto-changed, but the convergence
+follow-up ticket noted above is the concrete next action.

@@ -215,7 +215,35 @@ func voice(text string, lex *compiledLex) string {
 	// words, not `code`/**bold** delimiters (CLAUDE.md voicing invariant). Done
 	// before the lexicon scan so a wrapped operator like **->** still resolves
 	// ("->" -> "arrow"). This runs even when the lexicon is empty.
-	text = stripInlineMarkdown(text)
+	return scanLexicon(stripInlineMarkdown(text), lex)
+}
+
+// voiceSpelled is the no-intelligence verbatim PROSE voicing seam: it orders a
+// deterministic number spell-out pass between markdown stripping and the
+// lexicon scan. Called ONLY from degradeProse.
+//
+// Ordering is load-bearing:
+//  1. strip inline markdown BEFORE spelling, so the number pass sees bare
+//     tokens (`**24700**` presents as `24700` with whitespace neighbours and
+//     SPELLS, instead of being guarded out then un-wrapped to bare digits);
+//  2. spell BEFORE the lexicon scan, because the guard reads source adjacency
+//     (":" "=" "/") that the lexicon scan's operator padding would erase;
+//  3. the shared scanLexicon body keeps voice() and voiceSpelled() from
+//     drifting — both run the exact same lexicon replacement.
+//
+// spellNumbersInProse is confined to this seam (and thus to degradeProse), so
+// cardinals never leak into structured-class gists, which use plain voice().
+func voiceSpelled(text string, lex *compiledLex) string {
+	stripped := stripInlineMarkdown(text)
+	spelled := spellNumbersInProse(stripped)
+	return scanLexicon(spelled, lex)
+}
+
+// scanLexicon runs the longest-match-first lexicon replacement over already-
+// stripped text. Factored out of voice() so voice() and voiceSpelled() share
+// one scan body and cannot diverge. Named by function, not origin, to avoid a
+// voice-stutter.
+func scanLexicon(text string, lex *compiledLex) string {
 	if lex == nil || len(lex.keys) == 0 || text == "" {
 		return text
 	}
