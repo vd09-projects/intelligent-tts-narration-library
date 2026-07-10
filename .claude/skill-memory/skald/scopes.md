@@ -4,6 +4,17 @@
 
 ```yaml
 scopes:
+  - slug: comma-grouped-integer-spellout-139
+    title: Comma-grouped integer spell-out in planner voicing (issue #139)
+    created: 2026-07-09
+    reasoning: |
+      Follow-up to #138 (planner-number-spellout). GitHub issue #139 — extends the
+      prose number-speller in planner/numwords.go to voice well-formed comma-grouped
+      integers ("24,700" -> "twenty-four thousand seven hundred") that #138 explicitly
+      deferred (left as digits). Scope slug supplied verbatim by the caller via
+      --scope; issue-numbered to match the sibling planner-number-spellout lineage.
+      Separate scope (not an iteration of planner-number-spellout) because it is a
+      distinct GitHub issue with its own plan/build/review cycle.
   - slug: earshot-playback-engine-112
     title: Earshot playback engine — block-quantized transport deck + scrubber + block-level resume persistence (issue #112)
     created: 2026-06-29

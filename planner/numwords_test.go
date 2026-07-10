@@ -47,7 +47,6 @@ func TestPlan_ProseSpellsCardinals_EndToEnd(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := Plan(context.Background(), stubDoc(tc.src, "prose.md"),
@@ -112,7 +111,6 @@ func TestSpellCardinal_Direct(t *testing.T) {
 		{1000000, "one million"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		if got := spellCardinal(tc.n); got != tc.want {
 			t.Errorf("spellCardinal(%d) = %q; want %q", tc.n, got, tc.want)
 		}
@@ -137,7 +135,6 @@ func TestSpellNumberToken_Direct(t *testing.T) {
 		{"24700", "twenty-four thousand seven hundred"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		got, ok := spellNumberToken(tc.tok)
 		if !ok {
 			t.Errorf("spellNumberToken(%q) ok=false; want true", tc.tok)
@@ -166,6 +163,61 @@ func TestSpellNumberToken_Reject(t *testing.T) {
 	} {
 		if got, ok := spellNumberToken(tok); ok {
 			t.Errorf("spellNumberToken(%q) = (%q, true); want ok=false", tok, got)
+		}
+	}
+}
+
+// TestCommaGroupedRun_Direct — direct-call matrix over the shape validator
+// (#139). Shape-only: it accepts well-formed US comma grouping and returns the
+// comma-stripped digits, declining plain runs and every malformed shape. The
+// 1-6 length gate is NOT applied here (that is spellNumbersInProse's job), so
+// 7- and 8-digit shapes report ok=true with their full joined digits; the
+// prose matrix pins that they then LEAVE at the caller's length gate.
+func TestCommaGroupedRun_Direct(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		text       string
+		wantSpan   string
+		wantJoined string
+		wantEnd    int
+		wantOK     bool
+	}{
+		// Accept.
+		{"24,700", "24,700", "24700", 6, true},
+		{"1,234", "1,234", "1234", 5, true},
+		{"12,345", "12,345", "12345", 6, true},
+		{"123,456", "123,456", "123456", 7, true},
+		// Shape true, but the caller's 1-6 length gate LEAVEs these.
+		{"1,000,000", "1,000,000", "1000000", 9, true},
+		{"12,345,678", "12,345,678", "12345678", 10, true},
+		// Decline: malformed grouping.
+		{"1,23", "", "", 0, false},      // 2 digits in second group
+		{"12,34", "", "", 0, false},     // 2 digits in second group
+		{"1,2345", "", "", 0, false},    // 5 digits after a valid triple boundary
+		{"12,3456", "", "", 0, false},   // partial-spell hazard: 4-digit group
+		{"1234,567", "", "", 0, false},  // 4-digit first group
+		{"24,7000", "", "", 0, false},   // 4-digit group
+		{"24,700,", "", "", 0, false},   // trailing comma
+		{"1,000x", "", "", 0, false},    // letter after last triple
+		{"1,234.5", "", "", 0, false},   // decimal point after last triple — decline whole span
+		{"24,700.99", "", "", 0, false}, // decimal point after last triple — decline whole span
+		{"0,000", "", "", 0, false},     // leading-zero first group — drops info if collapsed
+		{"01,000", "", "", 0, false},    // leading-zero first group
+		{"24700", "", "", 0, false},     // no comma — a plain run
+	}
+	for _, tc := range cases {
+		span, joined, end, ok := commaGroupedRun(tc.text, 0)
+		if ok != tc.wantOK {
+			t.Errorf("commaGroupedRun(%q) ok=%v; want %v", tc.text, ok, tc.wantOK)
+			continue
+		}
+		if !ok {
+			continue // span/joined/end are don't-care on decline
+		}
+		if span != tc.wantSpan || joined != tc.wantJoined || end != tc.wantEnd {
+			t.Errorf("commaGroupedRun(%q) = (%q, %q, %d, %v); want (%q, %q, %d, %v)",
+				tc.text, span, joined, end, ok,
+				tc.wantSpan, tc.wantJoined, tc.wantEnd, tc.wantOK)
 		}
 	}
 }
@@ -202,7 +254,6 @@ func TestSpellNumbersInProse(t *testing.T) {
 		{"colon leaves", "replicas: 3", "replicas: 3"},
 		{"equals leaves", "set x=5 here", "set x=5 here"},
 		{"slash leaves", "the ratio 1/2", "the ratio 1/2"},
-		{"comma-grouped leaves", "total 24,700 rows", "total 24,700 rows"},
 		{"version leaves", "upgrade to v2.4.0 now", "upgrade to v2.4.0 now"},
 		{"hex leaves", "mask 0xFF applied", "mask 0xFF applied"},
 		{"ten digits leaves", "call 5551234567 today", "call 5551234567 today"},
@@ -213,9 +264,33 @@ func TestSpellNumbersInProse(t *testing.T) {
 		// Boundary punctuation preserved.
 		{"trailing period spells keep dot", "we saw 24700.", "we saw twenty-four thousand seven hundred."},
 		{"trailing comma spells keep comma", "the value 3.5, roughly", "the value three point five, roughly"},
+		// Comma-grouped SPELL (#139 step 0 pre-pass): well-formed groups spell as
+		// a single cardinal on their comma-stripped digits.
+		{"comma-grouped spells (relocated from LEAVE)", "total 24,700 rows", "total twenty-four thousand seven hundred rows"},
+		{"comma-grouped spells both (relocated from identity)", "grid 24,700 by 24,700 ok", "grid twenty-four thousand seven hundred by twenty-four thousand seven hundred ok"},
+		{"comma-grouped four-digit-first spells", "we saw 1,234 nodes", "we saw one thousand two hundred thirty-four nodes"},
+		{"comma-grouped trailing period keep dot", "we saw 24,700.", "we saw twenty-four thousand seven hundred."},
+		{"comma-grouped trailing comma keep comma", "the value 24,700, roughly", "the value twenty-four thousand seven hundred, roughly"},
+		// Comma-grouped LEAVE (#139 conservative-LEAVE net): oversized count,
+		// malformed grouping, partial-spell hazard, and neighbour-guarded contexts
+		// all fall through to the plain path and stay as digits.
+		{"comma-grouped seven digits leaves", "exactly 1,000,000 hits", "exactly 1,000,000 hits"},
+		{"comma-grouped malformed leaves", "malformed 1,23 here", "malformed 1,23 here"},
+		{"comma-grouped partial-spell hazard leaves whole span", "batch 12,3456 done", "batch 12,3456 done"},
+		{"comma-grouped letter-prefixed leaves", "id x24,700 tag", "id x24,700 tag"},
+		{"comma-grouped unit-suffixed leaves", "24,700px wide", "24,700px wide"},
+		{"comma-grouped version leaves", "v1,024 build", "v1,024 build"},
+		{"comma-grouped config equals leaves", "set count=1,024 now", "set count=1,024 now"},
+		{"comma-grouped config colon leaves", "replicas: 1,024", "replicas: 1,024"},
+		// Comma-grouped DECIMAL (#139 out-of-scope): a grouped integer immediately
+		// followed by a decimal point must decline the WHOLE span and stay identity
+		// — never spell "1,234" and orphan the raw ".5" (value-altering partial).
+		{"comma-grouped decimal leaves whole span", "value 1,234.5 here", "value 1,234.5 here"},
+		{"comma-grouped decimal two-frac leaves whole span", "value 24,700.99 x", "value 24,700.99 x"},
+		// Leading-zero first group leaves (never collapse "0,000" -> "zero").
+		{"comma-grouped leading-zero first group leaves", "count 0,000 total", "count 0,000 total"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := voiceSpelled(tc.in, lex)
@@ -229,17 +304,18 @@ func TestSpellNumbersInProse(t *testing.T) {
 // TestSpellNumbersInProse_FallbackIdentity — the identity contract
 // (Suggestion 3): a run that is NOT spelled must leave the surrounding bytes,
 // and the run itself, byte-for-byte unchanged. Every input here contains only
-// runs the guard leaves as digits (slash / hex / letter / comma-grouped), so
-// the whole string must come back identical. This pins the "leave as digits"
-// fallback that the ok=false branch also relies on: never partial, never
-// guessed, always the original bytes.
+// runs the guard leaves as digits (slash / hex / letter / neighbour-guarded
+// grouping), so the whole string must come back identical. This pins the "leave
+// as digits" fallback that the ok=false branch also relies on: never partial,
+// never guessed, always the original bytes.
 func TestSpellNumbersInProse_FallbackIdentity(t *testing.T) {
 	t.Parallel()
 	cases := []string{
-		"the ratio 1/2 holds",      // slash-guarded
-		"mask 0xFF and 0x1A here",  // hex
-		"ids sha1 and md5 vals",    // letter-adjacent
-		"grid 24,700 by 24,700 ok", // comma-grouped
+		"the ratio 1/2 holds",     // slash-guarded
+		"mask 0xFF and 0x1A here", // hex
+		"ids sha1 and md5 vals",   // letter-adjacent
+		"malformed 1,23 grouping", // malformed comma group — pre-pass declines
+		"v1,024 tag here",         // neighbour-guarded comma group (version prefix)
 	}
 	for _, in := range cases {
 		if got := spellNumbersInProse(in); got != in {

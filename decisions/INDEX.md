@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-10-comma-grouped-degroup-prepass-not-tokenizer
+    title: "Comma-grouped degroup handled as a step-0 pre-pass, not by extending the maximal-run tokenizer"
+    date: 2026-07-10
+    status: accepted
+    category: algorithm
+    tags: [issue-139, planner, voicing, cardinal-spell-out, comma-grouped, spellNumbersInProse, commaGroupedRun, spellableRun, maximal-run-tokenizer, pre-pass, degroup]
+    path: algorithm/2026-07-10-comma-grouped-degroup-prepass-not-tokenizer.md
+    summary: "#139 voices well-formed US comma-grouped integers (24,700 -> 'twenty-four thousand seven hundred') that #138 left as digits. Implemented as a step-0 detect+degroup PRE-PASS at the head of digit-run handling, BEFORE the plain scan — a new pure validator commaGroupedRun matches \\d{1,3}(,\\d{3})+, strips commas to a clean digit string, then REUSES the existing spellableRun neighbour gate (anchored on the grouped span's start) + the 1-6 length gate (on the degrouped count) + spellNumberToken. Malformed/oversized/bad-neighbour spans fall through to the unchanged plain path and LEAVE; the >=7-digit LEAVE applies naturally to the degrouped count (1,000,000 -> LEAVE); the retained plain-path comma-far-digit rejection in spellableRun is the load-bearing partial-spell guard for 12,3456. REJECTED extending the maximal-run tokenizer loop to swallow commas — that couples the comma-vs-punctuation call with the decimal-dot lookahead in one switch. Keeps the scanning loop and spellableRun predicate comma-agnostic."
+  - id: 2026-07-10-grouped-decimal-declined-wholesale-left-byte-identity
+    title: "Grouped-decimal spans declined wholesale and left byte-identity; grouped-decimal voicing deferred, never half-implemented"
+    date: 2026-07-10
+    status: accepted
+    category: tradeoff
+    tags: [issue-139, planner, voicing, cardinal-spell-out, comma-grouped, grouped-decimal, commaGroupedRun, honesty-rule, never-partial, byte-identity, leave-as-digits, ambiguity-resolves-to-leave, leading-zero, build-review]
+    path: tradeoff/2026-07-10-grouped-decimal-declined-wholesale-left-byte-identity.md
+    summary: "Build-review round 1 of #139 caught a value-altering PARTIAL render: a comma-grouped integer followed by a decimal point (1,234.5) spelled the integer half and orphaned the raw '.5', violating the honesty rule / never-partial faithful-value contract. DECISION: commaGroupedRun DECLINES (ok=false) when the terminator after the last triple is a decimal point + digit, so the entire grouped-decimal span falls through to the plain path and stays byte-identity (LEAVE). Grouped-decimal voicing (1,234.5 -> 'one thousand two hundred thirty-four point five') is a candidate FUTURE ticket, not this one. Leading-zero first groups (0,000) also declined so a format artifact never collapses to 'zero'. The never-partial fallback (emit original bytes verbatim, never a partial/guessed rendering) is load-bearing — a half-spelled grouped decimal is worse than a clunky-but-correct digit stream. Extends the standing #138 rule 'ambiguity resolves to LEAVE.'"
   - id: 2026-07-10-voicespelled-seam-strip-before-spell-before-lexicon
     title: "voiceSpelled seam orders strip → spellNumbersInProse → lexicon-scan"
     date: 2026-07-10
