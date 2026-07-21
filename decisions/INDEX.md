@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-22-torch-free-onnx-rvc-ephemeral-worker
+    title: "Torch-free ONNX RVC via an ephemeral per-job worker, wrapped as a render decorator"
+    date: 2026-07-22
+    status: accepted
+    category: architecture
+    tags: [rvc, voice-conversion, onnx, onnxruntime, torch-free, ephemeral-worker, render-decorator, kokoro, sherpa, cgo-deferred, faiss, mmap, huginn, issue-143, issue-144, issue-145, issue-146, issue-147]
+    path: architecture/2026-07-22-torch-free-onnx-rvc-ephemeral-worker.md
+    summary: "Run the two trained RVC voices as a torch-free ONNX pipeline (onnxruntime+numpy+faiss) in an ephemeral per-job Python worker (load once per document, warm across blocks, EXIT → 0 idle RAM), wrapped as a Go render.Renderer decorator over sherpa; shared buildRenderer(voice) helper feeds CLI --voice + MCP voice arg; worker-unavailable → hard error (honesty), 40kHz end-to-end when RVC on. REJECTED: shelling Applio per-clip (cold start + faiss/torch OpenMP segfault), a warm daemon (~3GB idle), and fully in-process Go/onnxruntime-go (D) — same native lib so no speed gain over C, costs un-deferring CGo + a Go DSP reimpl; D deferred to ride the future sherpa-onnx-go CGo migration. Also rejected rvc-python/MLX/CoreML and voice-family swaps (knn-vc/seed-vc/FreeVC discard the trained voices). Piloted on M1: parity user-confirmed by ear (per-stage corr ≥0.9999, log-mel 0.982); ONNX cold 9.0s vs torch 15.4s, warm 6.9 vs 7.8s/clip, RAM 2.75-3.7 vs 4.5-5.9GB; keep-alive saves only ~2s/clip so exit-after-job wins. mmap demoted to optional flag. Follow-ups #143-#147; trail in research/rvc-voice-conversion-integration/."
   - id: 2026-07-10-comma-grouped-degroup-prepass-not-tokenizer
     title: "Comma-grouped degroup handled as a step-0 pre-pass, not by extending the maximal-run tokenizer"
     date: 2026-07-10
