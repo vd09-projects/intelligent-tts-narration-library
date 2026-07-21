@@ -35,6 +35,7 @@ build/
 
 # TTS model weights (large, downloaded out-of-band per render/sherpa/README.md)
 models/
+assets
 
 # Claude handoff state — per-machine, regenerable; never commit
 .claude/handoff/
