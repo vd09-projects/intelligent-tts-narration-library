@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# rvc-export — productionize an Applio-trained RVC voice into the ONNX artifacts the
+# runtime needs. Torch (Applio venv) is used ONCE here, offline; the runtime is
+# torch-free (onnxruntime + numpy + faiss). See scripts/rvc-export/_common.py for
+# the artifact layout and the pilot report (§3 net_g I/O, §5 export gotchas).
+#
+# Usage:
+#   rvc-export voice <slug>        full per-voice pipeline:
+#                                    export_shared (if shared artifacts missing)
+#                                    → export_netg → dump_index → validate
+#   rvc-export shared [--force]    (re)build only the voice-independent artifacts
+#
+# Env: uses the Applio venv python (torch) + the MPS/OpenMP fixes rvc-convert.sh uses.
+# Override the Applio checkout with APPLIO_DIR.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Default: Applio sits beside this repo (…/TTS/Applio). HERE = <repo>/scripts/rvc-export,
+# so HERE/../../.. is the parent dir that holds both. Override with APPLIO_DIR.
+APPLIO_DIR="${APPLIO_DIR:-$(cd "$HERE/../../.." && pwd)/Applio}"
+PY="$APPLIO_DIR/.venv/bin/python"
+
+if [[ ! -x "$PY" ]]; then
+  echo "rvc-export: Applio venv python missing at $PY (set APPLIO_DIR)" >&2
+  exit 2
+fi
+
+# MPS fallback + faiss/torch OpenMP conflict fixes (same as rvc-convert.sh).
+export APPLIO_DIR
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+export KMP_DUPLICATE_LIB_OK=TRUE
+export OMP_NUM_THREADS=1
+
+cmd="${1:-}"
+case "$cmd" in
+  voice)
+    slug="${2:?voice slug required, e.g. cool-jahns}"
+    echo "== rvc-export voice=$slug =="
+    echo "-- ensure shared artifacts (contentvec + rmvpe) --"
+    "$PY" "$HERE/export_shared.py"
+    echo "-- export net_g --"
+    "$PY" "$HERE/export_netg.py" --voice "$slug"
+    echo "-- dump faiss index vectors --"
+    "$PY" "$HERE/dump_index.py" --voice "$slug"
+    echo "-- validate --"
+    "$PY" "$HERE/validate.py" --voice "$slug"
+    ;;
+  shared)
+    shift || true
+    echo "== rvc-export shared $* =="
+    "$PY" "$HERE/export_shared.py" "$@"
+    ;;
+  *)
+    echo "usage: rvc-export voice <slug> | rvc-export shared [--force]" >&2
+    exit 2
+    ;;
+esac

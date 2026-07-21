@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -45,8 +45,13 @@ help:
 	@echo "  earshot-test           — Vitest unit + component + a11y suite (no audio)"
 	@echo "  earshot-lint           — ESLint (flat config)"
 	@echo ""
+	@echo "RVC → ONNX export (#143 — needs the Applio venv w/ torch; artifacts gitignored):"
+	@echo "  rvc-export VOICE=<slug> — export+validate one voice → assets/rvc-models/<slug>/onnx/ (net_g + index_vectors; runs rvc-export-shared first if _shared missing)"
+	@echo "  rvc-export-shared      — (re)build voice-independent _shared/onnx/{contentvec,rmvpe}.onnx + mel basis (add FORCE=1 to rebuild)"
+	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
+	@echo "RVC voice slug: make rvc-export VOICE=cool-jahns  (or confident-neal)"
 
 build:
 	go build ./...
@@ -178,3 +183,18 @@ earshot-test: $(EARSHOT_DIR)/node_modules
 
 earshot-lint: $(EARSHOT_DIR)/node_modules
 	cd $(EARSHOT_DIR) && npm run lint
+
+# ---- RVC → ONNX export (#143) ----
+# Productionize an Applio-trained RVC .pth voice into the ONNX + npy artifacts the
+# torch-free runtime consumes. All heavy lifting + env (Applio venv python, MPS /
+# OpenMP fixes) lives in scripts/rvc-export/rvc-export (mirrors scripts/kokoro).
+# Outputs land under assets/rvc-models/ and are gitignored (large, regenerable —
+# backed up to the vd09-projects/rvc-voices HF repo; see that dir's README).
+RVC_FORCE_FLAG := $(if $(FORCE),--force,)
+
+rvc-export:
+	@test -n "$(VOICE)" || { echo "VOICE required, e.g. make rvc-export VOICE=cool-jahns"; exit 2; }
+	scripts/rvc-export/rvc-export voice $(VOICE)
+
+rvc-export-shared:
+	scripts/rvc-export/rvc-export shared $(RVC_FORCE_FLAG)

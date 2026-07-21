@@ -33,9 +33,22 @@ build/
 # Python venv (kokoro subprocess runtime — per-machine)
 .venv/
 
+# Python bytecode cache (scripts/*.py, scripts/rvc-export/*.py)
+__pycache__/
+*.pyc
+
 # TTS model weights (large, downloaded out-of-band per render/sherpa/README.md)
 models/
 assets
+
+# RVC → ONNX export artifacts (#143). Large + regenerable via `make rvc-export`,
+# backed up to the vd09-projects/rvc-voices HF repo. Belt-and-suspenders: `assets`
+# above already ignores these wholesale, but keep the intent explicit in case that
+# blanket rule is ever narrowed.
+assets/rvc-models/**/onnx/*.onnx
+assets/rvc-models/**/onnx/*.npy
+assets/rvc-models/**/onnx/*.npz
+assets/rvc-models/_shared/
 
 # Claude handoff state — per-machine, regenerable; never commit
 .claude/handoff/
