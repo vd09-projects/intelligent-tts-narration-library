@@ -28,6 +28,9 @@ Kokoro controls WHAT is said + pacing; the RVC `.pth` controls WHO it sounds lik
   ```bash
   export PYTORCH_ENABLE_MPS_FALLBACK=1
   export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+  # REQUIRED for inference WITH the index on (fixes the faiss/torch OpenMP segfault — see gotcha 5):
+  export KMP_DUPLICATE_LIB_OK=TRUE
+  export OMP_NUM_THREADS=1
   ```
 - **Kokoro** (for making source clips) is the repo venv: `intelligent-tts-narration-library-manual/.venv/bin/python3` + `models/kokoro-v1.0.onnx`.
 - Prerequisite models (rmvpe, contentvec, pretrained f0G40k/f0D40k) are already downloaded under `Applio/rvc/models/`. If missing: `cd Applio && .venv/bin/python core.py prerequisites`.
@@ -156,16 +159,17 @@ s,sr=k.create('Your narration text here.', voice='am_michael', speed=1.0, lang='
 p=(np.clip(s,-1,1)*32767).astype(np.int16)
 w=wave.open('src.wav','wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(p.tobytes())"
 
-# 2) convert -> your voice:
+# 2) convert -> your voice (index ON):
 cd /Users/vikrantdhawan/repos/TTS/Applio
 export PYTORCH_ENABLE_MPS_FALLBACK=1; export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+export KMP_DUPLICATE_LIB_OK=TRUE; export OMP_NUM_THREADS=1     # <-- REQUIRED or faiss segfaults
 .venv/bin/python core.py infer \
   --input_path /path/src.wav --output_path /path/out.wav \
   --pth_path   .../assets/rvc-models/<slug>/Display_Name.pth \
   --index_path .../assets/rvc-models/<slug>/Display_Name.index \
-  --pitch 0 --f0_method rmvpe --index_rate 0.0
+  --pitch 0 --f0_method rmvpe --index_rate 0.5
 ```
-⚠️ **GOTCHA 5 — faiss segfaults with the `.index`.** `faiss-cpu 1.14.3` + `numpy 2.x` → **segfault (exit 139)** during index search. **Use `--index_rate 0.0`** (skips the faiss retrieval). The `.index` would sharpen timbre — enable it only after repinning faiss/numpy. `--index_path` is still **required** even at rate 0 (pass the real one, or any existing `.index`).
+✅ **GOTCHA 5 — faiss segfault (SOLVED).** The crash (exit 139 in `faiss ... search` → `pipeline.py _retrieve_speaker_embeddings`) is **NOT** a numpy version issue — it's an **OpenMP runtime conflict**: faiss-cpu and torch each bundle their own libomp, and on macOS loading both crashes faiss's threaded search. **Fix = two env vars: `KMP_DUPLICATE_LIB_OK=TRUE` + `OMP_NUM_THREADS=1`.** With those set, `--index_rate 0.5`–`0.75` works and sharpens timbre toward the real speaker; `0.0` = model-only. (Verified: faiss search alone works fine — only the faiss+torch combo needed the fix. No package repin.) `--index_path` is required regardless.
 - **`--pitch`:** match source→target gender. Female source → female target = `0`. Male source → female target = `+12`. Female source → male target = `-12`. Same gender = `0`. (Check output pitch with the analyzer; ~120–150Hz = male, ~180–255Hz = female.)
 - ⚠️ **Don't build paths with `$(ls ...)`** — color codes corrupt the path → `NoneType has no attribute 'pipeline'`. Use `python -c "import glob; print(glob.glob(...)[0])"` or literal paths.
 - Speed: ~5–8s per clip on M1 CPU. New engines clip hot → normalize levels if mixing.
@@ -179,7 +183,7 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1; export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.
 | 2 | preprocess: `--cut_preprocess required` | add `--cut_preprocess Automatic` |
 | 3 | extract: `--include_mutes required` | add `--include_mutes 2` |
 | 4 | `No such file: assets/config.json`, no inference `.pth` | `cp assets/config_template.json assets/config.json` (once) |
-| 5 | inference exit 139 / segfault | `--index_rate 0.0` (faiss+numpy2 ABI bug) |
+| 5 | inference exit 139 / segfault (faiss+torch OpenMP clash) | `export KMP_DUPLICATE_LIB_OK=TRUE; export OMP_NUM_THREADS=1` → index works at `--index_rate 0.5`+ |
 | — | `NoneType ... 'pipeline'` | path corrupted by `ls` color or missing file — use clean glob/literal path |
 | — | MPS crash | everything runs on CPU (config auto-selects it); keep the MPS-fallback env vars |
 
