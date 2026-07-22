@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -48,6 +48,12 @@ help:
 	@echo "RVC → ONNX export (#143 — needs the Applio venv w/ torch; artifacts gitignored):"
 	@echo "  rvc-export VOICE=<slug> — export+validate one voice → assets/rvc-models/<slug>/onnx/ (net_g + index_vectors; runs rvc-export-shared first if _shared missing)"
 	@echo "  rvc-export-shared      — (re)build voice-independent _shared/onnx/{contentvec,rmvpe}.onnx + mel basis (add FORCE=1 to rebuild)"
+	@echo ""
+	@echo "RVC torch-free inference worker (#144 — needs .venv-rvc; parity fixtures committed):"
+	@echo "  rvc-worker-venv        — build .venv-rvc (python3.12) from scripts/rvc-requirements.txt (asserts torch absent + prints freeze)"
+	@echo "  rvc-parity             — always-on gate: per-stage refio corr + full-pipeline log-mel + protocol contract + arg/atomic/format"
+	@echo "  rvc-parity-gen         — (re)generate committed gate targets from the Applio torch ref (SOURCE=<clip.wav> [VOICE=<slug>])"
+	@echo "  rvc-convert VOICE=<slug> IN=<wav> OUT=<wav> — single by-ear smoke through scripts/rvc (INDEX_RATE optional)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -198,3 +204,43 @@ rvc-export:
 
 rvc-export-shared:
 	scripts/rvc-export/rvc-export shared $(RVC_FORCE_FLAG)
+
+# ---- RVC torch-free inference worker (#144) ----
+# The ephemeral warm-load-once subprocess engine (#145 drives it later). Its venv
+# is DEDICATED + torch-free (.venv-rvc, NOT the shared .venv) so the worker's
+# startup guard — an explicit unconditional `if _TORCH_PRESENT: FATAL + sys.exit(78)`
+# (EX_CONFIG), unstrippable by `python -O`/PYTHONOPTIMIZE unlike a bare assert — is a
+# real guarantee. Built with python3.12 to match the pilot (onnxruntime/faiss wheels;
+# the system python3 may be newer).
+RVC_VENV := .venv-rvc
+RVC_PY := $(RVC_VENV)/bin/python
+PYTHON312 ?= python3.12
+
+rvc-worker-venv:
+	$(PYTHON312) -m venv $(RVC_VENV)
+	$(RVC_PY) -m pip install --upgrade pip
+	$(RVC_PY) -m pip install -r scripts/rvc-requirements.txt
+	@$(RVC_PY) -c "import onnxruntime,numpy,faiss,scipy,librosa,soxr,soundfile; print('torch-free deps import OK')"
+	@if $(RVC_PY) -c "import torch" 2>/dev/null; then echo "FAIL: torch present in $(RVC_VENV)"; exit 1; fi
+	@if $(RVC_PY) -m pip freeze | grep -i '^torch'; then echo "FAIL: torch in pip freeze"; exit 1; fi
+	@echo "ok: $(RVC_VENV) is torch-free. Freeze below — capture into scripts/rvc-requirements.txt provenance:"
+	@$(RVC_PY) -m pip freeze
+
+rvc-parity:
+	@test -x $(RVC_PY) || { echo "no $(RVC_VENV) — run 'make rvc-worker-venv'"; exit 2; }
+	$(RVC_PY) tests/rvc_parity/parity_test.py
+
+# Regenerate the committed full-pipeline gate targets from the Applio torch path
+# (plan Step 0a). Pass SOURCE=<clip.wav> the first time to commit fixtures/source.wav.
+rvc-parity-gen:
+	@test -x $(RVC_PY) || { echo "no $(RVC_VENV) — run 'make rvc-worker-venv'"; exit 2; }
+	$(RVC_PY) tests/rvc_parity/gen_targets.py $(if $(SOURCE),--source $(SOURCE),) $(if $(VOICE),--voice $(VOICE),)
+
+# Single by-ear smoke: one line through scripts/rvc. INDEX_RATE defaults per voice
+# (cool-jahns 0.75, confident-neal 0.5). Pitch fixed to 0 (phase one).
+rvc-convert:
+	@test -n "$(VOICE)" || { echo "VOICE required, e.g. make rvc-convert VOICE=cool-jahns IN=in.wav OUT=out.wav"; exit 2; }
+	@test -n "$(IN)" || { echo "IN required (source wav)"; exit 2; }
+	@test -n "$(OUT)" || { echo "OUT required (dest wav)"; exit 2; }
+	@ir="$(INDEX_RATE)"; if [ -z "$$ir" ]; then case "$(VOICE)" in confident-neal) ir=0.5;; *) ir=0.75;; esac; fi; \
+	  printf '"%s" "%s" %s %s 0\n' "$(IN)" "$(OUT)" "$(VOICE)" "$$ir" | scripts/rvc && echo "wrote $(OUT) (voice=$(VOICE) index_rate=$$ir)"

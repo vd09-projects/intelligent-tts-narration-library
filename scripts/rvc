@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Torch-free RVC voice-conversion worker wrapper (issue #144).
+#
+# Activates the DEDICATED torch-free venv (.venv-rvc — NOT the shared .venv, which
+# carries kokoro-onnx) and execs the Python runner. The runner reads a stdin/stdout
+# line loop: `<in> <out> <voice> <index_rate> <pitch>` -> `OK <out>` / `ERR <cat> <msg>`.
+#
+# The dedicated venv is what makes the worker's `assert "torch" not in sys.modules`
+# a real guarantee. Build it once with:  make rvc-worker-venv
+#
+# See scripts/rvc-README for the full protocol + failure modes.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="$ROOT/.venv-rvc"
+
+if [[ ! -f "$VENV/bin/activate" ]]; then
+  echo "rvc: torch-free venv missing at $VENV — run 'make rvc-worker-venv'" >&2
+  exit 2
+fi
+
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
+
+exec python3 "$ROOT/scripts/rvc_worker.py" "$@"

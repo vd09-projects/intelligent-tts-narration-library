@@ -1,0 +1,115 @@
+RVC torch-free voice-conversion worker (issue #144)
+===================================================
+
+The ephemeral, warm-load-once subprocess engine that converts a Kokoro (or any)
+source WAV into one of our trained RVC voices, torch-free. This is the shared
+engine the future Go decorator (#145) will drive; this deliverable is the Python
+worker + wrapper + venv + parity gate only. No Go code.
+
+Files
+-----
+  scripts/rvc                  bash wrapper — activates .venv-rvc, execs the runner
+  scripts/rvc_worker.py        the runner (DSP §4 port + protocol loop)
+  scripts/rvc-requirements.txt  exact-pinned torch-free deps
+  tests/rvc_parity/            standalone parity + contract gate (make rvc-parity)
+
+Setup
+-----
+  make rvc-worker-venv         # builds .venv-rvc (python3.12), installs pinned deps,
+                               # asserts torch is absent
+
+  Requires the #143 export artifacts on disk under assets/rvc-models/ (gitignored,
+  regenerable via `make rvc-export`, backed up to the vd09-projects/rvc-voices HF
+  repo). The worker fails cleanly at startup if a shared artifact is missing.
+
+Wire protocol (v1) — the contract #145 binds to
+------------------------------------------------
+Read stdin line by line. Each line is shlex-split into EXACTLY 5 positional tokens:
+
+    <in> <out> <voice> <index_rate> <pitch>
+
+  <in>          source WAV path (any sr/channels; decoded + resampled to 16 kHz)
+  <out>         output WAV path (40 kHz mono s16le; written atomically)
+  <voice>       roster slug: cool-jahns | confident-neal
+  <index_rate>  float in [0.0, 1.0]; the LINE's value is authoritative
+  <pitch>       int; MUST be 0 in phase one (non-zero rejected — no transpose)
+
+Response — exactly ONE physical line per request (response count == request count):
+
+    OK <out>                     success; the WAV now exists at <out>
+    ERR <category> <message>     recoverable failure; the loop continues
+
+  <category> ∈ { bad-args | bad-voice | read-failed | infer-failed | write-failed }
+
+  Grammar of what can appear on a response line:
+    ┌────────────┬───────────────────────────────────────────────────────────┐
+    │ OK  <out>  │ conversion succeeded, file written                          │
+    │ ERR bad-args      │ wrong token count / bad index_rate / non-int or ≠0 pitch │
+    │ ERR bad-voice     │ <voice> not in the roster                            │
+    │ ERR read-failed   │ <in> missing / undecodable                           │
+    │ ERR infer-failed  │ a stage raised during conversion (recoverable)       │
+    │ ERR write-failed  │ atomic write to <out> failed (no partial left)       │
+    └────────────┴───────────────────────────────────────────────────────────┘
+
+  <message> has newlines/CRs collapsed to spaces and is capped at 300 chars, so an
+  ERR is ALWAYS one physical line. A newline/CR-bearing <in> or <out> is REJECTED
+  up front as `ERR bad-args` (paths must be single-line), so the `OK <out>` line
+  echoes the REAL written path verbatim — the OK name and the file on disk can never
+  diverge. #145 branches on the <category> token alone; an unknown category
+  (forward-compat) should be treated as fatal.
+
+Forward-compat: the 5-token line is positional and append-only. Never reorder or
+repurpose a token; future capability is a trailing optional token with an
+engine-faithful default. The ERR category set is append-only.
+
+Process semantics
+-----------------
+  EOF on stdin                  -> clean exit 0 (models freed; 0 idle RAM)
+  BrokenPipeError writing out   -> clean exit 0 (parent closed the pipe)
+  MemoryError / catchable fatal -> stderr + nonzero exit (NOT a per-block ERR)
+  missing artifact / torch      -> stderr + nonzero exit (startup fatal)
+  native fault (segfault)       -> nonzero signal exit (uncatchable in Python)
+
+Timeouts (60 s/block, 10 min/wall) are the Go caller's (#145) job, not the worker's.
+
+Models load once; `LOAD <kind> <slug>` prints to stderr exactly once per (kind,
+voice) — the warm-load-once proof the parity gate asserts.
+
+Trust assumptions (phase-one)
+-----------------------------
+The worker trusts its caller. `_atomic_write_wav` creates parent directories from
+the caller-supplied <out> path with NO containment check — a <out> of
+`../../elsewhere/x.wav` (or an absolute path) writes there, and <in> is read from
+wherever it points. This is ACCEPTABLE under phase-one local-only operation with a
+single trusted producer (today a human via `make rvc-convert`; tomorrow the #145 Go
+decorator, itself the trust boundary). If #145 ever fronts a less-trusted producer
+(paths derived from untrusted network input), add a path-jail — resolve + confine
+<in>/<out> under an allowed root — THEN; it is deliberately not paid for now. The
+local-only secrets caveat still applies: a source clip is read, and its conversion
+written, wherever told.
+
+Env switches (both first-class, default OFF)
+--------------------------------------------
+  OMP_NUM_THREADS=1   single-thread ORT (intra_op=1). Pre-wired fallback for the
+                      faiss+ORT OpenMP-contention case. Default is ORT multithread
+                      (safe — torch, the other libomp, is never imported).
+  RVC_SEED=<int>      seed numpy RNG so the external net_g flow noise (`rnd`) is
+                      deterministic — used by `make rvc-parity`. The internal
+                      net_g NSF-dither RandomNormalLike is ORT-generated and NOT
+                      seedable; it is the ~0.0009-RMS parity floor.
+
+Deferred (documented, NOT shipped)
+----------------------------------
+  --mmap   a memory-mapped model-load flag. Full-load is the sole shipped path and
+           what parity judges (review S7). Not wired — do not add a half-flag.
+
+Manual smoke
+------------
+  make rvc-convert VOICE=cool-jahns IN=some.wav OUT=/tmp/out.wav   # by ear
+
+Parity gate
+-----------
+  make rvc-parity   # per-stage refio corr ≥0.999 + full-pipeline log-mel corr
+                    # ≥0.98 (both voices) + torch-free banner + protocol-loop
+                    # contract + arg validation + atomic write + WAV format.
+                    # Needs the committed fixtures (tests/rvc_parity/gen_targets.py).

@@ -1,0 +1,51 @@
+# scripts/rvc-requirements.txt — torch-free RVC inference worker (issue #144)
+#
+# The lean, torch-free dependency set for scripts/rvc_worker.py. Installed into a
+# DEDICATED venv (.venv-rvc) by `make rvc-worker-venv` — NOT the shared .venv
+# (which carries kokoro-onnx). The dedicated, torch-free venv is what makes the
+# worker's `assert "torch" not in sys.modules` a meaningful guarantee.
+#
+# HARD RULE: every line is an exact `==` pin. Never a `>=`, never a bare name.
+# Unpinned deps make `make rvc-parity` non-reproducible at the plan's own 1e-7
+# per-stage tolerances (review round-1 blocker B1).
+#
+# Torch is NOT here and must never appear. Torch is export-time only (#143), and
+# lives in a SEPARATE Applio venv. Venv build asserts `pip freeze | grep -i torch`
+# is empty (review S5).
+#
+# ── Provenance ──────────────────────────────────────────────────────────────
+# THREE pins are RECORDED from the committed pilot report header
+# (research/rvc-voice-conversion-integration/pilot-evidence/PILOT_REPORT.md,
+# "Env:" line — Applio .venv, Python 3.12, macOS arm64, 2026-07-21). These are
+# the versions that produced the 0.982 log-mel parity:
+#     onnxruntime 1.27.0 · faiss-cpu 1.14.3 · numpy 2.4.6
+#
+# The remaining four (scipy, librosa, soxr, soundfile) were NOT individually
+# versioned in the pilot report ("librosa/soxr/scipy" only). They are pinned here
+# to best-known py3.12/numpy-2.4-compatible releases and marked PENDING
+# parity-verification. Per the plan's lost-venv risk mitigation, the authoritative
+# capture is: run `make rvc-worker-venv` (which prints `pip freeze`), then replace
+# EVERY line below with the exact frozen version (ideally the full transitive
+# closure), and update this header to "re-derived, parity-verified <date>". Do NOT
+# treat the four PENDING pins as final until that freeze is done and `make
+# rvc-parity` is green.
+#
+# ── License note (review S1 — accurate restatement) ─────────────────────────
+# onnxruntime  MIT · numpy BSD-3 · faiss-cpu MIT · scipy BSD-3 · librosa ISC ·
+# soundfile BSD-3 (bundles libsndfile, LGPL-2.1) · soxr BSD (bundles libsoxr,
+# LGPL-2.1). The two LGPL-2.1 native libs are fine because the worker runs as a
+# SEPARATE subprocess venv: no static linkage into the Go binary, so the LGPL
+# dynamic-link + process boundary keeps the Go library unencumbered. No GPL, no
+# Piper linkage, no torch. (This corrects the earlier "Apache-2.0 only" claim.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# --- RECORDED from PILOT_REPORT §header (authoritative) ---
+onnxruntime==1.27.0
+numpy==2.4.6
+faiss-cpu==1.14.3
+
+# --- PENDING parity-verification (re-pin from `make rvc-worker-venv` freeze) ---
+scipy==1.16.0
+librosa==0.11.0
+soxr==0.5.0
+soundfile==0.13.1
