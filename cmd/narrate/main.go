@@ -36,6 +36,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -45,7 +46,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
@@ -91,10 +92,19 @@ var (
 // knobs. Empty Block preserves the whole-document flow; non-empty Block
 // routes through the pipeline.NarrateRequest.BlockID branch.
 type flagSet struct {
-	File                string
-	Level               int
-	Sink                string
-	Gender              string
+	File   string
+	Level  int
+	Sink   string
+	Gender string
+	// Voice is the optional RVC character voice slug (cool-jahns |
+	// confident-neal). Empty (the default) preserves the plain-Kokoro
+	// 24 kHz path byte-identically. When set, the renderer is the render/rvc
+	// decorator (40 kHz), the persistent sink validates against 40 kHz, and
+	// manifest.voice records this slug (Decision D6). --voice overrides
+	// --gender (the decorator picks the Kokoro source); the two together emit
+	// a non-fatal stderr notice (Decision D4'). Rejected with --listen for
+	// #146 (Decision D4). Per issue #146.
+	Voice               string
 	Block               string
 	ExpectedContentHash string
 	// Out is the destination directory for --sink=persistent. Required when
@@ -142,10 +152,21 @@ var newPipeline = func(outDir string, args flagSet) pipeline.Narrator {
 // sub-plan + sub-result back after Narrate runs. Tests that stub newPipeline
 // keep working; tests that exercise the patch path can stub this seam.
 var newPipelineWithSink = func(outDir string, args flagSet, s sink.OutputSink) pipeline.Narrator {
+	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	if err != nil {
+		// validate() pins args.Voice to a known slug (or empty) before this
+		// seam runs, so BuildRenderer's only reachable error —
+		// ErrUnsupportedVoice — cannot fire here. Any error is therefore a
+		// composition-root bug (validate() drifted from its contract), the same
+		// unreachable-guard precedent chooseIntelligence uses. The seam returns
+		// no error (R1 — keep factory-seam signatures stable), so a genuine bug
+		// panics loudly rather than silently degrading to Kokoro.
+		panic(fmt.Sprintf("buildRenderer failed after validation: %v", err))
+	}
 	return pipeline.New(
 		file.New(),
 		chooseIntelligence(args),
-		sherpa.New(sherpa.EngineConfig{}),
+		renderer,
 		s,
 		pipeline.PipelineDefaults{
 			Level:  plan.Level(args.Level),
@@ -212,6 +233,18 @@ func chooseSink(args flagSet) sink.OutputSink {
 		if args.Block != "" {
 			return &capturingSink{}
 		}
+		if args.Voice != "" {
+			// RVC render (D6): record the CHARACTER slug the user asked to hear
+			// in manifest.voice — not its hidden gender-derived Kokoro source —
+			// and supply the 40 kHz format so the format-validating sink accepts
+			// the RVC container. Both derive from the same source of truth as the
+			// renderer (rvc.OutputFormat via BuildRenderer), so sink-expected-
+			// format and renderer-format cannot drift (D1).
+			return persistent.New(args.Out,
+				persistent.WithVoice(args.Voice),
+				persistent.WithExpectedFormat(rvc.OutputFormat()),
+			)
+		}
 		voice, ok := genderToVoice[args.Gender]
 		if !ok {
 			// Should be unreachable — validate() pins Gender. Sentinel:
@@ -220,6 +253,8 @@ func chooseSink(args flagSet) sink.OutputSink {
 			// every Gender value validate() accepts.
 			voice = ""
 		}
+		// Plain-Kokoro path: NO WithExpectedFormat → the sink keeps its 24 kHz
+		// default, byte-identical to pre-#146 behavior (F5 counter-metric).
 		return persistent.New(args.Out, persistent.WithVoice(voice))
 	}
 	return ephemeral.New()
@@ -281,6 +316,16 @@ func newRootCmd(deps runDeps) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
+			// Decision D4' — non-fatal notice when an explicit --gender is paired
+			// with a valid --voice: the RVC decorator overrides the Kokoro source,
+			// so --gender has no effect. Gated on a VALID voice so an invalid
+			// --voice surfaces only its own validation error (no misleading
+			// notice). Emitted here (not validate()) because this is the only
+			// layer with both cobra's Changed() and a stderr writer.
+			if c.Flags().Changed("gender") && rvc.IsSupportedVoice(args.Voice) {
+				_, _ = fmt.Fprintln(deps.stderr,
+					"notice: --gender ignored when --voice is set (RVC selects the Kokoro source)")
+			}
 			return deps.run(c.Context(), args, deps.stdout, deps.stderr)
 		},
 	}
@@ -289,6 +334,7 @@ func newRootCmd(deps runDeps) *cobra.Command {
 	cmd.Flags().IntVar(&args.Level, "level", 1, "leveling depth: 1 (gist) | 2 (summary) | 3 (detail)")
 	cmd.Flags().StringVar(&args.Sink, "sink", "ephemeral", "output sink: ephemeral | persistent")
 	cmd.Flags().StringVar(&args.Gender, "gender", "female", "voice gender: female | male")
+	cmd.Flags().StringVar(&args.Voice, "voice", "", "RVC character voice: "+strings.Join(rvc.SupportedVoices(), " | ")+" (40 kHz; requires the RVC worker; empty = plain Kokoro; overrides --gender; rejected with --listen)")
 	cmd.Flags().StringVar(&args.Block, "block", "", "re-render a single block by id (from the roster); --level is the target level for that block")
 	cmd.Flags().StringVar(&args.ExpectedContentHash, "expected-content-hash", "", "warn on stderr if the document content_hash differs from this value (only meaningful with --block)")
 	cmd.Flags().StringVar(&args.Out, "out", "", "output directory (required when --sink=persistent; rejected with --sink=ephemeral)")
@@ -312,6 +358,14 @@ func (a flagSet) validate() error {
 	}
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		return fmt.Errorf("--gender must be female or male (got %q)", a.Gender)
+	}
+	// Issue #146 — --voice enum. Empty preserves the plain-Kokoro path; a
+	// non-empty value must be a known RVC target slug. Validated EAGERLY here
+	// (exit 2) so an unknown voice is a caller-error BEFORE any temp-dir or
+	// render work — never a silent fallback to Kokoro (honesty rule).
+	if a.Voice != "" && !rvc.IsSupportedVoice(a.Voice) {
+		return fmt.Errorf("--voice must be one of %s (got %q)",
+			strings.Join(rvc.SupportedVoices(), ", "), a.Voice)
 	}
 	// F3 (#14 review): --expected-content-hash is only meaningful with
 	// --block — without --block the pipeline takes the whole-doc path and
@@ -375,6 +429,17 @@ func (a flagSet) validate() error {
 	}
 	if a.Listen && a.Sink == "persistent" {
 		return fmt.Errorf("--listen cannot be combined with --sink=persistent (listen is ephemeral and decoupled from the durable sink)")
+	}
+	// Issue #146 (Decision D4) — reject --voice with --listen for now. The
+	// listen transport plays through a fixed 24 kHz oto context
+	// (listen_oto.go: otoSampleRate = 24000); an RVC render is 40 kHz, so
+	// playing it there would resample-by-accident. Rejecting mirrors the
+	// existing --listen×--block / --listen×--sink=persistent guards (exit 2).
+	// Full listen-mode RVC (dynamic oto sample rate) is a named follow-up.
+	// TODO: support --voice with --listen via a dynamic oto.NewContext sample
+	// rate in cmd/narrate/listen_oto.go; deferred from #146 (OQ1).
+	if a.Listen && a.Voice != "" {
+		return fmt.Errorf("--listen cannot be combined with --voice (listen plays through a fixed 24 kHz context; RVC is 40 kHz — pending dynamic oto rate)")
 	}
 	return nil
 }
@@ -492,9 +557,20 @@ func runNarrate(ctx context.Context, args flagSet, stdout, stderr io.Writer) err
 		if !capturer.captured {
 			return fmt.Errorf("internal: patch path produced no captured render result for block %s", args.Block)
 		}
+		patchOpts := []persistent.Option{persistent.WithVoice(genderToVoice[args.Gender])}
+		if args.Voice != "" {
+			// D6 — an RVC patch records the character slug (not the Kokoro
+			// source) and validates the container at 40 kHz. patch.go already
+			// overrides manifest.Voice from WithVoice when non-empty, so only the
+			// passed value changes.
+			patchOpts = []persistent.Option{
+				persistent.WithVoice(args.Voice),
+				persistent.WithExpectedFormat(rvc.OutputFormat()),
+			}
+		}
 		rec, perr := persistent.PatchBlock(
 			ctx, args.Out, capturer.plan, capturer.result, args.Block,
-			persistent.WithVoice(genderToVoice[args.Gender]),
+			patchOpts...,
 		)
 		if perr != nil {
 			// PatchBlock refusals (ErrNothingToPatch / ErrStalePatch /
