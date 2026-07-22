@@ -28,7 +28,7 @@ The ephemeral sink cleans up its temp WAV directory at the end of the run. The p
 |---|---|---|---|
 | `--file` | — (required) | path | Markdown document to narrate. |
 | `--level` | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. With `--block`, this is the absolute target level for that one block — downgrade L3→L1 supported. |
-| `--sink` | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` is not implemented in this slice and exits non-zero. |
+| `--sink` | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` writes `audio.wav`, `plan.json`, and `manifest.json` to the `--out` directory (required with `--sink=persistent`). |
 | `--gender` | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. Ignored when `--voice` is set (a one-line stderr notice says so). |
 | `--voice` | empty | `cool-jahns` / `confident-neal` | RVC character voice (see "RVC character voices" below). Empty = plain Kokoro. Requires the RVC worker; an unknown slug or a missing worker exits non-zero (no silent fallback). Rejected with `--listen`. |
 | `--block` | empty | block id | Re-render a single block by id (from the roster printed at the end of every whole-doc run). Empty preserves whole-document narration. |
