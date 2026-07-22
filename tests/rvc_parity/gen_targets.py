@@ -20,8 +20,11 @@ Usage:
     # or, if source.wav is already committed:
     .venv-rvc/bin/python tests/rvc_parity/gen_targets.py
 
-After running, `git add tests/rvc_parity/fixtures/` and commit — these are the
-gate assets a fresh clone needs to run `make rvc-parity`.
+The generated fixtures (source .wav, *_ref.wav, *.npy log-mel targets) are LOCAL
+and gitignored — do NOT commit them (the repo forbids .wav binaries and the local
+source is personal audio). They only need to exist on your machine before
+`make rvc-parity`. Fresh-clone reproducibility via a public-download fixture flow
+is deferred to issue #151.
 """
 
 from __future__ import annotations

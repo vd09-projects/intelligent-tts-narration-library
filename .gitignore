@@ -52,3 +52,10 @@ assets/rvc-models/_shared/
 
 # Claude handoff state — per-machine, regenerable; never commit
 .claude/handoff/
+
+.venv-rvc
+
+# RVC parity fixtures — local/generated, hosted per #151, never committed
+# (README.md in that dir stays tracked; only the generated binaries are ignored)
+tests/rvc_parity/fixtures/*.wav
+tests/rvc_parity/fixtures/*.npy
