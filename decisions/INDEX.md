@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-22-rvc-decorator-owns-voice-map-single-translation
+    title: "RVC decorator owns the target->{Kokoro source, index_rate, pitch} map; translation happens exactly once"
+    date: 2026-07-22
+    status: accepted
+    category: architecture
+    tags: [rvc, voice-conversion, render-decorator, voice-map, single-source-of-truth, kokoro-source-voice, index-rate, pitch, resolveVoice, sherpa, render-options, phase-3-thin, open-question-2, issue-145, issue-146]
+    path: architecture/2026-07-22-rvc-decorator-owns-voice-map-single-translation.md
+    summary: "Resolves OQ#2 of the #145 render/rvc decorator: the target->source/index_rate/pitch translation happens in EXACTLY ONE place, the decorator, via a map in one file `render/rvc/voice.go`. A user-facing RVC target (cool-jahns / confident-neal) maps to (a) the Kokoro SOURCE voice the model was trained against (am_michael / af_bella), (b) per-voice index_rate (0.75 / 0.5), (c) pitch (always 0). The decorator OVERRIDES the inner renderer's RenderOptions.Voice to the mapped Kokoro source before calling inner.Render/RenderBlock (so sherpa's resolveVoice only ever sees {af_bella, am_michael}) and emits {target, index_rate, pitch} on the worker request line. Phase 3 (#146 CLI/MCP/server wiring) passes the RVC target slug straight into rvc.Config.Voice and translates NOTHING. REJECTED: (a) neither layer translates -> sherpa gets 'cool-jahns' and hard-errors; (b) both decorator AND #146 translate -> double-translation / source-target drift. Single-owner keeps source+target impossible to drift and Phase 3 thin; a new voice = one map entry. Promoted from open question to locked decision after round-1 plan review."
+  - id: 2026-07-22-rvc-per-block-err-fails-whole-render-hard-stop
+    title: "A per-block RVC worker ERR fails the whole Render in phase one (no per-block skip or degrade)"
+    date: 2026-07-22
+    status: accepted
+    category: tradeoff
+    tags: [rvc, voice-conversion, render-decorator, error-handling, honesty-rule, all-or-nothing, per-block-err, no-skip, no-degrade, uniform-format, timeline, 40khz, error-not-refusal, issue-145]
+    path: tradeoff/2026-07-22-rvc-per-block-err-fails-whole-render-hard-stop.md
+    summary: "How the #145 decorator reacts to a per-block worker ERR (closed set {bad-args|bad-voice|read-failed|infer-failed|write-failed}): ANY per-block ERR is a HARD ERROR that stops the entire Render (returned up the pipeline) — NOT a per-block skip, NOT a degrade back to the block's 24kHz Kokoro audio. Rationale: mixing a 24kHz block into an otherwise-40kHz timeline breaks the uniform Format/Timeline contract; silently substituting/fabricating a repaint violates the honesty rule (never fabricate — this is an ERROR, not a refusal, so errors stop the pipeline); bad-args/bad-voice specifically signal a decorator bug building the request line and must surface loudly. REJECTED: (a) skip the failed block -> non-uniform timeline + silent gap; (b) degrade to plain 24kHz Kokoro -> silent format/quality inconsistency + fabricated-quality signal. An RVC job is all-or-nothing at 40kHz; failures stop loudly carrying ERR <category> <message> as a fix hint. Aligns with the honesty-rule-at-the-subprocess-edge theme of the #144 worker decisions."
   - id: 2026-07-22-rvc-worker-wire-contract-err-taxonomy-exit-codes
     title: "RVC worker stdin/stdout wire contract — closed ERR taxonomy + startup/runtime FATAL exit-code split"
     date: 2026-07-22

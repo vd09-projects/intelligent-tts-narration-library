@@ -970,3 +970,38 @@ scopes:
       latency optimization (latency is inherently the pilot's ~7s/clip). Plan
       persisted draft (awaiting user approval before sindri consumes). Genuine
       FIRST persist — version 1, scope dir newly created.
+  - slug: rvc-render-decorator-145
+    title: RVC P2 — Go render/rvc decorator over sherpa (issue #145)
+    created: 2026-07-22
+    reasoning: |
+      Plan cycle for GitHub issue #145 — P2 of the RVC integration chain
+      (#143 export tooling done -> #144 torch-free worker done/PR #148 merged ->
+      #145 render/rvc Go decorator [THIS] -> #146 CLI/MCP + sink 40kHz Format
+      wiring -> #147 verify+docs). Directly consumes the frozen v1 wire contract
+      shipped by the sibling scope rvc-torch-free-worker-144: a Go render.Renderer
+      DECORATOR (render/rvc) wrapping the existing render/sherpa Kokoro engine that
+      repaints each per-block 24kHz WAV through scripts/rvc_worker.py as an
+      EPHEMERAL PER-JOB subprocess (spawn ONE worker per Render, warm across blocks
+      via deadlock-free lockstep request/response + concurrent stderr drain, exit
+      at job end -> ~0 idle RAM; one-shot cold convert for RenderBlock escalation).
+      Owns the voice->Kokoro-source map (cool-jahns->am_michael index_rate 0.75 /
+      confident-neal->af_bella index_rate 0.5, pitch 0 ALWAYS — non-zero rejected
+      by the worker, not clamped) so the 24kHz source voice can't drift from the
+      RVC target. Honesty rule: worker missing/startup-fatal(78)/runtime-fatal(70)/
+      per-block ERR/protocol-violation = HARD Go error with a fix hint
+      (make rvc-export / make rvc-worker-venv), NEVER a silent degrade to plain
+      Kokoro. Rebuilds Timeline from the repainted 40kHz durations (recomputed, not
+      scaled) and sets Format = 40kHz mono s16le on RenderResult/BlockRender/
+      Timeline; the downstream sink Format.SampleRate de-hardcode is #146, flagged
+      as a dependency but out of scope. Table-driven tests + a bash+python3 fake
+      worker (mirrors render/sherpa/testdata/fake-kokoro.sh) so CI runs with no
+      torch, no .venv-rvc, and no exported models. Does NOT touch index_vectors.npy
+      (reserved for the deferred in-process Go kNN path); in-process onnxruntime-go
+      (Option D) deferred. rvc- prefix marks the RVC surface; render-decorator
+      qualifier captures the crux (Go decorator, distinct from the #144 Python
+      worker scope and the #143 export scope); issue-numbered suffix continues the
+      convention. Slug pre-supplied + pre-approved via --scope by the build-session
+      single-skill runner. Planned via mimir task depth, base template (no overlays
+      triggered — single-package Go build wrapping an already-frozen contract).
+      Plan persisted draft (awaiting user approval before sindri consumes). Genuine
+      FIRST persist — version 1, scope dir newly created.
