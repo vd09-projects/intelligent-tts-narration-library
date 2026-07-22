@@ -166,7 +166,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
@@ -240,6 +240,14 @@ type serverArgs struct {
 	CORSOrigin     string
 	RequestTimeout time.Duration
 	Gender         string
+	// Voice is the optional RVC character voice slug (cool-jahns |
+	// confident-neal) for the whole server process — one character voice per
+	// job (Decision D5, launch flag). Empty (the default) preserves the plain-
+	// Kokoro 24 kHz path byte-identically. When set, both the /narrate and
+	// /escalate renders route through the render/rvc decorator (40 kHz), the
+	// persistent sink validates at 40 kHz, and manifest.voice records this slug
+	// (Decision D6). Overrides --gender (RVC selects the Kokoro source). Per #146.
+	Voice string
 	// AudioTTL bounds how long a /narrate-minted wav lives in the server temp
 	// store before the GC reaper removes it (#109 Step 7, the AC5 "settle").
 	AudioTTL time.Duration
@@ -327,10 +335,18 @@ func (c *capturingSink) Consume(_ context.Context, p plan.NarrationPlan, res ren
 // Intelligence is nil phase one (the escalate edge has no intelligence flag);
 // the planner's deterministic + degraded + refuse path is the honesty backbone.
 var newPipeline = func(outDir string, args serverArgs, capturer *capturingSink) pipeline.Narrator {
+	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	if err != nil {
+		// parseFlags pins args.Voice to a known slug (or empty) at startup, so
+		// BuildRenderer's only reachable error — ErrUnsupportedVoice — cannot
+		// fire here. Any error is a composition-root bug; panic rather than
+		// silently degrade to Kokoro.
+		panic(fmt.Sprintf("buildRenderer failed after flag validation: %v", err))
+	}
 	return pipeline.New(
 		file.New(),
 		intelligence.IntelligenceAdapter(nil),
-		sherpa.New(sherpa.EngineConfig{}),
+		renderer,
 		capturer,
 		pipeline.PipelineDefaults{
 			// F2 (mirrors cmd/narrate): the document default level stays L1 on a
@@ -407,12 +423,33 @@ func parseFlags(argv []string, errOut io.Writer) (serverArgs, error) {
 	fs.DurationVar(&a.RequestTimeout, "request-timeout", 120*time.Second, "per-request render timeout (bounds a hung Kokoro render)")
 	fs.DurationVar(&a.AudioTTL, "audio-ttl", 30*time.Minute, "how long a /narrate-minted wav lives before the GC reaper removes it")
 	fs.StringVar(&a.Gender, "gender", "female", "voice gender for the re-render: female | male")
+	fs.StringVar(&a.Voice, "voice", "", "RVC character voice for the whole process: "+strings.Join(rvc.SupportedVoices(), " | ")+" (40 kHz; requires the RVC worker; empty = plain Kokoro; overrides --gender)")
 	if err := fs.Parse(argv); err != nil {
 		return serverArgs{}, err
 	}
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		_, _ = fmt.Fprintf(errOut, "narrate-server: --gender must be female or male (got %q)\n", a.Gender)
 		return serverArgs{}, fmt.Errorf("invalid --gender %q", a.Gender)
+	}
+	// Issue #146 — --voice membership. Empty preserves plain Kokoro; a non-empty
+	// value must be a known RVC slug, else the server refuses to start (non-zero
+	// exit) — never a silent fallback to Kokoro (honesty rule).
+	if a.Voice != "" && !rvc.IsSupportedVoice(a.Voice) {
+		_, _ = fmt.Fprintf(errOut, "narrate-server: --voice must be one of %s (got %q)\n",
+			strings.Join(rvc.SupportedVoices(), ", "), a.Voice)
+		return serverArgs{}, fmt.Errorf("invalid --voice %q", a.Voice)
+	}
+	// Decision D4' — non-fatal startup notice when an explicit --gender is paired
+	// with --voice: the RVC decorator overrides the Kokoro source, so --gender
+	// has no effect. fs.Visit reports only flags actually set on the command line.
+	genderSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "gender" {
+			genderSet = true
+		}
+	})
+	if a.Voice != "" && genderSet {
+		_, _ = fmt.Fprintln(errOut, "narrate-server: notice: --gender ignored when --voice is set (RVC selects the Kokoro source)")
 	}
 	return a, nil
 }
@@ -906,8 +943,16 @@ func escalateInDir(ctx context.Context, args serverArgs, absDir, blockID string,
 			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result for block " + blockID}
 	}
 
-	_, perr := patchBlock(ctx, absDir, capturer.plan, capturer.result, blockID,
-		persistent.WithVoice(genderToVoice[args.Gender]))
+	patchOpts := []persistent.Option{persistent.WithVoice(genderToVoice[args.Gender])}
+	if args.Voice != "" {
+		// D6 — an RVC escalation records the character slug (not the Kokoro
+		// source) in manifest.voice and validates the container at 40 kHz.
+		patchOpts = []persistent.Option{
+			persistent.WithVoice(args.Voice),
+			persistent.WithExpectedFormat(rvc.OutputFormat()),
+		}
+	}
+	_, perr := patchBlock(ctx, absDir, capturer.plan, capturer.result, blockID, patchOpts...)
 	// (e) ErrNothingToPatch → 4xx source_not_found, NOT a 200 no-op.
 	//
 	// CORRECTION (build-review B-1): the real persistent.PatchBlock returns

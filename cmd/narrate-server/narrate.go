@@ -41,7 +41,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
@@ -82,11 +82,23 @@ type narrateResponse struct {
 // wavs there and the persistent sink concatenates them into {outDir}/audio.wav
 // alongside plan.json + manifest.json. Tests swap this var for a stub narrator
 // (no Kokoro).
-var newNarratePipeline = func(voice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator {
+// The first parameter is the RVC voice slug (args.Voice) — empty for plain
+// Kokoro. It selects the RENDERER via pipeline.BuildRenderer; the Kokoro source
+// hint still flows separately through NarrateRequest.Voice in runNarrate. (The
+// param was previously the gender-derived Kokoro id and unused in the body; #146
+// repurposes it to drive the shared engine factory.)
+var newNarratePipeline = func(rvcVoice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator {
+	renderer, _, err := pipeline.BuildRenderer(rvcVoice)
+	if err != nil {
+		// parseFlags pins the process voice to a known slug (or empty) at
+		// startup, so BuildRenderer cannot error here; a non-nil error is a
+		// composition-root bug — panic rather than degrade silently.
+		panic(fmt.Sprintf("buildRenderer failed after flag validation (narrate): %v", err))
+	}
 	return pipeline.New(
 		file.New(),
 		intelligence.IntelligenceAdapter(nil),
-		sherpa.New(sherpa.EngineConfig{}),
+		renderer,
 		capturer,
 		pipeline.PipelineDefaults{
 			Level:  level,
@@ -102,8 +114,17 @@ var newNarratePipeline = func(voice string, level plan.Level, outDir string, cap
 // persistent.New(dir).Consume, making the dir patchable by render_id (#125/#110).
 // This SUPERSEDES #109's single-wav WAVFileSink for the SERVER /narrate path
 // only; persistent.NewWAVFile (no sidecars) stays for speak_to_file / MCP.
+// The voice param is the RESOLVED manifest voice: the RVC character slug for an
+// RVC render (Decision D6, supplied by runNarrate) or the gender-derived Kokoro
+// id otherwise. When it is a known RVC slug the render is 40 kHz, so the
+// format-validating sink must expect 40 kHz — derived from the same rvc package
+// as the renderer's format, so the two cannot drift.
 var writeRenderDir = func(ctx context.Context, dir, voice string, p plan.NarrationPlan, res render.RenderResult) error {
-	_, err := persistent.New(dir, persistent.WithVoice(voice)).Consume(ctx, p, res)
+	opts := []persistent.Option{persistent.WithVoice(voice)}
+	if rvc.IsSupportedVoice(voice) {
+		opts = append(opts, persistent.WithExpectedFormat(rvc.OutputFormat()))
+	}
+	_, err := persistent.New(dir, opts...).Consume(ctx, p, res)
 	return err
 }
 
@@ -188,7 +209,11 @@ func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, tex
 	}
 
 	capturer := &capturingSink{}
-	narrator := newNarratePipeline(voice, level, outDir, capturer)
+	// args.Voice (the launch flag, D5) selects the RENDERER via BuildRenderer;
+	// `voice` (the gender-derived Kokoro id) still flows as the NarrateRequest
+	// hint below. Under an RVC render the decorator ignores that hint and paints
+	// its own source.
+	narrator := newNarratePipeline(args.Voice, level, outDir, capturer)
 	ref := plan.SourceRef{
 		Kind:        plan.SourceKindFile,
 		URI:         srcPath,
@@ -211,7 +236,13 @@ func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, tex
 			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result"}
 	}
 
-	if err := writeRenderDir(ctx, outDir, voice, capturer.plan, capturer.result); err != nil {
+	// D6 — record the RVC character slug in manifest.voice when a voice is set;
+	// otherwise the gender-derived Kokoro id, byte-identical to pre-#146.
+	manifestVoice := voice
+	if args.Voice != "" {
+		manifestVoice = args.Voice
+	}
+	if err := writeRenderDir(ctx, outDir, manifestVoice, capturer.plan, capturer.result); err != nil {
 		// No commit, no map entry → nothing leaked; the orphan scan mops up any
 		// partial dir by mtime.
 		_ = os.RemoveAll(outDir)
