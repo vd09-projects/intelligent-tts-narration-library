@@ -1005,3 +1005,53 @@ scopes:
       triggered — single-package Go build wrapping an already-frozen contract).
       Plan persisted draft (awaiting user approval before sindri consumes). Genuine
       FIRST persist — version 1, scope dir newly created.
+  - slug: rvc-p3-cli-mcp-server-wiring-146
+    title: RVC P3 — CLI + MCP + server wiring (shared buildRenderer + voice arg) (issue #146)
+    created: 2026-07-22
+    reasoning: |
+      Plan cycle for GitHub issue #146 (RVC P3) — the pure-WIRING follow-on that
+      threads the already-merged render/rvc decorator (#145) into all three
+      composition roots behind an optional user-facing `voice` argument, routed
+      through ONE shared pipeline.BuildRenderer(voice) -> (render.Renderer,
+      plan.AudioFormat, error) helper. Six production seams construct a bare
+      sherpa.New today; #146 introduces the helper, exposes a voice knob on every
+      root (cool-jahns / confident-neal), and makes the decorator's 40kHz format
+      land cleanly in the format-validating persistent sinks — translating NOTHING
+      (the decorator owns the target->Kokoro-source map). 7 ordered commit-sized
+      phases: (1) export rvc.IsSupportedVoice / rvc.SupportedVoices /
+      rvc.OutputFormat (40kHz); (2) test-only proof that a 40kHz WAV round-trips
+      through sink/persistent Consume/PatchBlock/NewWAVFile via WithExpectedFormat,
+      plus a negative test that a 40kHz WAV against the default 24kHz expected
+      format still fails ErrFormatMismatch (locks strict validation); (3)
+      pipeline.BuildRenderer as the single shared factory; (4) cmd/narrate --voice
+      + reject --voice+--listen; (5) cmd/narrate-mcp speak/speak_last voice arg;
+      (6) cmd/narrate-server --voice launch flag; (7) docs + rvc-sanity make target
+      + by-ear /verify. Load-bearing facts: 6 (not 5 — the server has two) bare
+      sherpa.New seams; the ms<->byte math already reads format.SampleRate
+      (prove-don't-rewrite); the real 40kHz gap is the persistent-family
+      expectedFormat defaulting to 24kHz. Honesty rule literal: unknown voice /
+      absent worker = returned error -> non-zero exit or MCP caller-error, NEVER a
+      silent Kokoro fallback; empty voice = byte-identical plain Kokoro 24kHz.
+      Invariant guard: only pipeline/ + cmd/ know concrete engines; pipeline/ newly
+      importing concrete sherpa+rvc is invariant-legal (no cycle) and planner/ +
+      plan/ stay I/O-free and engine-neutral (no RVC slug in the plan schema). 5
+      decisions D1-D5 (D1 buildRenderer signature returns the format so
+      renderer-format and sink-expected-format are single-origin; D2 home is
+      pipeline/, not a new render/renderbuild package; D3 export membership+format
+      from render/rvc not the translation map; D4 reject --voice+--listen for #146,
+      full listen a follow-up; D5 server --voice is a launch flag, per-request
+      deferred), 5 risks (stub-seam ripple across the 6 test-swapped var seams,
+      missed WithExpectedFormat site, gender/voice confusion, pipeline
+      concrete-engine imports, worker-unavailable ergonomics), 4 open questions
+      (OQ1 listen reject, OQ2 server launch-flag, OQ3 pipeline home, OQ4
+      gender/voice non-fatal notice). rvc- prefix marks the RVC surface;
+      cli-mcp-server-wiring qualifier captures the crux and disambiguates from
+      rvc-torch-free-worker-144 (Python worker) and rvc-render-decorator-145 (the
+      Go decorator this consumes); issue-numbered suffix continues the convention.
+      Slug pre-supplied + pre-approved via --scope by the build-session
+      single-skill runner. Planned via mimir task depth, base template (no overlays
+      triggered — pure wiring across composition roots over an already-frozen
+      decorator contract). Plan persisted draft (awaiting user approval before
+      sindri consumes). Genuine FIRST persist — version 1, scope dir newly created;
+      a prior persistence attempt failed to write the scope dir, so nothing had
+      landed and this is v1, not an iteration.
