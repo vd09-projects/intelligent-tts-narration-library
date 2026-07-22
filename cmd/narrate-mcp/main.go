@@ -88,7 +88,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/transcript"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
@@ -127,6 +127,7 @@ type speakArgs struct {
 	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
 	Sink         string `json:"sink,omitempty"         jsonschema:"output sink: ephemeral | persistent (persistent not implemented). default ephemeral"`
 	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
+	Voice        string `json:"voice,omitempty"        jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro. When set it overrides gender (RVC selects the Kokoro source). Additive-compat field — schema_version unchanged; older clients that omit it are unaffected."`
 	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
 }
 
@@ -176,6 +177,14 @@ func (a speakArgs) validate() error {
 	}
 	if _, ok := genderToVoice[a.Gender]; !ok {
 		return fmt.Errorf("caller-error: invalid_argument: gender must be female or male (got %q)", a.Gender)
+	}
+	// Issue #146 — voice enum. Empty preserves plain Kokoro; a non-empty value
+	// must be a known RVC target slug. An unknown voice is an MCP caller-error
+	// (classified by the "caller-error: invalid_argument:" prefix), never a
+	// silent fallback to Kokoro (honesty rule).
+	if a.Voice != "" && !rvc.IsSupportedVoice(a.Voice) {
+		return fmt.Errorf("caller-error: invalid_argument: voice must be one of %s (got %q)",
+			strings.Join(rvc.SupportedVoices(), ", "), a.Voice)
 	}
 	switch a.Intelligence {
 	case "none", "mcpsampling":
@@ -303,10 +312,19 @@ type runDeps struct {
 const listenCodeMinLevel = plan.L2
 
 var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter, observer ephemeral.BlockObserver) pipeline.Narrator {
+	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	if err != nil {
+		// validate() pins args.Voice to a known slug (or empty) before this seam
+		// runs, so BuildRenderer's only reachable error — ErrUnsupportedVoice —
+		// cannot fire here. Any error is a composition-root bug; panic loudly
+		// rather than silently degrade to Kokoro. The ephemeral sink plays via
+		// afplay, which handles a 40 kHz WAV natively — no WithExpectedFormat.
+		panic(fmt.Sprintf("buildRenderer failed after validation: %v", err))
+	}
 	return pipeline.New(
 		input,
 		intel,
-		sherpa.New(sherpa.EngineConfig{}),
+		renderer,
 		ephemeral.New(ephemeral.WithBlockObserver(observer)),
 		pipeline.PipelineDefaults{
 			Level:        plan.Level(args.Level),
@@ -567,6 +585,7 @@ const speakLastToolName = "speak_last"
 type speakLastArgs struct {
 	Level          int    `json:"level,omitempty"           jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
 	Gender         string `json:"gender,omitempty"          jsonschema:"voice gender: female | male. default female"`
+	Voice          string `json:"voice,omitempty"           jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro; when set it overrides gender. Additive-compat field."`
 	Intelligence   string `json:"intelligence,omitempty"    jsonschema:"intelligence backend: none | mcpsampling. default none"`
 	TranscriptPath string `json:"transcript_path,omitempty" jsonschema:"optional override: absolute path to a Claude Code transcript .jsonl; default = newest under the projects root"`
 }
@@ -679,6 +698,7 @@ func runSpeakLast(ctx context.Context, args speakLastArgs, cache *mcpsampling.Se
 		Text:         text,
 		Level:        args.Level,
 		Gender:       args.Gender,
+		Voice:        args.Voice,
 		Intelligence: args.Intelligence,
 	}, cache)
 }
@@ -732,6 +752,7 @@ type speakToFileArgs struct {
 	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
 	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
 	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
+	Voice        string `json:"voice,omitempty"        jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro; when set it overrides gender. The written .wav is 40 kHz. Additive-compat field."`
 	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
 	OutputPath   string `json:"output_path,omitempty"  jsonschema:"destination for the rendered .wav. A file path is written (a missing .wav extension is appended); an existing directory gets a derived filename inside it. Omit/empty to play the audio ephemerally and write no file."`
 }
@@ -746,6 +767,7 @@ func (a speakToFileArgs) toSpeakArgs() speakArgs {
 		Text:         a.Text,
 		Level:        a.Level,
 		Gender:       a.Gender,
+		Voice:        a.Voice,
 		Intelligence: a.Intelligence,
 		Sink:         "ephemeral",
 	}
@@ -784,11 +806,25 @@ type speakToFileResponse struct {
 // defer); wavPath is the resolved destination OUTSIDE that scratch, so the
 // scratch RemoveAll never deletes the output.
 var newFilePipeline = func(renderDir, wavPath string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
+	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	if err != nil {
+		// Unreachable post-validate() (see newPipeline); panic on a genuine bug
+		// rather than degrade silently.
+		panic(fmt.Sprintf("buildRenderer failed after validation (file): %v", err))
+	}
+	// Under a voice the render is 40 kHz — the WAVFile sink must validate the
+	// per-block containers at 40 kHz, else readWAV rejects them against the
+	// 24 kHz default. NewWAVFile writes no manifest.json, so there is no
+	// manifest.voice to set (WithVoice is a documented no-op here) — D6 scope.
+	wavOpts := []persistent.Option{}
+	if args.Voice != "" {
+		wavOpts = append(wavOpts, persistent.WithExpectedFormat(rvc.OutputFormat()))
+	}
 	return pipeline.New(
 		input,
 		intel,
-		sherpa.New(sherpa.EngineConfig{}),
-		persistent.NewWAVFile(wavPath),
+		renderer,
+		persistent.NewWAVFile(wavPath, wavOpts...),
 		pipeline.PipelineDefaults{
 			Level:        plan.Level(args.Level),
 			OutDir:       renderDir,
