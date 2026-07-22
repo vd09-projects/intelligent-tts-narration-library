@@ -90,7 +90,7 @@ def _corr(a, b):
 # f0 front-end (_rmvpe_mel/_decode_f0/_coarse_f0) + frame alignment are validated
 # only end-to-end by the full-pipeline gate. A focused DSP-glue fixture (like the
 # pilot's torch_probe.py "pitch 100% exact bucket match, pitchf max|Δ| 7.6e-5")
-# committed here would isolate that stage — worth a dedicated test-coverage ticket.
+# committed here would isolate that stage — worth a dedicated test-coverage ticket. (tracked: #150)
 def test_perstage_parity():
     """Per-stage ONNX vs stored torch refio (contentvec, rmvpe, net_g/both voices)."""
     cases = []

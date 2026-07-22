@@ -123,7 +123,7 @@ ROSTER = ("cool-jahns", "confident-neal")
 # DUP: voice_name() is duplicated in scripts/rvc-export/_common.py (export tooling)
 # and here (torch-free worker). The two run in different venvs (Applio-torch vs
 # .venv-rvc), so they cannot share an import without a torch-free helper module on
-# both paths; extract to a shared torch-free scripts/rvc_common.py imported by both.
+# both paths; extract to a shared torch-free scripts/rvc_common.py imported by both. (tracked: #149)
 def voice_name(slug: str) -> str:
     """Slug -> trained-model basename. cool-jahns -> Cool_Jahns.
 
