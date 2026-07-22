@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-23-rvc-manifest-voice-records-character-slug
+    title: "manifest.voice records the RVC character slug for RVC renders (Option A), not the hidden Kokoro source"
+    date: 2026-07-23
+    status: accepted
+    category: tradeoff
+    tags: [rvc, voice-conversion, manifest, provenance, honesty-rule, withvoice, persistent-sink, checkstale, content-hash, cool-jahns, confident-neal, af-bella, am-michael, cli-narrate, narrate-server, issue-146, issue-145, issue-144]
+    path: tradeoff/2026-07-23-rvc-manifest-voice-records-character-slug.md
+    summary: "Decision D6 of #146 (blocking review item F1): for a persistent RVC render, manifest.voice records the RVC CHARACTER slug the user asked to hear (cool-jahns / confident-neal), NOT its hidden Kokoro SOURCE voice (af_bella / am_michael). Wired by selecting persistent.WithVoice(args.Voice) when args.Voice != \"\" (else the existing gender-derived Kokoro id) at the four persistent-sink WithVoice sites: CLI full render (main.go:223) + CLI PatchBlock (main.go:497); server Consume (narrate.go:106) + server patchBlock (main.go:910). Rationale: honest provenance — stamping af_bella on a cool-jahns file misreports the render as plain Kokoro. SAFE because CheckStale keys ONLY on content_hash (check.go:63) and never reads manifest.Voice, and intelligence caching keys on (content hash, level, model) — so recording the slug costs nothing in caching/staleness; patch.go:290-291 already writes patchedManifest.Voice from WithVoice, so only the passed argument changes, not the sink. Scope: persistent-sink paths only — MCP is exempt (ephemeral sink + NewWAVFile write no manifest.json; WithVoice is a documented no-op on NewWAVFile). Additive: manifest.voice gains a new value class, schema_version unchanged. REJECTED Option B (keep the Kokoro source, only reword the standing-order doc) — an honest-provenance regression for zero benefit since Option A is free of caching/staleness cost. Locked by a new manifest-provenance test (Phase 2 + per-root in 4/6) plus an F5 negative guard that voice=='' still records the gender-derived Kokoro id."
   - id: 2026-07-22-rvc-decorator-owns-voice-map-single-translation
     title: "RVC decorator owns the target->{Kokoro source, index_rate, pitch} map; translation happens exactly once"
     date: 2026-07-22
