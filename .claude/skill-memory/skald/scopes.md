@@ -915,3 +915,58 @@ scopes:
       bundle) and accessibility (entire #108 spec is APG/ARIA/keyboard/focus/
       screen-reader-grounded). Plan persisted draft (awaiting user approval
       before sindri consumes).
+  - slug: rvc-torch-free-worker-144
+    title: RVC P1 — torch-free Python RVC inference worker (scripts/rvc_worker.py, issue #144)
+    created: 2026-07-21
+    reasoning: |
+      Plan cycle for GitHub issue #144 — the P1 of the RVC integration chain
+      (#143 export tooling done -> #144 worker -> #145 render/rvc Go decorator ->
+      #146 CLI/MCP wiring -> #147 verify+docs). Productionizes the pilot's
+      throwaway onnx_infer.py into a durable EPHEMERAL PER-JOB worker: a
+      scripts/rvc bash wrapper (mirrors scripts/kokoro) activating a DEDICATED
+      lean torch-free venv (.venv-rvc: onnxruntime + numpy + faiss-cpu + scipy +
+      librosa + soxr, NO torch — must NOT reuse the shared .venv, so the
+      torch-free assertion is meaningful) that execs scripts/rvc_worker.py, which
+      loads the #143-exported ONNX models (contentvec/rmvpe shared + per-voice
+      net_g) + the original faiss .index ONCE, then services a stdin/stdout line
+      loop (`<in> <out> <voice> <index_rate> <pitch>` -> `OK <out>` / `ERR ...`)
+      converting every block warm until EOF, then EXITS -> 0 idle RAM. Uses the
+      original faiss .index directly (the Python worker HAS faiss); the
+      index_vectors.npy dump is the FUTURE Go-kNN fallback, out of scope here.
+      Engine-faithful reproduction of PILOT_REPORT §4 DSP (soxr VHQ resample, N=5
+      48Hz zero-phase Butterworth filtfilt, rmvpe STFT/htk-mel/cents-decode,
+      faiss IVFFlat k=8 index-blend, pitch-protect 0.33, ×2 nearest interp,
+      external rnd ~ N(0,1), [40000:-40000] trim) — explicitly NO DSP redesign.
+      6 ordered steps (1 venv+requirements -> 2/3 parallel wrapper+DSP-core ->
+      4 model-registry+warm-load-once+stdin/stdout loop -> 5 standalone parity
+      test -> 6 Makefile targets+smoke+docs). Success metric = make rvc-parity
+      green: per-stage ONNX-vs-refio corr >= 0.999 (contentvec/rmvpe/net_g fed
+      the *_refio.npz fixtures) + full-pipeline log-mel corr >= 0.98 vs a torch
+      reference WAV, both voices (cool-jahns index_rate 0.75, confident-neal
+      index_rate 0.5) at pitch 0, torch-free asserted (`"torch" not in
+      sys.modules`). Honors the four prior RVC/kokoro decisions (torch-free ONNX
+      ephemeral per-job worker; kokoro-onnx-over-torch ONNX-via-subprocess
+      precedent; wrapper lives in scripts/ not render/sherpa/; per-block WAVs stay
+      separate, no concat -> one-WAV-in/one-WAV-out worker shape) and the standing
+      orders (60s/10min timeouts owned by the LATER Go caller #145 not the worker;
+      worker failure = `ERR ...`/nonzero exit surfaced as a hard error, never a
+      Refusal; edge-only — zero plan/ or planner/ changes; Apache-2.0, torch kept
+      OUT of the inference venv). New Makefile targets: rvc-worker-venv (create
+      .venv-rvc from scripts/rvc-requirements.txt), rvc-parity (run the standalone
+      parity test), rvc-convert (single-line by-ear smoke). rvc- prefix marks the
+      RVC surface; torch-free-worker qualifier captures the crux; distinct from
+      the sibling export scope (scripts/rvc-export, #143) — this is the runtime
+      worker, not the export tooling; issue-numbered suffix continues the
+      convention. Slug pre-supplied + pre-approved via --scope by the
+      build-session single-skill runner. Planned via mimir task depth with the
+      public-api-change overlay (the worker's stdin/stdout wire protocol is the
+      load-bearing contract the #145 Go decorator binds to — consumer inventory +
+      new-surface-v1 additive/append-only forward-compat rule + protocol-loop
+      contract test; directly analogous to the narrate-observe-jsonl-tail-81
+      precedent that activated public-api-change for a new wire contract + binary).
+      infra-blast + perf-critical were CONSIDERED but NOT activated: infra-blast's
+      content is production deploy/canary/rollback discipline (N/A to a local-only
+      hobby project — CLAUDE.md bars deploy/CI), and the goal is pilot PARITY, not
+      latency optimization (latency is inherently the pilot's ~7s/clip). Plan
+      persisted draft (awaiting user approval before sindri consumes). Genuine
+      FIRST persist — version 1, scope dir newly created.
