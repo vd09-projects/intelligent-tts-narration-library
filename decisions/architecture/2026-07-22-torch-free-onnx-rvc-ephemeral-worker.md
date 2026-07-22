@@ -54,6 +54,9 @@ Hard constraints: M1 Pro / 16GB / CPU-only (MPS segfaults) / local + free; **reu
 
 - [Per-block WAVs, no concat in the renderer](2026-06-18-per-block-wavs-no-concat-in-renderer.md) — the decorator repaints those per-block WAVs in place; this model is what makes the decorator clean.
 - [Sink imports render for RenderResult](2026-06-19-sink-imports-render-for-renderresult.md) — the 40kHz `Format` flows through `RenderResult`, so the sink honoring `Format.SampleRate` is the seam that must hold.
+- [RVC worker stdin/stdout wire contract — closed ERR taxonomy + startup/runtime FATAL exit-code split](2026-07-22-rvc-worker-wire-contract-err-taxonomy-exit-codes.md) — the #144 build fixes the byte-level subprocess contract this decision left unspecified; #145 (the render decorator) binds to it.
+- [RVC index-blend reconstructs big_npy in-worker from the .index](../algorithm/2026-07-22-rvc-index-blend-reconstruct-big-npy-in-worker.md) — the #144 worker reconstructs big_npy via faiss `reconstruct_n` rather than loading `index_vectors.npy`, which stays reserved for this decision's deferred Option-D (in-process Go kNN).
+- [RVC phase-one rejects non-zero pitch; line index_rate is authoritative](../tradeoff/2026-07-22-rvc-reject-nonzero-pitch-index-rate-authoritative.md) — the #144 build settles the semantic scope of two request tokens #145 passes.
 
 ## Experiments
 

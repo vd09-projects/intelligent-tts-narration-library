@@ -8,6 +8,30 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-22-rvc-worker-wire-contract-err-taxonomy-exit-codes
+    title: "RVC worker stdin/stdout wire contract — closed ERR taxonomy + startup/runtime FATAL exit-code split"
+    date: 2026-07-22
+    status: accepted
+    category: architecture
+    tags: [rvc, voice-conversion, wire-contract, public-api, subprocess-protocol, err-taxonomy, exit-codes, ex-config, ex-software, single-line-err, retryable-vs-fatal, render-decorator, issue-144, issue-145]
+    path: architecture/2026-07-22-rvc-worker-wire-contract-err-taxonomy-exit-codes.md
+    summary: "The #144 RVC worker's stdin/stdout protocol is the v1 public contract #145 (Go render decorator) binds to — the byte-level surface the parent torch-free-onnx-rvc-ephemeral-worker decision left unspecified. Request = one line, shlex-split into EXACTLY 5 positional append-only tokens `<in> <out> <voice> <index_rate> <pitch>`. Response = EXACTLY ONE physical line per request (response count == request count): `OK <out>` (echoes the RAW written path; newline/CR-bearing paths rejected up front so OK-name and file-on-disk can't diverge) or `ERR <category> <message>` (recoverable, loop continues; message newline-collapsed + ≤300 chars). CLOSED v1 category taxonomy {bad-args | bad-voice | read-failed | infer-failed | write-failed}, append-only, unknown-category = fatal (safe default); an off-contract internal category is coerced to infer-failed with a [bug:] prefix (holds even under python -O). Retryable-vs-fatal exit-code split: 78 EXIT_FATAL_STARTUP (EX_CONFIG — missing artifact / torch present / bad venv / malformed RVC_SEED, don't retry until env fixed) vs 70 EXIT_FATAL_RUNTIME (EX_SOFTWARE — catchable runtime fatal like MemoryError, distinct from a per-block ERR); uncatchable native fault = nonzero signal exit; BrokenPipe + EOF = clean exit 0. Fatal exception class re-raised past every per-stage except so a fatal never degrades to a per-block ERR. The protocol-loop contract test is the executable contract. REJECTED free-text ERR + single generic nonzero exit (forces #145 to parse English; multi-line ERR breaks readline framing; no transient-vs-dead signal)."
+  - id: 2026-07-22-rvc-index-blend-reconstruct-big-npy-in-worker
+    title: "RVC index-blend reconstructs big_npy in-worker from the .index (reconstruct_n + make_direct_map fallback), not the index_vectors.npy artifact"
+    date: 2026-07-22
+    status: accepted
+    category: algorithm
+    tags: [rvc, voice-conversion, faiss, ivfflat, index-blend, reconstruct-n, make-direct-map, big-npy, index-vectors-npy, engine-faithful, go-knn-deferred, issue-143, issue-144, issue-145]
+    path: algorithm/2026-07-22-rvc-index-blend-reconstruct-big-npy-in-worker.md
+    summary: "The #144 index-blend stage (§4.5b) needs source vectors big_npy[ix] for its k=8 IVFFlat neighbours, and #143 produced TWO ways to get them: the original faiss `.index` and a `reconstruct_n` dump `index_vectors.npy`. DECISION: the Python worker reconstructs big_npy IN-PROCESS from the original `.index` via faiss `reconstruct_n` (enabling `make_direct_map()` at load if the IVF index lacks a direct map) and does NOT load `index_vectors.npy` — engine-faithful to the pilot (the worker HAS faiss and searches the `.index` directly, so the vectors are already reachable) and it avoids loading a second large (~557MB) artifact into the warm worker. `index_vectors.npy` stays RESERVED for the deferred in-process Go kNN path (the parent decision's Option-D endgame) where Go cannot call faiss reconstruct. big_npy is held as warm read-only cross-call state per loaded voice; parity judged by full-pipeline log-mel corr ≥0.98 (not raw samples), so IVFFlat search not being bit-identical to torch is accepted noise. Documented fallback: load index_vectors.npy if a future faiss/index format drops direct-map support (still torch-free). REJECTED pointing the worker at index_vectors.npy — couples the worker to the artifact meant for the Go fallback; a future engineer must not 'simplify' the two big_npy sources by doing so."
+  - id: 2026-07-22-rvc-reject-nonzero-pitch-index-rate-authoritative
+    title: "RVC phase-one rejects non-zero pitch with a clean ERR (no transpose ships); the request line's index_rate is authoritative"
+    date: 2026-07-22
+    status: accepted
+    category: tradeoff
+    tags: [rvc, voice-conversion, pitch, transpose, index-rate, phase-one-scope, reject-not-ignore, honesty-rule, wire-contract, issue-144, issue-145]
+    path: tradeoff/2026-07-22-rvc-reject-nonzero-pitch-index-rate-authoritative.md
+    summary: "Fixes the semantic scope of two of the #144 worker's five request tokens (resolves OQ#1). Both phase-one voices run pitch 0 and no semitone-transpose DSP was piloted/tested, so a non-zero `<pitch>` is REJECTED with `ERR bad-args pitch must be 0 in phase one` — the transpose path is NOT shipped (a wrong pitch shift is a confident mis-render) and pitch is NOT silently ignored (silent no-op = a lie); the honesty rule applied at the subprocess edge (refuse cleanly, keep serving). Transpose becomes a FUTURE trailing optional token with an engine-faithful default so a v1 caller stays valid. Separately, the request LINE's `<index_rate>` is AUTHORITATIVE — the per-voice 0.75 (cool-jahns) / 0.5 (confident-neal) values are just what #145 is expected to PASS on the line, not a baked-in worker constant that overrides it; validated float in [0,1], out-of-range → ERR bad-args. REJECTED shipping an untested transpose path and REJECTED silently clamping pitch to 0. #145 binds to both rules."
   - id: 2026-07-22-torch-free-onnx-rvc-ephemeral-worker
     title: "Torch-free ONNX RVC via an ephemeral per-job worker, wrapped as a render decorator"
     date: 2026-07-22
