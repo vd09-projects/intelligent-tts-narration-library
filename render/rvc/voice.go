@@ -1,6 +1,9 @@
 package rvc
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // voiceEntry is the single-source-of-truth translation for one RVC target slug:
 // the Kokoro *source* voice the RVC model was trained against, plus the per-voice
@@ -36,4 +39,27 @@ func resolveVoice(target string) (voiceEntry, error) {
 		return voiceEntry{}, fmt.Errorf("%w: %q (roster: cool-jahns, confident-neal)", ErrUnsupportedVoice, target)
 	}
 	return v, nil
+}
+
+// IsSupportedVoice reports whether slug is a known RVC target voice. The
+// composition roots (#146) use it to validate a --voice / voice argument
+// EAGERLY — a fast caller-error before any temp-dir or render work — without
+// duplicating the target→Kokoro-source translation (that stays owned here, the
+// single translation place). Membership ≠ translation: this exposes only which
+// slugs exist, never how they map.
+func IsSupportedVoice(slug string) bool {
+	_, ok := rvcVoices[slug]
+	return ok
+}
+
+// SupportedVoices returns the RVC target roster, sorted, for error messages and
+// CLI/MCP help text. It exposes the set of valid slugs — never the Kokoro
+// sources they map to, which remain the decorator's private business.
+func SupportedVoices() []string {
+	out := make([]string, 0, len(rvcVoices))
+	for slug := range rvcVoices {
+		out = append(out, slug)
+	}
+	sort.Strings(out)
+	return out
 }

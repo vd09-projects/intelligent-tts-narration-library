@@ -83,6 +83,14 @@ func rvcFormat() plan.AudioFormat {
 	}
 }
 
+// OutputFormat is the exported RVC output format (40 kHz mono s16le) the
+// composition roots (#146) hand to persistent.WithExpectedFormat so the
+// format-validating sinks accept the 40 kHz container. It wraps the unexported
+// rvcFormat so the decorator keeps a single source of truth for its rate.
+func OutputFormat() plan.AudioFormat {
+	return rvcFormat()
+}
+
 // Render renders the whole plan through Kokoro (into a private intermediate dir)
 // then repaints every non-empty block WAV through one warm RVC worker, landing
 // frame-aligned 40 kHz finals under opts.OutDir with a rebuilt Timeline + manifest.
