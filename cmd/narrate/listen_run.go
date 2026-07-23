@@ -39,15 +39,16 @@ const listenCodeFloor = plan.L2
 // (no playback, no durable write) and the code L2 floor. Package-level so tests
 // can swap it for a stub that returns a canned Timeline without spawning Kokoro.
 var newListenPipeline = func(outDir string, args flagSet, capturer *capturingSink) pipeline.Narrator {
-	// Route through the shared BuildRenderer for uniformity across all six
-	// factory seams (D4) — validate() already rejects --voice with --listen, so
-	// args.Voice is empty here and BuildRenderer yields the plain Kokoro engine.
-	// Wiring it anyway future-proofs full listen-mode RVC (dynamic oto rate).
-	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	// Route through the shared BuildRenderer for uniformity across all factory
+	// seams. #156: a 24 kHz Kokoro --voice is now allowed with --listen; validate()
+	// still rejects a worker-backed 40 kHz RVC voice, so BuildRenderer yields a
+	// plain (voice-neutral) Kokoro engine here — the actual Kokoro voice flows via
+	// NarrateRequest.Voice below.
+	renderer, _, err := pipeline.BuildRenderer(args.effectiveVoice())
 	if err != nil {
-		// Unreachable: validate() rejects --voice+--listen and pins any voice to
-		// the roster, so BuildRenderer cannot error here. A non-nil error is a
-		// composition-root bug — panic loudly rather than degrade silently.
+		// Unreachable: validate() pins any voice to the roster and rejects RVC
+		// voices with --listen, so BuildRenderer cannot error here. A non-nil error
+		// is a composition-root bug — panic loudly rather than degrade silently.
 		panic(fmt.Sprintf("buildRenderer failed after validation (listen): %v", err))
 	}
 	return pipeline.New(
@@ -155,11 +156,14 @@ func runListenMode(ctx context.Context, args flagSet, outDir string, stdout, std
 	if aerr != nil {
 		return fmt.Errorf("resolve --file: %w", aerr)
 	}
+	// #156 — the Kokoro voice flows via NarrateRequest.Voice (RenderVoiceID). The
+	// error is an unreachable guard (validate() pinned the voice); ignore it.
+	voiceInfo, _ := pipeline.ResolveVoice(args.effectiveVoice())
 	if _, nerr := pl.Narrate(ctx, plan.SourceRef{
 		Kind: plan.SourceKindFile,
 		URI:  absPath,
 	}, pipeline.NarrateRequest{
-		Voice: genderToVoice[args.Gender],
+		Voice: voiceInfo.RenderVoiceID,
 	}); nerr != nil {
 		return nerr
 	}

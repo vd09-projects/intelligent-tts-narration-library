@@ -261,27 +261,38 @@ func TestChooseIntelligence_Anthropic(t *testing.T) {
 	}
 }
 
-func TestGenderToVoice_Mapping(t *testing.T) {
+// #156 — the --gender alias is centralized in pipeline.SlugForGender. It maps to
+// a roster SLUG which resolves to the same engine id the old genderToVoice
+// produced (byte-identical): female → af-bella → af_bella; male → am-michael →
+// am_michael.
+func TestGenderAlias_Mapping(t *testing.T) {
 	t.Parallel()
-	cases := map[string]string{
-		"female": "af_bella",
-		"male":   "am_michael",
+	cases := map[string]struct{ slug, id string }{
+		"female": {"af-bella", "af_bella"},
+		"male":   {"am-michael", "am_michael"},
 	}
 	for gender, want := range cases {
 		gender, want := gender, want
 		t.Run(gender, func(t *testing.T) {
 			t.Parallel()
-			got, ok := genderToVoice[gender]
+			slug, ok := pipeline.SlugForGender(gender)
 			if !ok {
-				t.Fatalf("gender %q not in map", gender)
+				t.Fatalf("gender %q not resolvable via SlugForGender", gender)
 			}
-			if got != want {
-				t.Errorf("voice for %q: got %q want %q", gender, got, want)
+			if slug != want.slug {
+				t.Errorf("SlugForGender(%q) = %q, want %q", gender, slug, want.slug)
+			}
+			info, err := pipeline.ResolveVoice(slug)
+			if err != nil {
+				t.Fatalf("ResolveVoice(%q): %v", slug, err)
+			}
+			if info.RenderVoiceID != want.id {
+				t.Errorf("gender %q RenderVoiceID = %q, want %q", gender, info.RenderVoiceID, want.id)
 			}
 		})
 	}
-	if _, ok := genderToVoice["other"]; ok {
-		t.Error("unexpected gender 'other' in map")
+	if _, ok := pipeline.SlugForGender("other"); ok {
+		t.Error("unexpected gender 'other' resolvable via SlugForGender")
 	}
 }
 
@@ -773,10 +784,9 @@ func TestRunMain_ExitCalledExactlyOnce(t *testing.T) {
 
 // TestChooseSink_BranchesBySinkType verifies the factory picks the right
 // concrete sink for each --sink value. This is the unit-level check the
-// review T1 build-time TODO asked for: the lookup safety of
-// genderToVoice[args.Gender] inside chooseSink lives downstream of
-// validate() pinning Gender to a finite set, but we exercise the
-// happy paths here.
+// review T1 build-time TODO asked for: the roster resolution of the effective
+// voice inside chooseSink lives downstream of validate() pinning the voice/gender
+// to finite sets, but we exercise the happy paths here.
 func TestChooseSink_BranchesBySinkType(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -866,27 +876,26 @@ func TestRunNarrate_PersistentSink_OutDirInSummary(t *testing.T) {
 	}
 }
 
-// TestGenderToVoice_ValidationCoverage is the T1 review-v2 follow-through:
-// every --gender value validate() accepts must have an entry in
-// genderToVoice; otherwise chooseSink would silently fall through to an
-// empty voice id on the persistent path.
-func TestGenderToVoice_ValidationCoverage(t *testing.T) {
+// TestGenderAlias_ValidationCoverage is the T1 review-v2 follow-through, migrated
+// to the roster (#156): every --gender value validate() accepts must resolve via
+// pipeline.SlugForGender; otherwise effectiveVoice would fall through to an empty
+// voice on the persistent path.
+func TestGenderAlias_ValidationCoverage(t *testing.T) {
 	t.Parallel()
-	// Mirror the validate() switch: every value validate() accepts must be
-	// a key in genderToVoice. If validate() grows to accept "neutral", the
-	// map must grow alongside.
+	// Mirror the validate() switch: every value validate() accepts must resolve.
+	// If validate() grows to accept "neutral", SlugForGender must grow alongside.
 	accepted := []string{"female", "male"}
 	for _, g := range accepted {
-		if _, ok := genderToVoice[g]; !ok {
-			t.Errorf("genderToVoice missing key for accepted --gender value %q", g)
+		if _, ok := pipeline.SlugForGender(g); !ok {
+			t.Errorf("SlugForGender missing entry for accepted --gender value %q", g)
 		}
 	}
-	// And the reverse — the map should not contain values validate() rejects.
+	// And the reverse — every gender the alias resolves must pass validate().
 	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral"}
-	for g := range genderToVoice {
+	for _, g := range accepted {
 		a.Gender = g
 		if err := a.validate(); err != nil {
-			t.Errorf("validate rejected --gender=%q which is in genderToVoice; err=%v", g, err)
+			t.Errorf("validate rejected --gender=%q which SlugForGender resolves; err=%v", g, err)
 		}
 	}
 }

@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-23-unified-voice-roster-namespace
+    title: "Voice-selection namespace: one unified named roster is the primary selector; --gender demoted to a deprecated alias"
+    date: 2026-07-23
+    status: accepted
+    category: architecture
+    tags: [rvc, voice-conversion, voice-roster, voice-selection, cli-namespace, voice-flag, gender-flag, deprecation, backwards-compat, buildrenderer, requires-worker, err-worker-missing, err-unknown-voice, manifest-provenance, kokoro, issue-156, issue-146]
+    path: architecture/2026-07-23-unified-voice-roster-namespace.md
+    summary: "Issue #156: --voice becomes the SINGLE primary selector over ONE flat named-voice roster spanning both engines (af-bella / am-michael -> Kokoro 24 kHz; cool-jahns / confident-neal -> RVC 40 kHz), each entry carrying {engine, format, requires_worker} metadata that pipeline.BuildRenderer reads as the single source of truth for engine+format. --gender is demoted to a DEPRECATED back-compat alias (female->af-bella, male->am-michael) via pipeline.SlugForGender, kept working with a deprecation notice; --voice wins when both are set. WHY: the previous gender+voice split leaked an engine mechanic into the CLI (--voice != \"\" treated as a synonym for 'RVC / 40 kHz', true only by coincidence of the phase-one roster) and left two knobs disagreeing on primacy. One roster removes the coupling and gives a single honest selector that surfaces per-voice cost (engine / kHz / needs-worker) in help text. Two error classes with DISTINCT timings, never a silent fallback: an unknown voice stops PRE-render (eager pipeline.IsVoice; pipeline.ErrUnknownVoice backstop); a requires_worker voice with an unavailable worker stops AT RENDER TIME (render/rvc decorator ErrWorkerMissing). RequiresWorker is metadata for help-tagging + the --listen 40 kHz re-key only — no up-front worker probe. Manifest provenance (extends D6): manifest.voice records the engine-native resolved id (af_bella/am_michael for Kokoro; cool-jahns/confident-neal for RVC) so the alias path and the explicit --voice path stamp the SAME value. REJECTED: keep the gender+voice split (leaks the voice!=\"\"-means-RVC coupling; two knobs disagreeing on primacy). CROSS-LINKS D1+D2 (2026-07-23-pipeline-hosts-buildrenderer-factory — the factory this roster feeds) and D6 (2026-07-23-rvc-manifest-voice-records-character-slug — provenance)."
   - id: 2026-07-23-pipeline-hosts-buildrenderer-factory
     title: "pipeline.BuildRenderer is the shared renderer-factory home; pipeline/ now imports the concrete engines"
     date: 2026-07-23

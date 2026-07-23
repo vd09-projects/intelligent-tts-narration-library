@@ -11,21 +11,24 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 )
 
-// TestBuildRenderer covers the three arms of the shared engine factory (D1):
-// empty voice → plain Kokoro at 24 kHz; a valid RVC slug → the rvc decorator at
-// 40 kHz; an unknown slug → ErrUnsupportedVoice with a nil renderer (honesty
-// rule — never a silent Kokoro fallback).
+// TestBuildRenderer covers the roster arms of the shared engine factory (D1 +
+// #156): empty voice AND a Kokoro slug → plain Kokoro at 24 kHz (the engine is
+// voice-neutral; the actual Kokoro voice flows via NarrateRequest.Voice); a valid
+// RVC slug → the rvc decorator at 40 kHz; an unknown slug → pipeline.ErrUnknownVoice
+// with a nil renderer + zero format (honesty rule — never a silent Kokoro fallback).
 func TestBuildRenderer(t *testing.T) {
-	t.Run("empty voice → plain Kokoro at 24kHz", func(t *testing.T) {
-		r, format, err := pipeline.BuildRenderer("")
-		if err != nil {
-			t.Fatalf("BuildRenderer(\"\") err = %v, want nil", err)
-		}
-		if _, ok := r.(*sherpa.Engine); !ok {
-			t.Errorf("BuildRenderer(\"\") renderer type = %T, want *sherpa.Engine", r)
-		}
-		if format != render.DefaultFormat() {
-			t.Errorf("BuildRenderer(\"\") format = %+v, want %+v", format, render.DefaultFormat())
+	t.Run("empty + Kokoro slugs → plain Kokoro at 24kHz", func(t *testing.T) {
+		for _, voice := range []string{"", "af-bella", "am-michael"} {
+			r, format, err := pipeline.BuildRenderer(voice)
+			if err != nil {
+				t.Fatalf("BuildRenderer(%q) err = %v, want nil", voice, err)
+			}
+			if _, ok := r.(*sherpa.Engine); !ok {
+				t.Errorf("BuildRenderer(%q) renderer type = %T, want *sherpa.Engine", voice, r)
+			}
+			if format != render.DefaultFormat() {
+				t.Errorf("BuildRenderer(%q) format = %+v, want %+v (24 kHz)", voice, format, render.DefaultFormat())
+			}
 		}
 	})
 
@@ -44,10 +47,10 @@ func TestBuildRenderer(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown slug → ErrUnsupportedVoice, nil renderer", func(t *testing.T) {
+	t.Run("unknown slug → ErrUnknownVoice, nil renderer", func(t *testing.T) {
 		r, format, err := pipeline.BuildRenderer("nope-not-a-voice")
-		if !errors.Is(err, rvc.ErrUnsupportedVoice) {
-			t.Fatalf("BuildRenderer(unknown) err = %v, want rvc.ErrUnsupportedVoice", err)
+		if !errors.Is(err, pipeline.ErrUnknownVoice) {
+			t.Fatalf("BuildRenderer(unknown) err = %v, want pipeline.ErrUnknownVoice", err)
 		}
 		if r != nil {
 			t.Errorf("BuildRenderer(unknown) renderer = %v, want nil (no silent Kokoro fallback)", r)

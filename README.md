@@ -30,35 +30,47 @@ The ephemeral sink cleans up its temp WAV directory at the end of the run. The p
 | `--level` | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. With `--block`, this is the absolute target level for that one block — downgrade L3→L1 supported. |
 | `--sink` | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` writes `audio.wav`, `plan.json`, and `manifest.json` to the `--out` directory (required with `--sink=persistent`). |
 | `--out` | empty | path | Destination directory for `--sink=persistent` — receives `audio.wav`, `plan.json`, and `manifest.json`. Required with `--sink=persistent`; rejected with `--sink=ephemeral` (which owns its own temp-dir lifecycle). |
-| `--gender` | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. Ignored when `--voice` is set (a one-line stderr notice says so). |
-| `--voice` | empty | `cool-jahns` / `confident-neal` | RVC character voice (see "RVC character voices" below). Empty = plain Kokoro. Requires the RVC worker; an unknown slug or a missing worker exits non-zero (no silent fallback). Rejected with `--listen`. |
+| `--voice` | `af-bella` | `af-bella` / `am-michael` / `cool-jahns` / `confident-neal` | **Primary voice selector** over the unified roster (see "Voice roster" below). `af-bella` / `am-michael` are plain Kokoro (24 kHz); `cool-jahns` / `confident-neal` are RVC character voices (40 kHz, need the worker). An unknown slug exits non-zero up front (no silent fallback). RVC voices are rejected with `--listen`; Kokoro voices are allowed. |
+| `--gender` | `female` | `female` / `male` | **DEPRECATED — use `--voice`.** Back-compat alias: `female` → `af-bella`, `male` → `am-michael`. Still works; prints a one-line stderr deprecation notice. `--voice` wins when both are set. |
 | `--block` | empty | block id | Re-render a single block by id (from the roster printed at the end of every whole-doc run). Empty preserves whole-document narration. |
 | `--expected-content-hash` | empty | hex string | Only meaningful with `--block`. If the document's `content_hash` has changed since you obtained the id, a warning prints to stderr; the re-render still runs (exit `0`). |
 
 Exit codes: `0` success (including refused blocks and hash-mismatch warnings); `1` adapter / planner / renderer / sink error; `2` flag error (e.g. `--sink=persistent` without `--out`), unknown `--block` id, or a persistent `--block` patch refusal.
 
-## RVC character voices
+## Voice roster
 
-The default voice is plain Kokoro (24 kHz `af_bella` / `am_michael`). Opting into a **character voice** repaints each Kokoro block through the Apache-2.0 ONNX RVC decorator (`render/rvc`, issue #145) into **40 kHz mono** audio. Two voices are wired in phase one: `cool-jahns` (male source) and `confident-neal` (female source). The same knob is exposed on all three composition roots — routed through one shared `pipeline.BuildRenderer` factory:
+`--voice` (and the MCP `voice` arg) selects from **one unified named-voice roster** (`pipeline/voices.go`, issue #156) spanning both engines. The roster is the single source of truth `pipeline.BuildRenderer` reads to pick the engine + format:
+
+| Slug | Engine | Rate | Notes |
+|---|---|---|---|
+| `af-bella` | Kokoro | 24 kHz | Default (female). |
+| `am-michael` | Kokoro | 24 kHz | Male. |
+| `cool-jahns` | RVC | 40 kHz | Character voice — needs the worker. |
+| `confident-neal` | RVC | 40 kHz | Character voice — needs the worker. |
+
+The Kokoro voices are plain 24 kHz; the RVC voices repaint each Kokoro block through the Apache-2.0 ONNX RVC decorator (`render/rvc`, issue #145) into **40 kHz mono** audio. The same roster is exposed on all three composition roots:
 
 | Root | Surface | Scope |
 |---|---|---|
 | `cmd/narrate` (CLI) | `--voice <slug>` | Per invocation. |
 | `cmd/narrate-mcp` (MCP) | `voice` arg on `speak` / `speak_last` / `speak_to_file` | Per tool call. |
-| `cmd/narrate-server` (HTTP) | `--voice <slug>` **launch flag** | One character voice per server process (per-request voice is a deferred follow-up). |
+| `cmd/narrate-server` (HTTP) | `--voice <slug>` **launch flag** | One voice per server process (per-request voice is a deferred follow-up, #155). |
 
-Contract:
+### `--gender` is deprecated
 
-- **Worker required.** A character voice needs the torch-free RVC worker on disk: `make rvc-worker-venv` then `make rvc-export VOICE=<slug>`. Without it the render **stops** — no silent fallback to Kokoro.
-- **Honesty rule.** An unknown slug or an unavailable worker is a hard **error**, not a refusal: the CLI/server exit non-zero and the MCP tool returns a `caller-error`. Errors stop the pipeline; refusals are spoken. An unknown slug is caught up front (before any render work).
-- **`--voice` overrides `--gender`.** The decorator picks the Kokoro source voice its model was trained against, so `--gender` has no effect; the CLI and server print a one-line stderr notice when both are set. The MCP tools stay silent (structured receipt).
-- **40 kHz end-to-end.** The persistent sinks validate the container at 40 kHz when a voice is set; the plain path stays byte-identical at 24 kHz.
-- **`manifest.voice` records the character slug** (Decision D6). A persistent RVC render stamps `manifest.json` `"voice"` with the character voice you asked to hear (`cool-jahns` / `confident-neal`) — the honest provenance — not its hidden Kokoro source. Staleness keys only on `content_hash`, so this never affects caching or stale detection.
-- **Listen mode** (`--listen`) rejects `--voice` for now — the interactive transport plays through a fixed 24 kHz context; a 40 kHz character voice there is a deferred follow-up.
+`--gender` (and the MCP/`POST /narrate` `gender` field) is a **deprecated back-compat alias**: `female` → `af-bella`, `male` → `am-michael`. It still works — the CLI/server print a one-line stderr deprecation notice, and the MCP `gender` arg's schema description is marked `(DEPRECATED — use voice…)`. `--voice` wins when both are set. With `--gender` alone (or neither flag) the output — audio, exit codes, and `manifest.voice` — is byte-identical to before the roster landed.
 
-By-ear check (the exhaustive audio /verify is issue #147): `make rvc-sanity` renders the sample doc at both voices to a temp dir (40 kHz `audio.wav` + a `manifest.json` whose `"voice"` is the slug) for inspection.
+### Contract
 
-The plan stays engine-neutral: no RVC slug appears in `plan.json`, and `planner/` / `plan/` gain no dependency on the decorator.
+- **Worker required for RVC voices.** `cool-jahns` / `confident-neal` need the torch-free RVC worker on disk: `make rvc-worker-venv` then `make rvc-export VOICE=<slug>`. Without it the render **stops** at render time — no silent fallback to Kokoro.
+- **Honesty rule, two error classes.** An **unknown voice** is caught up front (before any render work): the CLI/server exit non-zero (via eager `pipeline.IsVoice`) and the MCP tool returns a `caller-error`. A **valid RVC voice with a missing worker** stops at render time (the `render/rvc` decorator's hard stop). Neither ever silently falls back to Kokoro.
+- **Format follows the roster.** The persistent sinks validate the container at the roster-resolved format — 40 kHz for an RVC voice, byte-identical 24 kHz for a Kokoro voice. `pipeline.BuildRenderer` returns that format alongside the renderer, so sink-expected-format cannot drift from renderer-format.
+- **`manifest.voice` records the engine-native id** (Decision D-D). A Kokoro voice stamps `manifest.json` `"voice"` with the engine id (`af_bella` / `am_michael`, so the `--gender` alias and the explicit `--voice` record the same value); an RVC voice stamps the character slug (`cool-jahns` / `confident-neal`) — the honest provenance, not the hidden Kokoro source. Staleness keys only on `content_hash`, so this never affects caching or stale detection.
+- **Listen mode** (`--listen`) now accepts a 24 kHz Kokoro `--voice`; it still rejects a 40 kHz RVC voice (the interactive transport plays through a fixed 24 kHz context — dynamic-rate listen is deferred to #154).
+
+By-ear check (the exhaustive audio /verify is issue #147): `make voice-sanity` renders the sample doc across a Kokoro slug + both RVC slugs to a temp dir (`audio.wav` + a `manifest.json` whose `"voice"` is the resolved id) for inspection.
+
+The plan stays engine-neutral: no roster slug appears in `plan.json`, and `planner/` / `plan/` gain no dependency on the roster or the decorator.
 
 ## Escalate one block
 
@@ -149,8 +161,8 @@ The server logs to stderr and runs until stdin EOF or Ctrl-C (both clean shutdow
 | `text` | one of source/text | — | string | Inline markdown text. Routed through the in-memory `adapter/mcptext` (ticket #17); the composition root assembles the URI as `mcp://inline/<sha256-hex-of-text>` and the adapter cross-checks the hash on read. |
 | `level` | no | `1` | `1` / `2` / `3` | Document-wide per-block leveling target: 1 = gist, 2 = summary, 3 = detail. Code blocks observe a Level-2 floor in listen-mode (see above); raising `level` to `3` lifts code (and everything else) to L3. |
 | `sink` | no | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` returns a tool error in phase one. |
-| `gender` | no | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. Moot when `voice` is set. |
-| `voice` | no | empty | `cool-jahns` / `confident-neal` | RVC character voice (see the "RVC character voices" section). Empty = plain Kokoro. An unknown slug is a `caller-error: invalid_argument`. Also accepted by `speak_last` and `speak_to_file`. Additive-compat: older clients that omit it are unaffected. |
+| `voice` | no | `af-bella` | `af-bella` / `am-michael` / `cool-jahns` / `confident-neal` | **Primary voice selector** over the unified roster (see the "Voice roster" section). An unknown slug is a `caller-error: invalid_argument`. Also accepted by `speak_last` and `speak_to_file`. Additive-compat: older clients that omit it are unaffected. |
+| `gender` | no | `female` | `female` / `male` | **DEPRECATED — use `voice`.** Back-compat alias: `female` → `af_bella`, `male` → `am_michael`. The arg's schema description is marked deprecated; `voice` wins when both are set. |
 
 ### Tool response
 

@@ -88,20 +88,19 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/internal/transcript"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
-// genderToVoice — phase-one mapping per CLAUDE.md domain rules + sindri
-// patterns A15 amendment. Female default per problem statement. Re-stated
-// here rather than imported from cmd/narrate so the two cmd packages stay
-// independent — matches the project's existing pattern.
-var genderToVoice = map[string]string{
-	"female": "af_bella",
-	"male":   "am_michael",
-}
+// Voice selection is unified over pipeline's named-voice roster (#156): the
+// `voice` arg is the primary selector over af-bella / am-michael (Kokoro) +
+// cool-jahns / confident-neal (RVC); the `gender` arg is a deprecated alias
+// resolved via pipeline.SlugForGender (female→af-bella, male→am-michael). The
+// precedence funnel lives in speakArgs.effectiveVoice. Deprecation is surfaced
+// STRUCTURALLY in the gender arg's jsonschema description (OQ-1: description-only,
+// no response-envelope change — keeps the MCP receipt byte-identical).
 
 // Local sentinels. Caller-error sentinels carry the wire-prefix in their
 // message so the classifier path and direct-validation path produce
@@ -126,8 +125,8 @@ type speakArgs struct {
 	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
 	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
 	Sink         string `json:"sink,omitempty"         jsonschema:"output sink: ephemeral | persistent (persistent not implemented). default ephemeral"`
-	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
-	Voice        string `json:"voice,omitempty"        jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro. When set it overrides gender (RVC selects the Kokoro source). Additive-compat field — schema_version unchanged; older clients that omit it are unaffected."`
+	Gender       string `json:"gender,omitempty"       jsonschema:"(DEPRECATED — use voice; female → af-bella, male → am-michael) voice gender: female | male. default female"`
+	Voice        string `json:"voice,omitempty"        jsonschema:"voice (primary selector): af-bella (Kokoro 24kHz) | am-michael (Kokoro 24kHz) | cool-jahns (RVC 40kHz, needs worker) | confident-neal (RVC 40kHz, needs worker). Empty (default) = af-bella; overrides the deprecated gender. Additive-compat field — schema_version unchanged; older clients that omit it are unaffected."`
 	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
 }
 
@@ -175,16 +174,17 @@ func (a speakArgs) validate() error {
 	default:
 		return fmt.Errorf("caller-error: invalid_argument: sink must be ephemeral or persistent (got %q)", a.Sink)
 	}
-	if _, ok := genderToVoice[a.Gender]; !ok {
+	if _, ok := pipeline.SlugForGender(a.Gender); !ok {
 		return fmt.Errorf("caller-error: invalid_argument: gender must be female or male (got %q)", a.Gender)
 	}
-	// Issue #146 — voice enum. Empty preserves plain Kokoro; a non-empty value
-	// must be a known RVC target slug. An unknown voice is an MCP caller-error
-	// (classified by the "caller-error: invalid_argument:" prefix), never a
-	// silent fallback to Kokoro (honesty rule).
-	if a.Voice != "" && !rvc.IsSupportedVoice(a.Voice) {
-		return fmt.Errorf("caller-error: invalid_argument: voice must be one of %s (got %q)",
-			strings.Join(rvc.SupportedVoices(), ", "), a.Voice)
+	// #156 — voice enum over the full roster. Empty falls to the gender alias /
+	// default; a non-empty value must be a known roster slug. An unknown voice is
+	// an MCP caller-error (classified by the "caller-error: invalid_argument:"
+	// prefix), before any render — never a silent Kokoro fallback (honesty rule,
+	// F1 error class 1).
+	if a.Voice != "" && !pipeline.IsVoice(a.Voice) {
+		return fmt.Errorf("caller-error: invalid_argument: voice must be one of: %s (got %q)",
+			pipeline.VoiceHelp(), a.Voice)
 	}
 	switch a.Intelligence {
 	case "none", "mcpsampling":
@@ -193,6 +193,21 @@ func (a speakArgs) validate() error {
 		return fmt.Errorf("%w (got %q)", errUnknownIntelligence, a.Intelligence)
 	}
 	return nil
+}
+
+// effectiveVoice resolves the roster slug this call selects (#156): an explicit
+// voice wins; otherwise the deprecated gender alias (female→af-bella,
+// male→am-michael); an empty result falls to the roster default (af-bella) inside
+// ResolveVoice. applyDefaults has already set gender to "female" when omitted, so
+// an omit-everything call resolves to af-bella — byte-identical to today.
+func (a speakArgs) effectiveVoice() string {
+	if a.Voice != "" {
+		return a.Voice
+	}
+	if slug, ok := pipeline.SlugForGender(a.Gender); ok {
+		return slug
+	}
+	return a.Voice
 }
 
 // speakReceipt — the v1 response envelope (receipt-only, per Decision v1).
@@ -312,10 +327,10 @@ type runDeps struct {
 const listenCodeMinLevel = plan.L2
 
 var newPipeline = func(outDir string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter, observer ephemeral.BlockObserver) pipeline.Narrator {
-	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	renderer, _, err := pipeline.BuildRenderer(args.effectiveVoice())
 	if err != nil {
-		// validate() pins args.Voice to a known slug (or empty) before this seam
-		// runs, so BuildRenderer's only reachable error — ErrUnsupportedVoice —
+		// validate() pins the effective voice to a known roster slug before this
+		// seam runs, so BuildRenderer's only reachable error — ErrUnknownVoice —
 		// cannot fire here. Any error is a composition-root bug; panic loudly
 		// rather than silently degrade to Kokoro. The ephemeral sink plays via
 		// afplay, which handles a 40 kHz WAV natively — no WithExpectedFormat.
@@ -395,8 +410,12 @@ func runSpeakWithCache(ctx context.Context, args speakArgs, cache *mcpsampling.S
 	intel := buildIntelligence(args, cache)
 	pl := newPipeline(outDir, args, input, intel, observer)
 
+	// #156 — the render voice hint is the roster RenderVoiceID (Kokoro engine id
+	// for a Kokoro voice; empty for RVC, where the decorator paints its own
+	// source). The error is unreachable post-validate; ignore it.
+	voiceInfo, _ := pipeline.ResolveVoice(args.effectiveVoice())
 	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
-		Voice: genderToVoice[args.Gender],
+		Voice: voiceInfo.RenderVoiceID,
 	})
 	if err != nil {
 		// Error path: propagate unchanged, attach NO transcript. The
@@ -584,8 +603,8 @@ const speakLastToolName = "speak_last"
 // It exists mainly for tests and power users; normal callers omit everything.
 type speakLastArgs struct {
 	Level          int    `json:"level,omitempty"           jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
-	Gender         string `json:"gender,omitempty"          jsonschema:"voice gender: female | male. default female"`
-	Voice          string `json:"voice,omitempty"           jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro; when set it overrides gender. Additive-compat field."`
+	Gender         string `json:"gender,omitempty"          jsonschema:"(DEPRECATED — use voice; female → af-bella, male → am-michael) voice gender: female | male. default female"`
+	Voice          string `json:"voice,omitempty"           jsonschema:"voice (primary selector): af-bella (Kokoro 24kHz) | am-michael (Kokoro 24kHz) | cool-jahns (RVC 40kHz, needs worker) | confident-neal (RVC 40kHz, needs worker). Empty (default) = af-bella; overrides the deprecated gender. Additive-compat field."`
 	Intelligence   string `json:"intelligence,omitempty"    jsonschema:"intelligence backend: none | mcpsampling. default none"`
 	TranscriptPath string `json:"transcript_path,omitempty" jsonschema:"optional override: absolute path to a Claude Code transcript .jsonl; default = newest under the projects root"`
 }
@@ -751,8 +770,8 @@ type speakToFileArgs struct {
 	Source       string `json:"source,omitempty"       jsonschema:"file path to a markdown document to narrate (exactly one of source or text)"`
 	Text         string `json:"text,omitempty"         jsonschema:"inline markdown text to narrate (exactly one of source or text). Routed through the in-memory mcptext adapter; URI is mcp://inline/<sha256-hex>."`
 	Level        int    `json:"level,omitempty"        jsonschema:"leveling depth: 1 (gist) | 2 (summary) | 3 (detail). default 1"`
-	Gender       string `json:"gender,omitempty"       jsonschema:"voice gender: female | male. default female"`
-	Voice        string `json:"voice,omitempty"        jsonschema:"RVC character voice: cool-jahns | confident-neal (40 kHz; requires the RVC worker). Empty (default) = plain Kokoro; when set it overrides gender. The written .wav is 40 kHz. Additive-compat field."`
+	Gender       string `json:"gender,omitempty"       jsonschema:"(DEPRECATED — use voice; female → af-bella, male → am-michael) voice gender: female | male. default female"`
+	Voice        string `json:"voice,omitempty"        jsonschema:"voice (primary selector): af-bella (Kokoro 24kHz) | am-michael (Kokoro 24kHz) | cool-jahns (RVC 40kHz, needs worker) | confident-neal (RVC 40kHz, needs worker). Empty (default) = af-bella; overrides the deprecated gender. An RVC voice writes a 40 kHz .wav. Additive-compat field."`
 	Intelligence string `json:"intelligence,omitempty" jsonschema:"intelligence backend: none | mcpsampling. default none. Additive-compat field — schema_version unchanged per CLAUDE.md."`
 	OutputPath   string `json:"output_path,omitempty"  jsonschema:"destination for the rendered .wav. A file path is written (a missing .wav extension is appended); an existing directory gets a derived filename inside it. Omit/empty to play the audio ephemerally and write no file."`
 }
@@ -806,19 +825,22 @@ type speakToFileResponse struct {
 // defer); wavPath is the resolved destination OUTSIDE that scratch, so the
 // scratch RemoveAll never deletes the output.
 var newFilePipeline = func(renderDir, wavPath string, args speakArgs, input adapter.InputAdapter, intel intelligence.IntelligenceAdapter) pipeline.Narrator {
-	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	renderer, _, err := pipeline.BuildRenderer(args.effectiveVoice())
 	if err != nil {
 		// Unreachable post-validate() (see newPipeline); panic on a genuine bug
 		// rather than degrade silently.
 		panic(fmt.Sprintf("buildRenderer failed after validation (file): %v", err))
 	}
-	// Under a voice the render is 40 kHz — the WAVFile sink must validate the
-	// per-block containers at 40 kHz, else readWAV rejects them against the
-	// 24 kHz default. NewWAVFile writes no manifest.json, so there is no
-	// manifest.voice to set (WithVoice is a documented no-op here) — D6 scope.
+	// #156/D-G — the WAVFile sink validates per-block containers at the
+	// roster-resolved format: 40 kHz for an RVC voice (else readWAV rejects them
+	// against the 24 kHz default), the 24 kHz default (no WithExpectedFormat) for
+	// a Kokoro voice. NewWAVFile writes no manifest.json, so there is no
+	// manifest.voice to set (WithVoice is a no-op here). The error is unreachable
+	// post-validate; ignore it.
+	info, _ := pipeline.ResolveVoice(args.effectiveVoice())
 	wavOpts := []persistent.Option{}
-	if args.Voice != "" {
-		wavOpts = append(wavOpts, persistent.WithExpectedFormat(rvc.OutputFormat()))
+	if info.Format != render.DefaultFormat() {
+		wavOpts = append(wavOpts, persistent.WithExpectedFormat(info.Format))
 	}
 	return pipeline.New(
 		input,
@@ -963,8 +985,11 @@ func runSpeakToFile(ctx context.Context, args speakToFileArgs, cache *mcpsamplin
 	intel := buildIntelligence(sa, cache)
 	pl := newFilePipeline(renderDir, wavPath, sa, input, intel)
 
+	// #156 — render voice hint is the roster RenderVoiceID (unreachable error
+	// post-validate; ignore it).
+	saVoice, _ := pipeline.ResolveVoice(sa.effectiveVoice())
 	receipt, err := pl.Narrate(ctx, ref, pipeline.NarrateRequest{
-		Voice: genderToVoice[sa.Gender],
+		Voice: saVoice.RenderVoiceID,
 	})
 	if err != nil {
 		// Errors stop the pipeline; refusals are data and arrive on success.
