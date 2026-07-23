@@ -29,12 +29,13 @@ The ephemeral sink cleans up its temp WAV directory at the end of the run. The p
 | `--file` | — (required) | path | Markdown document to narrate. |
 | `--level` | `1` | `1` / `2` / `3` | Per-block leveling target: 1 = gist, 2 = summary, 3 = detail. With `--block`, this is the absolute target level for that one block — downgrade L3→L1 supported. |
 | `--sink` | `ephemeral` | `ephemeral` / `persistent` | Output sink. `persistent` writes `audio.wav`, `plan.json`, and `manifest.json` to the `--out` directory (required with `--sink=persistent`). |
+| `--out` | empty | path | Destination directory for `--sink=persistent` — receives `audio.wav`, `plan.json`, and `manifest.json`. Required with `--sink=persistent`; rejected with `--sink=ephemeral` (which owns its own temp-dir lifecycle). |
 | `--gender` | `female` | `female` / `male` | Voice gender. `female` → `af_bella`, `male` → `am_michael`. Ignored when `--voice` is set (a one-line stderr notice says so). |
 | `--voice` | empty | `cool-jahns` / `confident-neal` | RVC character voice (see "RVC character voices" below). Empty = plain Kokoro. Requires the RVC worker; an unknown slug or a missing worker exits non-zero (no silent fallback). Rejected with `--listen`. |
 | `--block` | empty | block id | Re-render a single block by id (from the roster printed at the end of every whole-doc run). Empty preserves whole-document narration. |
 | `--expected-content-hash` | empty | hex string | Only meaningful with `--block`. If the document's `content_hash` has changed since you obtained the id, a warning prints to stderr; the re-render still runs (exit `0`). |
 
-Exit codes: `0` success (including refused blocks and hash-mismatch warnings); `1` adapter / planner / renderer / sink error; `2` flag error, `--sink=persistent`, or unknown `--block` id.
+Exit codes: `0` success (including refused blocks and hash-mismatch warnings); `1` adapter / planner / renderer / sink error; `2` flag error (e.g. `--sink=persistent` without `--out`), unknown `--block` id, or a persistent `--block` patch refusal.
 
 ## RVC character voices
 
@@ -118,7 +119,7 @@ go run ./cmd/narrate --file docs/samples/sample.md \
 
 If the document's hash differs, you'll see a stderr warning — `warning: content_hash mismatch (expected …, got …) — block content has changed since you got that id` — and the re-render still runs (exit `0`). An unknown `--block` id exits `2` with `block not found: <id>`. Passing `--expected-content-hash` without `--block` is a flag error (exit `2`) — without `--block` the pipeline does not check the hash and the guard would be silently ineffective.
 
-Phase-one caveats: per-block re-render works against the ephemeral sink only. The persistent sink (issue #16) will keep `manifest.json` consistent and rewrite just the patched block's WAV in place — until then, `--block --sink=persistent` returns the same `errPersistentNotImplemented` fast-error as any other persistent-sink call.
+Per-block re-render works against both sinks. With `--sink=persistent` (issue #16), `--block --sink=persistent` patches just the targeted block's WAV into the existing `--out` directory (issue #28, `sink/persistent.PatchBlock`) — every other block is byte-preserved and `manifest.json` stays consistent. A missing directory, absent manifest, stale content, cross-document hash, or container mismatch is refused at runtime (exit `2`).
 
 ## MCP server (`cmd/narrate-mcp`)
 
