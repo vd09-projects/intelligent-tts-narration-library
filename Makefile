@@ -1,8 +1,9 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert rvc-sanity
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert rvc-sanity voice-sanity
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
 RVC_SANITY_OUT ?= /tmp/rvc-sanity-$(shell date +%s)
+VOICE_SANITY_OUT ?= /tmp/voice-sanity-$(shell date +%s)
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
@@ -58,6 +59,7 @@ help:
 	@echo ""
 	@echo "RVC voice wiring (#146 — needs the RVC worker: run 'make rvc-worker-venv' + 'make rvc-export'):"
 	@echo "  rvc-sanity             — narrate \$$SAMPLE at both RVC voices → 40 kHz audio.wav + manifest per voice under \$$RVC_SANITY_OUT (for the #147 by-ear /verify)"
+	@echo "  voice-sanity           — narrate \$$SAMPLE across the roster matrix (am-michael Kokoro 24 kHz + cool-jahns/confident-neal RVC 40 kHz) under \$$VOICE_SANITY_OUT (#156; RVC voices need the worker; for the #147 by-ear /verify)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -260,3 +262,17 @@ rvc-sanity:
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(RVC_SANITY_OUT)/confident-neal --voice confident-neal
 	@echo "RVC sanity: wrote 40 kHz cool-jahns + confident-neal renders under $(RVC_SANITY_OUT)"
 	@echo "Verify (#147): afplay $(RVC_SANITY_OUT)/cool-jahns/audio.wav — and confirm manifest.json \"voice\" == the slug (D6)."
+
+# voice-sanity (#156) renders $(SAMPLE) across the unified roster matrix: a Kokoro
+# slug (am-michael, 24 kHz — needs only Kokoro) plus both RVC slugs (40 kHz — need
+# the RVC worker: make rvc-worker-venv + make rvc-export VOICE=...). Each --voice
+# is the primary selector; an unknown slug or a missing worker STOPS non-zero
+# (honesty rule). The Kokoro leg proves manifest.voice records the engine id
+# (am_michael, underscore) at 24 kHz; the RVC legs prove the slug at 40 kHz.
+voice-sanity:
+	@mkdir -p $(VOICE_SANITY_OUT)/am-michael $(VOICE_SANITY_OUT)/cool-jahns $(VOICE_SANITY_OUT)/confident-neal
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/am-michael --voice am-michael
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/cool-jahns --voice cool-jahns
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/confident-neal --voice confident-neal
+	@echo "Voice sanity: wrote am-michael (24 kHz Kokoro) + cool-jahns/confident-neal (40 kHz RVC) under $(VOICE_SANITY_OUT)"
+	@echo "Verify (#147): afplay each audio.wav; confirm manifest.json \"voice\" == am_michael (Kokoro engine id) / the RVC slug (D-D)."
