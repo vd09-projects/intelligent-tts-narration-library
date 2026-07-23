@@ -19,7 +19,7 @@ import (
 // installNarrateSeams swaps the /narrate factory + dir-writer seams for a test.
 func installNarrateSeams(t *testing.T,
 	narrate func(voice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator,
-	write func(ctx context.Context, dir, voice string, p plan.NarrationPlan, res render.RenderResult) error,
+	write func(ctx context.Context, dir, voice string, format plan.AudioFormat, p plan.NarrationPlan, res render.RenderResult) error,
 ) {
 	t.Helper()
 	origN, origW := newNarratePipeline, writeRenderDir
@@ -38,7 +38,7 @@ func installNarrateSeams(t *testing.T,
 // artifact in the new 3-file render_id layout).
 func narrateStub(blocks []plan.Block, narrateErr error, payload []byte) (
 	func(string, plan.Level, string, *capturingSink) pipeline.Narrator,
-	func(context.Context, string, string, plan.NarrationPlan, render.RenderResult) error,
+	func(context.Context, string, string, plan.AudioFormat, plan.NarrationPlan, render.RenderResult) error,
 ) {
 	narrate := func(_ string, _ plan.Level, _ string, capturer *capturingSink) pipeline.Narrator {
 		return narratorFunc(func(_ context.Context, _ plan.SourceRef, _ pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
@@ -55,7 +55,7 @@ func narrateStub(blocks []plan.Block, narrateErr error, payload []byte) (
 			return pipeline.NarrateResult{}, nil
 		})
 	}
-	write := func(_ context.Context, dir, _ string, _ plan.NarrationPlan, _ render.RenderResult) error {
+	write := func(_ context.Context, dir, _ string, _ plan.AudioFormat, _ plan.NarrationPlan, _ render.RenderResult) error {
 		return os.WriteFile(filepath.Join(dir, "audio.wav"), payload, 0o600)
 	}
 	return narrate, write
@@ -251,7 +251,7 @@ func TestNarrate_RenderError(t *testing.T) {
 	t.Run("wav_write_error", func(t *testing.T) {
 		blocks := []plan.Block{{ID: "b1", Status: plan.StatusVoiced}}
 		narrate, _ := narrateStub(blocks, nil, nil)
-		writeErr := func(_ context.Context, _, _ string, _ plan.NarrationPlan, _ render.RenderResult) error {
+		writeErr := func(_ context.Context, _, _ string, _ plan.AudioFormat, _ plan.NarrationPlan, _ render.RenderResult) error {
 			return errors.New("disk full")
 		}
 		installNarrateSeams(t, narrate, writeErr)

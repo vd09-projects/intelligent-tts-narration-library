@@ -41,7 +41,6 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
@@ -82,17 +81,18 @@ type narrateResponse struct {
 // wavs there and the persistent sink concatenates them into {outDir}/audio.wav
 // alongside plan.json + manifest.json. Tests swap this var for a stub narrator
 // (no Kokoro).
-// The first parameter is the RVC voice slug (args.Voice) — empty for plain
-// Kokoro. It selects the RENDERER via pipeline.BuildRenderer; the Kokoro source
-// hint still flows separately through NarrateRequest.Voice in runNarrate. (The
-// param was previously the gender-derived Kokoro id and unused in the body; #146
-// repurposes it to drive the shared engine factory.)
+// The first parameter is the roster voice slug — runNarrate passes the effective
+// launch slug (args.effectiveLaunchSlug(): --voice, else the deprecated --gender
+// alias) — #156. It selects the RENDERER via pipeline.BuildRenderer; for a Kokoro
+// voice the engine is voice-neutral and the actual Kokoro voice flows separately
+// through NarrateRequest.Voice in runNarrate.
 var newNarratePipeline = func(rvcVoice string, level plan.Level, outDir string, capturer *capturingSink) pipeline.Narrator {
 	renderer, _, err := pipeline.BuildRenderer(rvcVoice)
 	if err != nil {
-		// parseFlags pins the process voice to a known slug (or empty) at
-		// startup, so BuildRenderer cannot error here; a non-nil error is a
-		// composition-root bug — panic rather than degrade silently.
+		// parseFlags pins the effective launch voice to a known roster slug at
+		// startup, so BuildRenderer's only reachable error — ErrUnknownVoice —
+		// cannot fire here; a non-nil error is a composition-root bug — panic
+		// rather than degrade silently.
 		panic(fmt.Sprintf("buildRenderer failed after flag validation (narrate): %v", err))
 	}
 	return pipeline.New(
@@ -114,15 +114,17 @@ var newNarratePipeline = func(rvcVoice string, level plan.Level, outDir string, 
 // persistent.New(dir).Consume, making the dir patchable by render_id (#125/#110).
 // This SUPERSEDES #109's single-wav WAVFileSink for the SERVER /narrate path
 // only; persistent.NewWAVFile (no sidecars) stays for speak_to_file / MCP.
-// The voice param is the RESOLVED manifest voice: the RVC character slug for an
-// RVC render (Decision D6, supplied by runNarrate) or the gender-derived Kokoro
-// id otherwise. When it is a known RVC slug the render is 40 kHz, so the
-// format-validating sink must expect 40 kHz — derived from the same rvc package
-// as the renderer's format, so the two cannot drift.
-var writeRenderDir = func(ctx context.Context, dir, voice string, p plan.NarrationPlan, res render.RenderResult) error {
+// voice is the RESOLVED manifest voice (VoiceInfo.ManifestVoice) and format is
+// the RESOLVED expected format (VoiceInfo.Format / BuildRenderer's returned
+// format), both supplied by runNarrate — #156/D-G. WithExpectedFormat is applied
+// only when format is not the 24 kHz default (i.e. a 40 kHz RVC render); a Kokoro
+// render keeps the sink's 24 kHz default. Threading the format (rather than
+// re-deriving it from the voice string via rvc.IsSupportedVoice) is the D-G
+// decoupling: the sink reads the renderer's real format, so the two cannot drift.
+var writeRenderDir = func(ctx context.Context, dir, voice string, format plan.AudioFormat, p plan.NarrationPlan, res render.RenderResult) error {
 	opts := []persistent.Option{persistent.WithVoice(voice)}
-	if rvc.IsSupportedVoice(voice) {
-		opts = append(opts, persistent.WithExpectedFormat(rvc.OutputFormat()))
+	if format != render.DefaultFormat() {
+		opts = append(opts, persistent.WithExpectedFormat(format))
 	}
 	_, err := persistent.New(dir, opts...).Consume(ctx, p, res)
 	return err
@@ -152,20 +154,23 @@ func narrateHandler(args serverArgs, store *renderStore) http.Handler {
 				fmt.Sprintf("level must be 1, 2, or 3 (got %d)", req.Level))
 			return
 		}
-		// gender: absent → female (no error); a present-but-unknown value is a
-		// caller mistake → missing_field (per the pinned Reason Token Contract).
+		// gender: absent → female (no error). #156 — the per-request `gender` body
+		// field is DEPRECATED (documented in the route-contract header) but still
+		// selects the Kokoro voice via the roster alias; a present-but-unknown value
+		// is a caller mistake → missing_field (per the pinned Reason Token Contract).
 		gender := req.Gender
 		if gender == "" {
 			gender = "female"
 		}
-		voice, ok := genderToVoice[gender]
+		slug, ok := pipeline.SlugForGender(gender)
 		if !ok {
 			writeError(w, http.StatusBadRequest, reasonMissingField,
 				fmt.Sprintf("gender must be female or male (got %q)", req.Gender))
 			return
 		}
+		reqInfo, _ := pipeline.ResolveVoice(slug) // err unreachable — slug is a roster slug
 
-		resp, status, errResp := runNarrate(r.Context(), args, store, req.Text, plan.Level(req.Level), voice)
+		resp, status, errResp := runNarrate(r.Context(), args, store, req.Text, plan.Level(req.Level), reqInfo.RenderVoiceID)
 		if errResp != nil {
 			writeError(w, status, errResp.Reason, errResp.Message)
 			return
@@ -177,7 +182,7 @@ func narrateHandler(args serverArgs, store *renderStore) http.Handler {
 // runNarrate is the handler core (pulled out so tests assert the mapping
 // directly). Returns either a success response (errResp nil, 200 — INCLUDING the
 // refusal case) or an ErrorResponse + status.
-func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, text string, level plan.Level, voice string) (narrateResponse, int, *ErrorResponse) {
+func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, text string, level plan.Level, requestVoice string) (narrateResponse, int, *ErrorResponse) {
 	// Per-request timeout bounds a hung Kokoro render (mirrors /escalate).
 	ctx, cancel := context.WithTimeout(reqCtx, args.RequestTimeout)
 	defer cancel()
@@ -208,18 +213,32 @@ func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, tex
 			&ErrorResponse{Reason: reasonInternal, Message: "write source: " + err.Error()}
 	}
 
+	// #156 — the RENDERER is the launch voice (effectiveLaunchSlug: --voice, else
+	// the deprecated --gender alias). An explicit launch --voice is the
+	// AUTHORITATIVE process voice — its roster resolution drives the render hint,
+	// manifest.voice, and expected format. With NO launch --voice, /narrate defers
+	// to the per-request gender (byte-identical back-compat — launch --gender never
+	// drove /narrate; and BuildRenderer for a Kokoro slug is voice-neutral, so the
+	// actual Kokoro voice always flows via NarrateRequest.Voice). Error unreachable
+	// post-parseFlags.
+	launchInfo, _ := pipeline.ResolveVoice(args.effectiveLaunchSlug())
+	renderVoice := requestVoice
+	manifestVoice := requestVoice
+	format := render.DefaultFormat()
+	if args.Voice != "" {
+		renderVoice = launchInfo.RenderVoiceID
+		manifestVoice = launchInfo.ManifestVoice
+		format = launchInfo.Format
+	}
+
 	capturer := &capturingSink{}
-	// args.Voice (the launch flag, D5) selects the RENDERER via BuildRenderer;
-	// `voice` (the gender-derived Kokoro id) still flows as the NarrateRequest
-	// hint below. Under an RVC render the decorator ignores that hint and paints
-	// its own source.
-	narrator := newNarratePipeline(args.Voice, level, outDir, capturer)
+	narrator := newNarratePipeline(args.effectiveLaunchSlug(), level, outDir, capturer)
 	ref := plan.SourceRef{
 		Kind:        plan.SourceKindFile,
 		URI:         srcPath,
 		ContentHash: contentHashOf(text),
 	}
-	if _, err := narrator.Narrate(ctx, ref, pipeline.NarrateRequest{Voice: voice}); err != nil {
+	if _, err := narrator.Narrate(ctx, ref, pipeline.NarrateRequest{Voice: renderVoice}); err != nil {
 		_ = os.RemoveAll(outDir)
 		// A timeout/cancel mirrors /escalate's 408 path; any other pipeline fault
 		// (Kokoro hard fault, sink error) is the one new render_failed/500 token.
@@ -236,13 +255,10 @@ func runNarrate(reqCtx context.Context, args serverArgs, store *renderStore, tex
 			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result"}
 	}
 
-	// D6 — record the RVC character slug in manifest.voice when a voice is set;
-	// otherwise the gender-derived Kokoro id, byte-identical to pre-#146.
-	manifestVoice := voice
-	if args.Voice != "" {
-		manifestVoice = args.Voice
-	}
-	if err := writeRenderDir(ctx, outDir, manifestVoice, capturer.plan, capturer.result); err != nil {
+	// #156 — manifestVoice + format were resolved above (launch voice authoritative
+	// when --voice is set, else the per-request gender path — byte-identical to
+	// pre-#156). writeRenderDir applies 40 kHz only when format is not the default.
+	if err := writeRenderDir(ctx, outDir, manifestVoice, format, capturer.plan, capturer.result); err != nil {
 		// No commit, no map entry → nothing leaked; the orphan scan mops up any
 		// partial dir by mtime.
 		_ = os.RemoveAll(outDir)

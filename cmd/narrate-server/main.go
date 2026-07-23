@@ -27,6 +27,9 @@
 //	  blocks carry source text + coarse class ONLY: no voicing, no refusal at this route (R3)
 //	  400 missing_field (bad/empty/".." id) | 404 source_not_found (no jsonl) | 500 internal (glob/parse)
 //	POST /narrate  {text, level, gender}  → 200 {audio_url, blocks[], timeline}   (inline TEXT only — R2)
+//	  gender is DEPRECATED (#156): female → af-bella, male → am-michael. It still
+//	  works (absent → female) but the roster-native voice knob is the launch
+//	  --voice flag; a per-request `voice` body field is a deferred follow-up (#155).
 //	  200 refused → {audio_url, blocks[] (refused), timeline}   (refusal is data, HTTP 200 — R-NB1)
 //	  400 missing_field (no text / unknown gender) | 400 invalid_level | 408 cancelled | 500 render_failed
 //	  Mints a PATCHABLE 3-file persistent dir per render_id ({tempRoot}/{id}/
@@ -166,18 +169,17 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/persistent"
 )
 
-// genderToVoice — phase-one mapping per CLAUDE.md domain rules + sindri
-// patterns A15 amendment. Re-stated here (not imported from cmd/narrate) so the
-// cmd packages stay independent — matches the project's existing pattern.
-var genderToVoice = map[string]string{
-	"female": "af_bella",
-	"male":   "am_michael",
-}
+// Voice selection is unified over pipeline's named-voice roster (#156). The
+// launch --voice flag is the primary process-voice selector over af-bella /
+// am-michael (Kokoro) + cool-jahns / confident-neal (RVC); the launch --gender
+// flag is a deprecated alias resolved via pipeline.SlugForGender. The precedence
+// funnel lives in serverArgs.effectiveLaunchSlug. The POST /narrate `gender` body
+// field is a separate per-request Kokoro selector, kept working for back-compat
+// (a per-request roster `voice` field is deferred to #155).
 
 // loopbackHosts is the closed set of host literals the server will bind to.
 // Anything else (0.0.0.0, ::, a LAN IP, a hostname, or the empty host in
@@ -240,17 +242,33 @@ type serverArgs struct {
 	CORSOrigin     string
 	RequestTimeout time.Duration
 	Gender         string
-	// Voice is the optional RVC character voice slug (cool-jahns |
-	// confident-neal) for the whole server process — one character voice per
-	// job (Decision D5, launch flag). Empty (the default) preserves the plain-
-	// Kokoro 24 kHz path byte-identically. When set, both the /narrate and
-	// /escalate renders route through the render/rvc decorator (40 kHz), the
-	// persistent sink validates at 40 kHz, and manifest.voice records this slug
-	// (Decision D6). Overrides --gender (RVC selects the Kokoro source). Per #146.
+	// Voice is the launch --voice: the process voice slug over the full roster
+	// (af-bella / am-michael Kokoro 24 kHz + cool-jahns / confident-neal RVC
+	// 40 kHz) — #156. Empty (the default) falls to the --gender alias / af-bella
+	// default. When set it is the AUTHORITATIVE process voice: /escalate and (for
+	// an explicit --voice) /narrate route the renderer, manifest.voice, and
+	// expected format through pipeline.ResolveVoice. --voice overrides the
+	// deprecated --gender. One voice per process (per-request voice is #155).
 	Voice string
 	// AudioTTL bounds how long a /narrate-minted wav lives in the server temp
 	// store before the GC reaper removes it (#109 Step 7, the AC5 "settle").
 	AudioTTL time.Duration
+}
+
+// effectiveLaunchSlug resolves the process voice slug from the launch flags
+// (#156): an explicit --voice wins; otherwise the deprecated --gender alias
+// (female→af-bella, male→am-michael); an empty result falls to the roster default
+// (af-bella) inside ResolveVoice. It drives the renderer for both /narrate and
+// /escalate, and (for /escalate, or /narrate with an explicit --voice) the
+// manifest voice + expected format.
+func (a serverArgs) effectiveLaunchSlug() string {
+	if a.Voice != "" {
+		return a.Voice
+	}
+	if slug, ok := pipeline.SlugForGender(a.Gender); ok {
+		return slug
+	}
+	return a.Voice
 }
 
 // escalateRequest — POST /escalate body. snake_case JSON tags (the #50
@@ -335,11 +353,11 @@ func (c *capturingSink) Consume(_ context.Context, p plan.NarrationPlan, res ren
 // Intelligence is nil phase one (the escalate edge has no intelligence flag);
 // the planner's deterministic + degraded + refuse path is the honesty backbone.
 var newPipeline = func(outDir string, args serverArgs, capturer *capturingSink) pipeline.Narrator {
-	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	renderer, _, err := pipeline.BuildRenderer(args.effectiveLaunchSlug())
 	if err != nil {
-		// parseFlags pins args.Voice to a known slug (or empty) at startup, so
-		// BuildRenderer's only reachable error — ErrUnsupportedVoice — cannot
-		// fire here. Any error is a composition-root bug; panic rather than
+		// parseFlags pins the effective launch voice to a known roster slug at
+		// startup, so BuildRenderer's only reachable error — ErrUnknownVoice —
+		// cannot fire here. Any error is a composition-root bug; panic rather than
 		// silently degrade to Kokoro.
 		panic(fmt.Sprintf("buildRenderer failed after flag validation: %v", err))
 	}
@@ -422,34 +440,43 @@ func parseFlags(argv []string, errOut io.Writer) (serverArgs, error) {
 	fs.StringVar(&a.CORSOrigin, "cors-origin", "http://localhost:5173", "the single allowed CORS origin (emitted literally; the request Origin is never echoed)")
 	fs.DurationVar(&a.RequestTimeout, "request-timeout", 120*time.Second, "per-request render timeout (bounds a hung Kokoro render)")
 	fs.DurationVar(&a.AudioTTL, "audio-ttl", 30*time.Minute, "how long a /narrate-minted wav lives before the GC reaper removes it")
-	fs.StringVar(&a.Gender, "gender", "female", "voice gender for the re-render: female | male")
-	fs.StringVar(&a.Voice, "voice", "", "RVC character voice for the whole process: "+strings.Join(rvc.SupportedVoices(), " | ")+" (40 kHz; requires the RVC worker; empty = plain Kokoro; overrides --gender)")
+	fs.StringVar(&a.Gender, "gender", "female", "(DEPRECATED — use --voice) voice gender for the re-render: female | male (female → af-bella, male → am-michael)")
+	fs.StringVar(&a.Voice, "voice", "", "process voice (primary selector): "+pipeline.VoiceHelp()+" — default af-bella; RVC voices need the worker")
 	if err := fs.Parse(argv); err != nil {
 		return serverArgs{}, err
 	}
-	if _, ok := genderToVoice[a.Gender]; !ok {
+	if _, ok := pipeline.SlugForGender(a.Gender); !ok {
 		_, _ = fmt.Fprintf(errOut, "narrate-server: --gender must be female or male (got %q)\n", a.Gender)
 		return serverArgs{}, fmt.Errorf("invalid --gender %q", a.Gender)
 	}
-	// Issue #146 — --voice membership. Empty preserves plain Kokoro; a non-empty
-	// value must be a known RVC slug, else the server refuses to start (non-zero
-	// exit) — never a silent fallback to Kokoro (honesty rule).
-	if a.Voice != "" && !rvc.IsSupportedVoice(a.Voice) {
-		_, _ = fmt.Fprintf(errOut, "narrate-server: --voice must be one of %s (got %q)\n",
-			strings.Join(rvc.SupportedVoices(), ", "), a.Voice)
+	// #156 — --voice membership over the full roster. Empty falls to the --gender
+	// alias / default; a non-empty value must be a known roster slug, else the
+	// server refuses to start (non-zero exit) — never a silent fallback (honesty
+	// rule, F1 error class 1).
+	if a.Voice != "" && !pipeline.IsVoice(a.Voice) {
+		_, _ = fmt.Fprintf(errOut, "narrate-server: --voice must be one of: %s (got %q)\n",
+			pipeline.VoiceHelp(), a.Voice)
 		return serverArgs{}, fmt.Errorf("invalid --voice %q", a.Voice)
 	}
-	// Decision D4' — non-fatal startup notice when an explicit --gender is paired
-	// with --voice: the RVC decorator overrides the Kokoro source, so --gender
-	// has no effect. fs.Visit reports only flags actually set on the command line.
-	genderSet := false
+	// #156 D-C — --gender is deprecated; emit a startup notice (pinned constants,
+	// narrate-server: prefix), gated on fs.Visit (an EXPLICIT --gender):
+	//   - --gender alone       → NoticeGenderDeprecated
+	//   - --gender AND --voice  → NoticeGenderIgnored
+	genderSet, voiceSet := false, false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "gender" {
+		switch f.Name {
+		case "gender":
 			genderSet = true
+		case "voice":
+			voiceSet = true
 		}
 	})
-	if a.Voice != "" && genderSet {
-		_, _ = fmt.Fprintln(errOut, "narrate-server: notice: --gender ignored when --voice is set (RVC selects the Kokoro source)")
+	if genderSet {
+		msg := pipeline.NoticeGenderDeprecated
+		if voiceSet {
+			msg = pipeline.NoticeGenderIgnored
+		}
+		_, _ = fmt.Fprintln(errOut, "narrate-server: notice: "+msg)
 	}
 	return a, nil
 }
@@ -926,10 +953,17 @@ func escalateInDir(ctx context.Context, args serverArgs, absDir, blockID string,
 
 	// (d) Re-render the one block via the capturing sink (no write), then commit
 	// via patchBlock — exactly cmd/narrate's capturingSink path.
+	//
+	// #156 — /escalate uses the launch voice (effectiveLaunchSlug: --voice, else
+	// the deprecated --gender alias). The render hint is VoiceInfo.RenderVoiceID
+	// (Kokoro engine id, or empty for RVC where the decorator paints its own
+	// source), and the patch records VoiceInfo.ManifestVoice + applies 40 kHz only
+	// for an RVC voice (D-D/D-G). The error is unreachable post-parseFlags.
+	launchInfo, _ := pipeline.ResolveVoice(args.effectiveLaunchSlug())
 	capturer := &capturingSink{}
 	pl := newPipeline(absDir, args, capturer)
 	_, err = pl.Narrate(ctx, ref, pipeline.NarrateRequest{
-		Voice:               genderToVoice[args.Gender],
+		Voice:               launchInfo.RenderVoiceID,
 		BlockID:             blockID,
 		LevelOverrides:      map[string]plan.Level{blockID: level},
 		ExpectedContentHash: manifest.ContentHash,
@@ -943,14 +977,9 @@ func escalateInDir(ctx context.Context, args serverArgs, absDir, blockID string,
 			&ErrorResponse{Reason: reasonInternal, Message: "render produced no captured result for block " + blockID}
 	}
 
-	patchOpts := []persistent.Option{persistent.WithVoice(genderToVoice[args.Gender])}
-	if args.Voice != "" {
-		// D6 — an RVC escalation records the character slug (not the Kokoro
-		// source) in manifest.voice and validates the container at 40 kHz.
-		patchOpts = []persistent.Option{
-			persistent.WithVoice(args.Voice),
-			persistent.WithExpectedFormat(rvc.OutputFormat()),
-		}
+	patchOpts := []persistent.Option{persistent.WithVoice(launchInfo.ManifestVoice)}
+	if launchInfo.Format != render.DefaultFormat() {
+		patchOpts = append(patchOpts, persistent.WithExpectedFormat(launchInfo.Format))
 	}
 	_, perr := patchBlock(ctx, absDir, capturer.plan, capturer.result, blockID, patchOpts...)
 	// (e) ErrNothingToPatch → 4xx source_not_found, NOT a 200 no-op.
