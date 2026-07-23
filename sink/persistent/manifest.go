@@ -30,10 +30,13 @@ const ManifestSchemaVersion = 1
 //     in encoding/json output follows struct declaration order, so the
 //     output is byte-deterministic for unchanged inputs (Decision v1.2.0:
 //     no timestamps).
-//   - The Voice field carries the engine-specific voice id (e.g. "af_bella")
-//     and is populated by the composition root via persistent.WithVoice
-//     (Decision v1.8.0). Empty Voice is a valid manifest — the sink does
-//     not invent a voice id.
+//   - The Voice field carries the voice id populated by the composition
+//     root via persistent.WithVoice (Decision v1.8.0). For a plain Kokoro
+//     render this is the engine-specific source voice id (e.g. "af_bella");
+//     for an RVC character render it is the RVC character slug the listener
+//     asked to hear (e.g. "cool-jahns" / "confident-neal") — the honest
+//     provenance, not the hidden Kokoro source (Decision D6, issue #146).
+//     Empty Voice is a valid manifest — the sink does not invent a voice id.
 //   - Stale + StaleReason are present-but-false on a fresh write. CheckStale
 //     reads these fields when comparing; Consume never writes Stale=true
 //     (auto-regeneration is forbidden by the honesty rule).

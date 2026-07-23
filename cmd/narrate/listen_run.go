@@ -25,7 +25,6 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/adapter/file"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
-	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 )
 
 // listenCodeFloor is the additive L2 floor applied to code blocks in listen
@@ -40,10 +39,21 @@ const listenCodeFloor = plan.L2
 // (no playback, no durable write) and the code L2 floor. Package-level so tests
 // can swap it for a stub that returns a canned Timeline without spawning Kokoro.
 var newListenPipeline = func(outDir string, args flagSet, capturer *capturingSink) pipeline.Narrator {
+	// Route through the shared BuildRenderer for uniformity across all six
+	// factory seams (D4) — validate() already rejects --voice with --listen, so
+	// args.Voice is empty here and BuildRenderer yields the plain Kokoro engine.
+	// Wiring it anyway future-proofs full listen-mode RVC (dynamic oto rate).
+	renderer, _, err := pipeline.BuildRenderer(args.Voice)
+	if err != nil {
+		// Unreachable: validate() rejects --voice+--listen and pins any voice to
+		// the roster, so BuildRenderer cannot error here. A non-nil error is a
+		// composition-root bug — panic loudly rather than degrade silently.
+		panic(fmt.Sprintf("buildRenderer failed after validation (listen): %v", err))
+	}
 	return pipeline.New(
 		file.New(),
 		chooseIntelligence(args),
-		sherpa.New(sherpa.EngineConfig{}),
+		renderer,
 		capturer,
 		pipeline.PipelineDefaults{
 			Level:        plan.Level(args.Level),

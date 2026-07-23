@@ -632,3 +632,55 @@ func TestRingWriter_RetainsTail(t *testing.T) {
 		t.Errorf("ring tail = %q, want cdefghij", got)
 	}
 }
+
+// ---- #146 Phase 1: exported roster + output format for composition-root wiring ----
+
+func TestIsSupportedVoice(t *testing.T) {
+	cases := []struct {
+		slug string
+		want bool
+	}{
+		{"cool-jahns", true},
+		{"confident-neal", true},
+		{"nope", false},
+		{"", false},
+		{"af_bella", false},   // a Kokoro SOURCE voice is never an RVC target slug.
+		{"Cool-Jahns", false}, // exact-match only, no case folding.
+	}
+	for _, tc := range cases {
+		if got := IsSupportedVoice(tc.slug); got != tc.want {
+			t.Errorf("IsSupportedVoice(%q) = %v, want %v", tc.slug, got, tc.want)
+		}
+	}
+}
+
+func TestSupportedVoices_SortedRoster(t *testing.T) {
+	got := SupportedVoices()
+	want := []string{"confident-neal", "cool-jahns"} // sorted.
+	if len(got) != len(want) {
+		t.Fatalf("SupportedVoices() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SupportedVoices() = %v, want %v (sorted)", got, want)
+		}
+	}
+	// Every returned slug must round-trip through IsSupportedVoice.
+	for _, slug := range got {
+		if !IsSupportedVoice(slug) {
+			t.Errorf("SupportedVoices returned %q but IsSupportedVoice says false", slug)
+		}
+	}
+}
+
+func TestOutputFormat_Is40kMonoS16LE(t *testing.T) {
+	got := OutputFormat()
+	want := plan.AudioFormat{SampleRate: 40000, Channels: 1, Encoding: "pcm_s16le"}
+	if got != want {
+		t.Errorf("OutputFormat() = %+v, want %+v", got, want)
+	}
+	// Guard the load-bearing distinction from Kokoro's 24 kHz default.
+	if got.SampleRate == render.DefaultFormat().SampleRate {
+		t.Errorf("OutputFormat() sample rate must differ from Kokoro default %d", render.DefaultFormat().SampleRate)
+	}
+}

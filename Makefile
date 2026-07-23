@@ -1,7 +1,8 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert rvc-sanity
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
+RVC_SANITY_OUT ?= /tmp/rvc-sanity-$(shell date +%s)
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
@@ -54,6 +55,9 @@ help:
 	@echo "  rvc-parity             — always-on gate: per-stage refio corr + full-pipeline log-mel + protocol contract + arg/atomic/format"
 	@echo "  rvc-parity-gen         — (re)generate committed gate targets from the Applio torch ref (SOURCE=<clip.wav> [VOICE=<slug>])"
 	@echo "  rvc-convert VOICE=<slug> IN=<wav> OUT=<wav> — single by-ear smoke through scripts/rvc (INDEX_RATE optional)"
+	@echo ""
+	@echo "RVC voice wiring (#146 — needs the RVC worker: run 'make rvc-worker-venv' + 'make rvc-export'):"
+	@echo "  rvc-sanity             — narrate \$$SAMPLE at both RVC voices → 40 kHz audio.wav + manifest per voice under \$$RVC_SANITY_OUT (for the #147 by-ear /verify)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -244,3 +248,15 @@ rvc-convert:
 	@test -n "$(OUT)" || { echo "OUT required (dest wav)"; exit 2; }
 	@ir="$(INDEX_RATE)"; if [ -z "$$ir" ]; then case "$(VOICE)" in confident-neal) ir=0.5;; *) ir=0.75;; esac; fi; \
 	  printf '"%s" "%s" %s %s 0\n' "$(IN)" "$(OUT)" "$(VOICE)" "$$ir" | scripts/rvc && echo "wrote $(OUT) (voice=$(VOICE) index_rate=$$ir)"
+
+# #146 by-ear /verify convenience (the exhaustive audio check is #147): render
+# $(SAMPLE) once per RVC voice through the persistent sink so each dir carries a
+# 40 kHz audio.wav + a manifest.json whose "voice" is the character slug (D6).
+# Needs the RVC worker on disk (make rvc-worker-venv + make rvc-export VOICE=...);
+# an unknown voice or a missing worker STOPS with a non-zero exit (honesty rule).
+rvc-sanity:
+	@mkdir -p $(RVC_SANITY_OUT)/cool-jahns $(RVC_SANITY_OUT)/confident-neal
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(RVC_SANITY_OUT)/cool-jahns --voice cool-jahns
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(RVC_SANITY_OUT)/confident-neal --voice confident-neal
+	@echo "RVC sanity: wrote 40 kHz cool-jahns + confident-neal renders under $(RVC_SANITY_OUT)"
+	@echo "Verify (#147): afplay $(RVC_SANITY_OUT)/cool-jahns/audio.wav — and confirm manifest.json \"voice\" == the slug (D6)."
