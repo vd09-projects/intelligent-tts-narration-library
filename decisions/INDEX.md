@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-23-pipeline-hosts-buildrenderer-factory
+    title: "pipeline.BuildRenderer is the shared renderer-factory home; pipeline/ now imports the concrete engines"
+    date: 2026-07-23
+    status: accepted
+    category: architecture
+    tags: [rvc, voice-conversion, buildrenderer, renderer-factory, composition-root, pipeline, render-sherpa, render-rvc, concrete-engines, import-cycle, engine-neutral, planner-deps, plan-deps, issue-146, issue-145]
+    path: architecture/2026-07-23-pipeline-hosts-buildrenderer-factory.md
+    summary: "Decision D2 of #146: the shared BuildRenderer(rvcVoice) (render.Renderer, plan.AudioFormat, error) factory lives in pipeline/ (pipeline/build_renderer.go). As a result pipeline/ now imports the concrete render/sherpa AND render/rvc engines, where it was previously interface-only. WHY: three separate package-main binaries (cmd/narrate, cmd/narrate-mcp, cmd/narrate-server) need ONE shared factory behind the user-facing voice knob; CLAUDE.md names the composition root as '(pipeline/, cmd/)' and blesses it to know concrete edges; cmd/ already depends on pipeline/, and pipeline/ importing sherpa+rvc creates NO import cycle (neither imports pipeline/). rvcVoice=='' -> plain Kokoro + render.DefaultFormat() (24kHz, byte-identical to before); rvcVoice!='' -> render/rvc decorator + rvc.OutputFormat() (40kHz), target slug passed straight into rvc.Config.Voice (factory translates nothing). Returning the AudioFormat ALONGSIDE the renderer (D1) couples renderer-format and sink-expected-format by construction. REJECTED: (a) hosting in render/ root -> import cycle (render -> render/sherpa -> render); (b) a new render/renderbuild or internal/renderbuild package -> a THIRD concrete-engine-aware location, a strained reading of the 'only pipeline/ and cmd/ know concrete edges' invariant. SAFE: planner/ + plan/ engine-neutrality/I-O-free invariant is unaffected and stays machine-guarded by planner/deps_test.go + plan/deps_test.go (go list over the package's own direct Imports); the multi-perspective build review APPROVED this boundary. Complements Decision D6 (2026-07-23 manifest.voice); both derive format/voice from the single BuildRenderer origin."
   - id: 2026-07-23-rvc-manifest-voice-records-character-slug
     title: "manifest.voice records the RVC character slug for RVC renders (Option A), not the hidden Kokoro source"
     date: 2026-07-23
