@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,10 +31,12 @@ func TestSpeakArgs_Validate_Voice(t *testing.T) {
 		wantErr bool
 	}{
 		{"", false},
+		{"af-bella", false},   // Kokoro roster slug (#156)
+		{"am-michael", false}, // Kokoro roster slug (#156)
 		{"cool-jahns", false},
 		{"confident-neal", false},
 		{"bogus", true},
-		{"af_bella", true}, // Kokoro source is not an RVC target slug
+		{"af_bella", true}, // an underscore ENGINE id is not a roster slug
 	}
 	for _, tc := range cases {
 		a := speakArgs{Source: "doc.md", Level: 1, Sink: "ephemeral", Gender: "female", Intelligence: "none", Voice: tc.voice}
@@ -46,6 +49,38 @@ func TestSpeakArgs_Validate_Voice(t *testing.T) {
 			}
 		} else if err != nil {
 			t.Errorf("validate rejected voice=%q: %v", tc.voice, err)
+		}
+	}
+}
+
+// #156 Phase 3 (OQ-1) — the deprecation channel for MCP is the jsonschema
+// description: the gender arg is marked DEPRECATED and the voice arg advertises
+// the tagged roster. Description-only — no response-envelope change (the receipt
+// stays byte-identical). Asserted on all three tool arg structs.
+func TestSchema_GenderDeprecated_VoiceTagged(t *testing.T) {
+	t.Parallel()
+	types := []reflect.Type{
+		reflect.TypeOf(speakArgs{}),
+		reflect.TypeOf(speakLastArgs{}),
+		reflect.TypeOf(speakToFileArgs{}),
+	}
+	for _, ty := range types {
+		gender, ok := ty.FieldByName("Gender")
+		if !ok {
+			t.Fatalf("%s has no Gender field", ty.Name())
+		}
+		if desc := gender.Tag.Get("jsonschema"); !strings.Contains(desc, "DEPRECATED") {
+			t.Errorf("%s gender jsonschema = %q, want it to mark DEPRECATED", ty.Name(), desc)
+		}
+		voice, ok := ty.FieldByName("Voice")
+		if !ok {
+			t.Fatalf("%s has no Voice field", ty.Name())
+		}
+		desc := voice.Tag.Get("jsonschema")
+		for _, slug := range []string{"af-bella", "am-michael", "cool-jahns", "confident-neal"} {
+			if !strings.Contains(desc, slug) {
+				t.Errorf("%s voice jsonschema = %q, missing roster slug %q", ty.Name(), desc, slug)
+			}
 		}
 	}
 }
