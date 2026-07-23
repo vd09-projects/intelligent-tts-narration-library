@@ -228,6 +228,75 @@ func TestNarrate_RefusalIsHTTP200(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// #156 launch --gender is INERT for /narrate — the PER-REQUEST gender drives the
+// render voice. Driven end-to-end through narrateHandler (the `gender` body field
+// → resolved render-voice hint), with launch Gender="male" and NO launch --voice,
+// so the launch gender is provably inert: a per-request gender=female must NOT be
+// overridden by launch Gender="male". This locks the byte-identical pre-#156
+// behavior where launch --gender never routed /narrate; per-request gender wins.
+// (Distinct from voice_test.go's TestNarrate_NoLaunchVoice_RequestGenderDrives,
+// which calls runNarrate directly with a pre-resolved requestVoice under a female
+// launch gender — this one exercises the HTTP gender→voice resolution and a
+// non-matching launch gender.) An explicit launch --voice is the separate
+// authoritative path (see TestNarrate_LaunchVoice_* + the route-contract header).
+// ---------------------------------------------------------------------------
+
+func TestNarrate_LaunchGenderInert_PerRequestGenderWins(t *testing.T) {
+	tests := []struct {
+		name      string
+		reqGender string // per-request `gender` body fragment ("" → absent → female)
+		wantVoice string // expected render-voice hint AND manifest voice
+	}{
+		{"per_request_female_overrides_launch_male", `"gender":"female",`, "af_bella"},
+		{"per_request_male_matches_launch_male", `"gender":"male",`, "am_michael"},
+		{"per_request_absent_defaults_female", "", "af_bella"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotRenderVoice, gotManifestVoice string
+			narrate := func(_ string, _ plan.Level, _ string, capturer *capturingSink) pipeline.Narrator {
+				return narratorFunc(func(_ context.Context, _ plan.SourceRef, req pipeline.NarrateRequest) (pipeline.NarrateResult, error) {
+					gotRenderVoice = req.Voice // the render-voice hint that reaches the renderer
+					capturer.plan = plan.NarrationPlan{Blocks: []plan.Block{{ID: "b1", Status: plan.StatusVoiced}}}
+					capturer.result = render.RenderResult{Timeline: plan.Timeline{Blocks: []plan.BlockTiming{{BlockID: "b1"}}}}
+					capturer.captured = true
+					return pipeline.NarrateResult{}, nil
+				})
+			}
+			write := func(_ context.Context, dir, voice string, _ plan.AudioFormat, _ plan.NarrationPlan, _ render.RenderResult) error {
+				gotManifestVoice = voice
+				return os.WriteFile(filepath.Join(dir, "audio.wav"), []byte("wav"), 0o600)
+			}
+			installNarrateSeams(t, narrate, write)
+
+			// Launch --gender=male, NO launch --voice (Voice==""): --gender is inert
+			// for /narrate, so it must not leak into the render voice.
+			args := defaultArgs()
+			args.Gender = "male"
+			args.Voice = ""
+
+			store := newRenderStore(t.TempDir())
+			h := narrateHandler(args, store)
+			body := `{"text":"hello",` + tc.reqGender + `"level":1}`
+			r := httptest.NewRequest(http.MethodPost, "/narrate", strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body %q)", w.Code, w.Body.String())
+			}
+			if gotRenderVoice != tc.wantVoice {
+				t.Fatalf("render voice hint = %q, want %q (per-request gender must win; launch --gender=male is inert)", gotRenderVoice, tc.wantVoice)
+			}
+			if gotManifestVoice != tc.wantVoice {
+				t.Fatalf("manifest voice = %q, want %q (per-request gender must win; launch --gender=male is inert)", gotManifestVoice, tc.wantVoice)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Hard render fault → render_failed/500 with NO wav left in the store.
 // ---------------------------------------------------------------------------
 

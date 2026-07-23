@@ -9,6 +9,13 @@ package main
 // write the 3-file persistent-sink dir ({id}/{audio.wav, plan.json,
 // manifest.json}) → respond {audio_url, render_id, blocks, timeline}.
 //
+// Voice precedence (#156): a launch `--voice` OVERRIDES the per-request `gender`
+// (the launch voice is the authoritative process voice — its roster resolution
+// drives the render hint, manifest.voice, and format). A launch `--gender` does
+// NOT — the per-request `gender` still wins for /narrate (byte-identical to
+// pre-#156, where launch --gender never routed /narrate). So the --gender→--voice
+// migration is behavior-preserving for /narrate ONLY when no launch --voice is set.
+//
 // Why a file source over source.txt (build-time correction to #109's R-NB4
 // single-wav choice, recorded in decision-journal): the dir must be re-renderable
 // by render_id so POST /narrate/block can escalate ONE block through the existing
