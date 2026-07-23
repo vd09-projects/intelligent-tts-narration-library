@@ -26,11 +26,13 @@ func TestFlagSet_Validate_Voice(t *testing.T) {
 		voice   string
 		wantErr bool
 	}{
-		{"", false},               // empty preserves plain Kokoro
+		{"", false},               // empty falls to the --gender alias / default
+		{"af-bella", false},       // Kokoro roster slug (#156)
+		{"am-michael", false},     // Kokoro roster slug (#156)
 		{"cool-jahns", false},     // known RVC slug
 		{"confident-neal", false}, // known RVC slug
 		{"bogus", true},           // unknown slug → caller-error
-		{"af_bella", true},        // a Kokoro SOURCE voice is not an RVC target
+		{"af_bella", true},        // an underscore ENGINE id is not a roster slug
 	}
 	for _, tc := range cases {
 		a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Voice: tc.voice}
@@ -44,11 +46,29 @@ func TestFlagSet_Validate_Voice(t *testing.T) {
 	}
 }
 
-func TestFlagSet_Validate_VoiceWithListen_Rejected(t *testing.T) {
+// #156 Phase 2b — listen re-keys off RequiresWorker: a 40 kHz RVC --voice is
+// rejected with --listen; a 24 kHz Kokoro --voice is now accepted.
+func TestFlagSet_Validate_VoiceWithListen(t *testing.T) {
 	t.Parallel()
-	a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Voice: "cool-jahns", Listen: true}
-	if err := a.validate(); err == nil {
-		t.Error("validate accepted --voice with --listen (D4: must be rejected pending dynamic oto rate)")
+	cases := []struct {
+		voice   string
+		wantErr bool
+	}{
+		{"cool-jahns", true},     // RVC 40 kHz → rejected pending #154
+		{"confident-neal", true}, // RVC 40 kHz → rejected
+		{"af-bella", false},      // Kokoro 24 kHz → allowed
+		{"am-michael", false},    // Kokoro 24 kHz → allowed
+		{"", false},              // no voice → allowed (gender alias)
+	}
+	for _, tc := range cases {
+		a := flagSet{File: "/tmp/x.md", Level: 1, Sink: "ephemeral", Gender: "female", Voice: tc.voice, Listen: true}
+		err := a.validate()
+		if tc.wantErr && err == nil {
+			t.Errorf("validate accepted --voice=%q with --listen, want error", tc.voice)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("validate rejected --voice=%q with --listen: %v", tc.voice, err)
+		}
 	}
 }
 
@@ -71,7 +91,8 @@ func TestChooseSink_Persistent_Voice(t *testing.T) {
 
 // F5 negative guard: with no --voice, the persistent sink keeps the gender-
 // derived Kokoro voice AND the default 24 kHz expected format (no
-// WithExpectedFormat applied) — byte-identical to pre-#146 behavior.
+// WithExpectedFormat applied) — byte-identical to pre-#156 behavior. The
+// gender-derived id is resolved through the roster (SlugForGender → ResolveVoice).
 func TestChooseSink_Persistent_NoVoice_PreservesDefault(t *testing.T) {
 	t.Parallel()
 	s := chooseSink(flagSet{Sink: "persistent", Out: "/tmp/out", Gender: "male", Voice: ""})
@@ -79,11 +100,54 @@ func TestChooseSink_Persistent_NoVoice_PreservesDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("chooseSink returned %T, want *persistent.Sink", s)
 	}
-	if ps.Voice != genderToVoice["male"] {
-		t.Errorf("persistent Voice = %q, want gender-derived %q", ps.Voice, genderToVoice["male"])
+	slug, _ := pipeline.SlugForGender("male")
+	want, _ := pipeline.ResolveVoice(slug)
+	if ps.Voice != want.ManifestVoice {
+		t.Errorf("persistent Voice = %q, want gender-derived %q", ps.Voice, want.ManifestVoice)
+	}
+	if want.ManifestVoice != "am_michael" {
+		t.Errorf("male → %q, want am_michael (byte-identical engine id)", want.ManifestVoice)
 	}
 	if ps.ExpectedFormat != render.DefaultFormat() {
 		t.Errorf("persistent ExpectedFormat = %+v, want 24 kHz default %+v (no WithExpectedFormat)", ps.ExpectedFormat, render.DefaultFormat())
+	}
+}
+
+// #156 — a Kokoro --voice (am-michael) records the underscore engine id in
+// manifest.voice and keeps the 24 kHz default (no WithExpectedFormat): the
+// format re-key is off the roster, NOT "--voice != ”".
+func TestChooseSink_Persistent_KokoroVoice_24k(t *testing.T) {
+	t.Parallel()
+	s := chooseSink(flagSet{Sink: "persistent", Out: "/tmp/out", Gender: "female", Voice: "am-michael"})
+	ps, ok := s.(*persistent.Sink)
+	if !ok {
+		t.Fatalf("chooseSink returned %T, want *persistent.Sink", s)
+	}
+	if ps.Voice != "am_michael" {
+		t.Errorf("persistent Voice = %q, want am_michael (Kokoro engine id, not the hyphen slug)", ps.Voice)
+	}
+	if ps.ExpectedFormat != render.DefaultFormat() {
+		t.Errorf("Kokoro --voice ExpectedFormat = %+v, want 24 kHz default %+v (no WithExpectedFormat)", ps.ExpectedFormat, render.DefaultFormat())
+	}
+}
+
+// S8 — alias-path == explicit-path byte-equality, per Kokoro voice: the
+// --gender alias and the explicit --voice select the SAME manifest voice + format.
+func TestChooseSink_AliasEqualsExplicit_PerKokoroVoice(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ gender, voice string }{
+		{"female", "af-bella"},
+		{"male", "am-michael"},
+	}
+	for _, tc := range cases {
+		alias := chooseSink(flagSet{Sink: "persistent", Out: "/tmp/out", Gender: tc.gender, Voice: ""}).(*persistent.Sink)
+		explicit := chooseSink(flagSet{Sink: "persistent", Out: "/tmp/out", Gender: "female", Voice: tc.voice}).(*persistent.Sink)
+		if alias.Voice != explicit.Voice {
+			t.Errorf("--gender %s Voice=%q != --voice %s Voice=%q", tc.gender, alias.Voice, tc.voice, explicit.Voice)
+		}
+		if alias.ExpectedFormat != explicit.ExpectedFormat {
+			t.Errorf("--gender %s format != --voice %s format", tc.gender, tc.voice)
+		}
 	}
 }
 
@@ -125,12 +189,13 @@ func TestRoot_VoiceFlag_Parsed(t *testing.T) {
 	}
 }
 
-// D4' — an explicit --gender paired with a valid --voice emits a non-fatal
-// stderr notice; --voice alone (default gender) or --gender alone stays silent.
-func TestRoot_GenderVoiceNotice(t *testing.T) {
+// #156 D-C — --gender deprecation notices, gated on cobra.Changed("gender") and
+// asserted against the PINNED constants (S7):
+//   - --gender alone       → NoticeGenderDeprecated
+//   - --gender AND --voice  → NoticeGenderIgnored
+//   - --voice alone / no flags → silent
+func TestRoot_GenderDeprecationNotice(t *testing.T) {
 	t.Parallel()
-	const notice = "notice: --gender ignored when --voice is set"
-
 	run := func(args ...string) string {
 		deps, _, stderr, _ := stubDeps(func(_ context.Context, _ flagSet, _, _ io.Writer) error { return nil })
 		cmd := newRootCmd(*deps)
@@ -141,13 +206,16 @@ func TestRoot_GenderVoiceNotice(t *testing.T) {
 		return stderr.String()
 	}
 
-	if out := run("--gender=male", "--voice=cool-jahns"); !strings.Contains(out, notice) {
-		t.Errorf("explicit --gender + --voice: stderr = %q, want notice", out)
+	if out := run("--gender=male"); !strings.Contains(out, pipeline.NoticeGenderDeprecated) {
+		t.Errorf("--gender alone: stderr = %q, want NoticeGenderDeprecated", out)
 	}
-	if out := run("--voice=cool-jahns"); strings.Contains(out, notice) {
-		t.Errorf("--voice with default gender should NOT emit the notice, stderr = %q", out)
+	if out := run("--gender=male", "--voice=cool-jahns"); !strings.Contains(out, pipeline.NoticeGenderIgnored) {
+		t.Errorf("--gender + --voice: stderr = %q, want NoticeGenderIgnored", out)
 	}
-	if out := run("--gender=male"); strings.Contains(out, notice) {
-		t.Errorf("--gender alone should NOT emit the notice, stderr = %q", out)
+	if out := run("--voice=cool-jahns"); strings.Contains(out, pipeline.NoticeGenderDeprecated) || strings.Contains(out, pipeline.NoticeGenderIgnored) {
+		t.Errorf("--voice alone should be silent, stderr = %q", out)
+	}
+	if out := run(); strings.Contains(out, pipeline.NoticeGenderDeprecated) || strings.Contains(out, pipeline.NoticeGenderIgnored) {
+		t.Errorf("no voice flags should be silent, stderr = %q", out)
 	}
 }
