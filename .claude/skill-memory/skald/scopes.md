@@ -1055,3 +1055,32 @@ scopes:
       sindri consumes). Genuine FIRST persist — version 1, scope dir newly created;
       a prior persistence attempt failed to write the scope dir, so nothing had
       landed and this is v1, not an iteration.
+  - slug: rvc-unified-voice-roster
+    title: Unify voice selection into one named-voice roster (--voice primary; --gender deprecated alias)
+    created: 2026-07-23
+    reasoning: |
+      Plan cycle for the P4 feature stacked on #146 (branch feat/rvc-unified-voice-roster,
+      on feat/rvc-cli-mcp-wiring / PR #153). Promotes --voice to the single primary
+      selector over ONE flat named-voice roster spanning both engines (af-bella,
+      am-michael -> Kokoro 24kHz; cool-jahns, confident-neal -> RVC 40kHz) and demotes
+      --gender to a deprecated back-compat alias (female->af-bella, male->am-michael).
+      A per-voice roster {engine, format, requires_worker} (+ Kokoro engine id for
+      Kokoro entries) in a new pipeline/voices.go becomes the single source of truth
+      pipeline.BuildRenderer reads to pick engine+format — replacing #146's
+      empty-vs-nonempty branch. Slug convention: lowercase hyphenated user-facing
+      slugs; the hyphen<->underscore (af-bella vs af_bella) reconciliation lives in
+      ONE place (the roster entry's KokoroVoiceID); the RVC target->source map stays
+      the decorator's (no duplication). 6 decisions resolving the 5 scope calls: D-A
+      slug/home/structure, D-B BuildRenderer roster lookup + ResolveVoice API (D1
+      signature frozen), D-C gender-deprecation precedence + per-surface notice
+      (CLI/server stderr, MCP jsonschema description), D-D manifest provenance
+      (Kokoro engine id for kokoro / RVC slug for rvc — extends D6, byte-identical
+      back-compat), D-E rewiring #146's Voice!="" == RVC assumptions site-by-site,
+      D-F #154/#155 rescope FLAGGED for coordinator. Load-bearing decision marked
+      for harvest: "voice-selection namespace: unified named roster vs gender+voice
+      split" -> unified roster, cross-linking D1/D2/D6. Overlays: phased-delivery
+      (5 phases) + public-api-change (deprecated --gender / retagged --voice / MCP
+      arg). Separate NEW scope (not an iteration of rvc-p3-cli-mcp-server-wiring-146)
+      — distinct branch + PR, reworks #146's surface rather than continuing it.
+      Slug pre-supplied + pre-approved via --scope by the build-session single-skill
+      runner. Genuine FIRST persist — version 1, scope dir newly created.
