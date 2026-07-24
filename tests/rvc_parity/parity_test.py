@@ -7,15 +7,22 @@ Plain-python asserts (no pytest dep). Run under .venv-rvc via `make rvc-parity`:
 
 Covers, in one always-on run (review B2 — no env-gated skips):
   * per-stage ONNX-vs-refio parity   (contentvec / rmvpe / net_g, corr ≥ 0.999)
-  * full-pipeline log-mel parity     (corr ≥ 0.98 vs the COMMITTED target, per voice;
+  * full-pipeline log-mel parity     (corr ≥ 0.98 vs the FETCHED target, PARITY_VOICES;
                                        missing target -> FAIL, never skip)
+  * parity-voice coverage (honesty)  (PARITY_VOICES + EXCLUDED_PARITY_VOICES partition
+                                       the repo roster; no voice silently dropped)
   * torch-free subprocess banner     (`torch imported at inference?: False`)
   * protocol-loop contract           (count/framing/order/category/warm-load-once)
   * arg validation                   (table-driven, each -> the right ERR category)
   * single-line-ERR                  (newline/CR collapse + 300-char cap)
   * atomic write                     (a forced write failure leaves no partial WAV)
   * WAV format                       (40 kHz mono s16le, T*400-80000 samples)
+  * npy unpickle-safety              (fetched .npy target loads with allow_pickle=False)
   * vacuous-test guard               (a perturbed feed MUST drop below the floor)
+
+The fixtures (source.wav + the PARITY_VOICES ref WAV + log-mel target) are fetched
+from a pinned GitHub Release by `make rvc-fixtures-fetch` (a prerequisite of
+`make rvc-parity`), not committed — see tests/rvc_parity/fixtures/README.md.
 
 Exit 0 iff every check passes; nonzero otherwise.
 """
@@ -41,6 +48,13 @@ sys.path.insert(0, _SCRIPTS)
 sys.path.insert(0, _HERE)
 import rvc_worker as worker            # noqa: E402
 from logmel import log_mel, logmel_corr  # noqa: E402
+from parity_voices import (            # noqa: E402
+    ALL_RVC_VOICES,
+    EXCLUDED_PARITY_VOICES,
+    PARITY_VOICES,
+    check_parity_coverage,
+    excluded_reason,
+)
 
 # Per-stage floors (PILOT_REPORT §2). net_g uses the stored rnd so only the
 # internal NSF-dither RandomNormalLike differs -> deterministic, high corr.
@@ -119,18 +133,27 @@ def test_perstage_parity():
 
 
 def test_full_pipeline_logmel():
-    """Full pipeline vs the COMMITTED per-voice log-mel target. ALWAYS runs; a
-    missing target is a FAILURE, never a skip (review B2)."""
+    """Full pipeline vs the FETCHED per-voice log-mel target. ALWAYS runs; a
+    missing target is a FAILURE, never a skip (review B2).
+
+    Scoped to PARITY_VOICES (single voice): the gate is a pipeline FLOW gate, not a
+    per-voice correctness matrix — one voice exercises the whole path. The dropped
+    voice is matrix-narrowed (its case is not generated), documented in
+    EXCLUDED_PARITY_VOICES, and covered by test_parity_voice_coverage — never a
+    silent skip. See tests/rvc_parity/fixtures/README.md."""
     source = os.path.join(FIXTURES, "source.wav")
     assert os.path.isfile(source), (
-        f"missing committed source clip {source} — run tests/rvc_parity/gen_targets.py "
-        "and commit fixtures/ (plan Step 0a). The gate does NOT skip.")
-    for slug, index_rate in VOICES.items():
+        f"missing source clip {source} — run `make rvc-fixtures-fetch` (a "
+        "prerequisite of `make rvc-parity`) to fetch the hosted bundle. The gate "
+        "does NOT skip.")
+    for slug in PARITY_VOICES:
+        index_rate = VOICES[slug]
         target_path = os.path.join(FIXTURES, f"{slug}_logmel_target.npy")
         assert os.path.isfile(target_path), (
-            f"missing committed log-mel target {target_path} — generate + commit it "
-            "(gen_targets.py). Missing target FAILS the gate (never skips).")
-        target = np.load(target_path)
+            f"missing log-mel target {target_path} — run `make rvc-fixtures-fetch`. "
+            "Missing target FAILS the gate (never skips).")
+        # allow_pickle=False: a tampered .npy target cannot smuggle+execute a pickle.
+        target = np.load(target_path, allow_pickle=False)
 
         out_wav = os.path.join(FIXTURES, f"_out_{slug}.wav")
         if os.path.exists(out_wav):
@@ -149,19 +172,61 @@ def test_full_pipeline_logmel():
         corr = logmel_corr(mel, target)
         assert corr >= FULLPIPE_CORR_FLOOR, f"{slug}: log-mel corr {corr:.4f} < {FULLPIPE_CORR_FLOOR}"
 
-        # matched peak/RMS against the committed reference WAV, if present.
+        # matched peak/RMS against the reference WAV. The verified fetch GUARANTEES
+        # the ref WAV is present before the gate runs, so a missing one is a FAIL,
+        # not a silent no-op (D6 guard-hardening — honesty rule).
         ref_wav = os.path.join(FIXTURES, f"{slug}_ref.wav")
-        if os.path.isfile(ref_wav):
-            ref_audio, _ = sf.read(ref_wav, dtype="float32", always_2d=False)
-            if ref_audio.ndim > 1:
-                ref_audio = ref_audio.mean(axis=1)
-            pk_o, pk_r = float(np.abs(audio).max()), float(np.abs(ref_audio).max())
-            rms_o = float(np.sqrt(np.mean(audio ** 2)))
-            rms_r = float(np.sqrt(np.mean(ref_audio ** 2)))
-            assert abs(pk_o - pk_r) <= 0.05, f"{slug}: peak mismatch {pk_o:.3f} vs {pk_r:.3f}"
-            assert abs(rms_o - rms_r) <= 0.01, f"{slug}: rms mismatch {rms_o:.4f} vs {rms_r:.4f}"
+        assert os.path.isfile(ref_wav), (
+            f"missing reference WAV {ref_wav} — it ships in the fetched bundle; run "
+            "`make rvc-fixtures-fetch`. The peak/RMS sub-check FAILS (never skips).")
+        ref_audio, _ = sf.read(ref_wav, dtype="float32", always_2d=False)
+        if ref_audio.ndim > 1:
+            ref_audio = ref_audio.mean(axis=1)
+        pk_o, pk_r = float(np.abs(audio).max()), float(np.abs(ref_audio).max())
+        rms_o = float(np.sqrt(np.mean(audio ** 2)))
+        rms_r = float(np.sqrt(np.mean(ref_audio ** 2)))
+        assert abs(pk_o - pk_r) <= 0.05, f"{slug}: peak mismatch {pk_o:.3f} vs {pk_r:.3f}"
+        assert abs(rms_o - rms_r) <= 0.01, f"{slug}: rms mismatch {rms_o:.4f} vs {rms_r:.4f}"
         os.remove(out_wav)
         print(f"  [fullpipe] {slug}: log-mel corr={corr:.4f}  OK")
+
+
+def test_parity_voice_coverage():
+    """Honesty gate for the single-voice narrowing (issue #151).
+
+    PARITY_VOICES (the fetched-fixture matrix) and EXCLUDED_PARITY_VOICES (the
+    documented drop) must be disjoint AND together cover every voice the repo
+    defines, so a future voice cannot be silently absent from both. The
+    authoritative roster is ALL_RVC_VOICES (independent of PARITY_VOICES); it is
+    cross-checked against the per-stage VOICES matrix so the two cannot drift."""
+    assert set(VOICES) == set(ALL_RVC_VOICES), (
+        f"per-stage VOICES {sorted(VOICES)} and the authoritative roster "
+        f"ALL_RVC_VOICES {sorted(ALL_RVC_VOICES)} disagree — a voice was added to "
+        f"one but not the other; reconcile so coverage stays non-vacuous.")
+    check_parity_coverage(ALL_RVC_VOICES)  # raises if not an honest partition
+    assert "confident-neal" in EXCLUDED_PARITY_VOICES, "confident-neal drop undocumented"
+    # read the documented reason through the canonical accessor, not the raw dict.
+    assert excluded_reason("confident-neal").strip(), "empty exclusion reason"
+    print(f"  [parity-voices] PARITY={list(PARITY_VOICES)} "
+          f"EXCLUDED={sorted(EXCLUDED_PARITY_VOICES)} — honest partition of "
+          f"{sorted(ALL_RVC_VOICES)}  OK")
+
+
+def test_npy_allow_pickle_guard():
+    """A fetched .npy target must load with allow_pickle=False so a tampered file
+    cannot execute a pickle payload. Prove the flag actually blocks object arrays."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        evil = os.path.join(d, "evil.npy")
+        # An object-dtype array can only be persisted/loaded via pickle.
+        np.save(evil, np.array([{"x": 1}], dtype=object), allow_pickle=True)
+        raised = False
+        try:
+            np.load(evil, allow_pickle=False)
+        except ValueError:
+            raised = True
+        assert raised, "np.load(allow_pickle=False) did NOT reject a pickled .npy"
+    print("  [npy-safety] allow_pickle=False rejects a pickled target  OK")
 
 
 def test_torch_free_banner():
@@ -320,6 +385,8 @@ def test_vacuous_guard():
 TESTS = [
     test_single_line_err_unit,     # pure-unit first (no models)
     test_atomic_write,             # pure-unit (no models)
+    test_parity_voice_coverage,    # pure-unit honesty gate (no models)
+    test_npy_allow_pickle_guard,   # pure-numpy (no models)
     test_torch_free_banner,
     test_vacuous_guard,
     test_perstage_parity,
