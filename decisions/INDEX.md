@@ -8,6 +8,22 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-24-rvc-cloned-voice-output-not-redistributable
+    title: "RVC voice cloned from a real person without a license: its converted output is not publicly redistributable — swap the parity voice"
+    date: 2026-07-24
+    status: accepted
+    category: convention
+    tags: [rvc, license, voice-clone, fixtures, redistribution, honesty, d0, parity, cool-jahns, issue-151]
+    path: convention/2026-07-24-rvc-cloned-voice-output-not-redistributable.md
+    summary: "Task #151 (RVC parity fixtures) hard pre-publish gate (D0): an RVC voice model cloned from a real, named person WITHOUT documented consent/license (cool-jahns, cloned from ~59 min of Jeremy Jahns; no license/consent/model-card under assets/rvc-models/, models only in a private HF backup) may NOT have its CONVERTED OUTPUT publicly redistributed. Because parity/test fixtures ARE converted-output-derived (the *_ref.wav is converted output; the *_logmel_target.npy is a derivative of it), fixtures cannot host cool-jahns-derived assets — which is why fixtures.sha256 was left empty. RULE: vet the voice-model license BEFORE hosting any converted-output-derived asset. CHOSEN pivot (a): SWAP the parity voice to a licensed/self-trained voice whose converted-output public redistribution is clearable, then host that bundle (keeps the zero-setup fresh clone). REJECTED as primary (b): a documented regenerate-locally-only fresh-clone path — loses the zero-setup property; retained only as a fallback. Load-bearing: governs all future RVC parity/redistribution/hosting choices and prevents a contributor from 'fixing' the empty fixtures.sha256 by publishing non-redistributable converted output. Relates to torch-free-onnx-rvc-ephemeral-worker (#143) and the unified-voice-roster (#156) decisions."
+  - id: 2026-07-24-rvc-parity-single-voice-flow-gate
+    title: "make rvc-parity is a single-voice FLOW gate, not a per-voice correctness oracle"
+    date: 2026-07-24
+    status: accepted
+    category: convention
+    tags: [rvc, parity, testing, flow-gate, single-voice, honesty, issue-151]
+    path: convention/2026-07-24-rvc-parity-single-voice-flow-gate.md
+    summary: "Task #151: the RVC parity gate proves the conversion PIPELINE reproduces byte-for-byte on a fresh clone, using ONE voice (PARITY_VOICES, a single source of truth) that exercises the whole path (source -> rvc-convert.sh torch reference -> ONNX worker -> log-mel compare). Other voices are documented-excluded via EXCLUDED_PARITY_VOICES, with a disjoint/coverage meta-assert cross-checked against an INDEPENDENT roster + a negative test, so no voice can be silently absent from both sets and the parity matrix cannot silently re-widen. Future voices do NOT each earn a parity fixture. ACCEPTED TRADEOFF: a voice-specific conversion regression that does NOT affect the parity voice will NOT trip the gate; it surfaces in the by-ear /verify of that voice — a deliberate, documented boundary (honesty rule), not a blind spot. Load-bearing: sets the scope contract for every future RVC voice and fixes the shape of the parity test. REJECTED a per-voice parity oracle (fixture set + gate runtime grow with the roster; conflates 'pipeline reproduces' with 'each voice correct'). Sibling to the cloned-voice-not-redistributable decision (which picks WHICH voice is the parity voice)."
   - id: 2026-07-23-unified-voice-roster-namespace
     title: "Voice-selection namespace: one unified named roster is the primary selector; --gender demoted to a deprecated alias"
     date: 2026-07-23
