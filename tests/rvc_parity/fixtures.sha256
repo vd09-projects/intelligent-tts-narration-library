@@ -1,0 +1,31 @@
+# RVC parity fixture bundle — integrity pins (issue #151). TRUST ROOT.
+#
+# Format: one `<hex-sha256>  <name>` line per hosted asset (two spaces; portable
+# `shasum -a 256` / `sha256sum` layout). Generated + verified by the ONE shared
+# hashlib implementation in tests/rvc_parity/fixtures_io.py — never GNU sha256sum.
+#
+# The committed hashes here — NOT the owner-mutable GitHub Release URL — are the
+# integrity guarantee. The tag pin (Makefile RVC_FIXTURES_TAG/RVC_FIXTURES_BASEURL)
+# and these hashes MUST land in the SAME commit, and that commit MUST NOT merge
+# until the release is live and fetchable (plan Step 6 + Step 8 merge gate).
+#
+# ────────────────────────────────────────────────────────────────────────────
+# TODO(#151): regenerate these pins with `make rvc-fixtures-publish` once the
+# bundle is hosted. This file is intentionally EMPTY (no pins) right now.
+#
+# BLOCKED — the bundle is NOT published, so there is nothing to pin yet:
+#   D0 voice-model license gate = NOT CLEARED. The `cool-jahns` RVC voice model is
+#   a clone trained on ~59 min of a real, named public figure (see
+#   assets/rvc-models/README.md) with NO redistribution license/consent on record.
+#   Publishing its converted output (cool-jahns_ref.wav + the derived
+#   cool-jahns_logmel_target.npy) is not cleared. Do NOT publish or pin until a
+#   redistributable voice replaces it (see fixtures/README.md "License gate (D0)").
+#
+# Expected assets once cleared + published (three-binary bundle):
+#   source.wav
+#   cool-jahns_ref.wav
+#   cool-jahns_logmel_target.npy
+#   (+ ATTRIBUTION.txt if the clip or voice-model license requires attribution)
+#
+# With this file empty, `make rvc-fixtures-fetch` fails loud ("pins no assets yet")
+# rather than silently passing — the honest state until publication.

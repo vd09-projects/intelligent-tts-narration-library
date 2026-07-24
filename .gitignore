@@ -56,6 +56,8 @@ assets/rvc-models/_shared/
 .venv-rvc
 
 # RVC parity fixtures — local/generated, hosted per #151, never committed
-# (README.md in that dir stays tracked; only the generated binaries are ignored)
+# (README.md + fixtures.sha256 in that dir stay tracked; only the generated
+# binaries + interrupted-fetch staging are ignored)
 tests/rvc_parity/fixtures/*.wav
 tests/rvc_parity/fixtures/*.npy
+tests/rvc_parity/fixtures/*.part
