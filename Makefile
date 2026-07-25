@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-convert rvc-sanity voice-sanity
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -51,10 +51,13 @@ help:
 	@echo "  rvc-export VOICE=<slug> — export+validate one voice → assets/rvc-models/<slug>/onnx/ (net_g + index_vectors; runs rvc-export-shared first if _shared missing)"
 	@echo "  rvc-export-shared      — (re)build voice-independent _shared/onnx/{contentvec,rmvpe}.onnx + mel basis (add FORCE=1 to rebuild)"
 	@echo ""
-	@echo "RVC torch-free inference worker (#144 — needs .venv-rvc; parity fixtures committed):"
+	@echo "RVC torch-free inference worker (#144/#151 — needs .venv-rvc; parity fixtures fetched from a pinned GitHub Release):"
 	@echo "  rvc-worker-venv        — build .venv-rvc (python3.12) from scripts/rvc-requirements.txt (asserts torch absent + prints freeze)"
+	@echo "  rvc-fixtures-fetch     — fetch + hashlib-verify the hosted parity fixtures (prereq of rvc-parity; idempotent; fails loud on 404/hang/mismatch; while unpinned, falls back to LOCAL fixtures with a loud unverified notice)"
+	@echo "  rvc-fixtures-test      — stdlib-only smokes for the fetch/verify + single-voice honesty machinery (stock python3; no venv/network/fixtures)"
 	@echo "  rvc-parity             — always-on gate: per-stage refio corr + full-pipeline log-mel + protocol contract + arg/atomic/format"
-	@echo "  rvc-parity-gen         — (re)generate committed gate targets from the Applio torch ref (SOURCE=<clip.wav> [VOICE=<slug>])"
+	@echo "  rvc-parity-gen         — LOCAL (re)generate gate targets from the Applio torch ref (SOURCE=<clip.wav> [VOICE=<slug>]); gitignored, not the hosted bundle"
+	@echo "  rvc-fixtures-publish   — MAINTAINER: regen PARITY_VOICES bundle → pin fixtures.sha256 → gh release create (gated on D0 license: I_HAVE_CLEARED_D0=1)"
 	@echo "  rvc-convert VOICE=<slug> IN=<wav> OUT=<wav> — single by-ear smoke through scripts/rvc (INDEX_RATE optional)"
 	@echo ""
 	@echo "RVC voice wiring (#146 — needs the RVC worker: run 'make rvc-worker-venv' + 'make rvc-export'):"
@@ -232,15 +235,90 @@ rvc-worker-venv:
 	@echo "ok: $(RVC_VENV) is torch-free. Freeze below — capture into scripts/rvc-requirements.txt provenance:"
 	@$(RVC_PY) -m pip freeze
 
-rvc-parity:
+# ---- RVC parity fixtures: hosted bundle fetch + publish (#151) ----
+# The full-pipeline gate fixtures (source.wav + the PARITY_VOICES ref WAV + log-mel
+# target) are NOT committed (the repo forbids .wav/.npy binaries + personal audio).
+# They are fetched from a pinned GitHub Release and hashlib-verified against the
+# committed tests/rvc_parity/fixtures.sha256 — the trust root, NOT the owner-mutable
+# release URL.
+#
+# TODO(#151): pin the real release tag + asset base URL below AFTER
+# `make rvc-fixtures-publish` has been run and the release is live (plan Step 6 + the
+# Step 8 merge gate — tag pin + fixtures.sha256 land in ONE commit that must NOT
+# merge before the release is fetchable). They are EMPTY on purpose right now:
+# BLOCKED on the D0 voice-model license gate (cool-jahns is a clone of a real public
+# figure with no redistribution license — see tests/rvc_parity/fixtures/README.md).
+# While empty, rvc-fixtures-fetch fails loud instead of fetching.
+RVC_FIXTURES_TAG      ?=
+RVC_FIXTURES_BASEURL  ?=
+# Bounded curl — fail loud on hang/partition instead of blocking the gate forever.
+RVC_FIXTURES_CONNECT_TIMEOUT ?= 10
+RVC_FIXTURES_MAX_TIME        ?= 120
+RVC_FIXTURES_RETRY           ?= 3
+# Stdlib-only fetch/pin helpers — run under a stock python3 (no venv/torch to fetch).
+PYTHON3 ?= python3
+
+# Fetch + hashlib-verify the hosted parity fixtures. Idempotent (present+valid ->
+# no network). Fails loud + non-zero on 404/unreachable, bounded-timeout hang,
+# checksum mismatch, or a present-but-divergent file. While the release tag is the
+# unpinned D0-not-cleared placeholder, it falls back to LOCAL fixtures: runs against
+# them with a LOUD "unverified" notice if all are present, else fails loud pointing
+# at `make rvc-parity-gen`. Prereq of rvc-parity so the gate can never go green on
+# missing fixtures (Decision D5).
+rvc-fixtures-fetch:
+	$(PYTHON3) tests/rvc_parity/fetch_fixtures.py \
+	  --tag "$(RVC_FIXTURES_TAG)" --base-url "$(RVC_FIXTURES_BASEURL)" \
+	  --connect-timeout $(RVC_FIXTURES_CONNECT_TIMEOUT) \
+	  --max-time $(RVC_FIXTURES_MAX_TIME) --retry $(RVC_FIXTURES_RETRY)
+
+# Stdlib-only smoke suite for the fetch/verify + single-voice honesty machinery.
+# Runs under a stock python3 (no venv/torch/network/fixtures), so this change's own
+# guarantees have a green make path that can't silently rot.
+rvc-fixtures-test:
+	$(PYTHON3) tests/rvc_parity/fixtures_flow_test.py
+
+rvc-parity: rvc-fixtures-fetch
 	@test -x $(RVC_PY) || { echo "no $(RVC_VENV) — run 'make rvc-worker-venv'"; exit 2; }
 	$(RVC_PY) tests/rvc_parity/parity_test.py
 
-# Regenerate the committed full-pipeline gate targets from the Applio torch path
-# (plan Step 0a). Pass SOURCE=<clip.wav> the first time to commit fixtures/source.wav.
+# LOCAL (re)generate gate targets from the Applio torch path (gitignored, NOT the
+# hosted bundle). Pass SOURCE=<clip.wav> the first time to place fixtures/source.wav.
 rvc-parity-gen:
 	@test -x $(RVC_PY) || { echo "no $(RVC_VENV) — run 'make rvc-worker-venv'"; exit 2; }
 	$(RVC_PY) tests/rvc_parity/gen_targets.py $(if $(SOURCE),--source $(SOURCE),) $(if $(VOICE),--voice $(VOICE),)
+
+# MAINTAINER: regenerate the hosted PARITY_VOICES bundle, pin it, and cut a new
+# release — one command (plan Step 6 / Decision D7). GATED on the D0 voice-model
+# license: publishing converted output requires redistribution rights. cool-jahns is
+# a clone of a real public figure with NO such license on record (#151 D0 = not
+# cleared), so this refuses to run without an explicit I_HAVE_CLEARED_D0=1 override.
+# Do NOT set that flag until a redistributable voice replaces cool-jahns.
+#
+# TODO(#151): RVC_PUBLISH_TAG is a template — pick the real tag (e.g.
+# rvc-parity-fixtures-v1) and, after this runs + the release is live, pin
+# RVC_FIXTURES_TAG/RVC_FIXTURES_BASEURL above + fixtures.sha256 in the SAME commit.
+RVC_PUBLISH_TAG ?= rvc-parity-fixtures-vX
+# Derived from PARITY_VOICES (single source) via parity_voices.py — NOT hardcoded —
+# so a D0 pivot that swaps cool-jahns for a redistributable voice updates the
+# pinned + uploaded asset list in lockstep. Recursively-expanded (=) so python3 only
+# runs when this maintainer target actually references it, not on every make call.
+RVC_BUNDLE_ASSETS = $(shell $(PYTHON3) tests/rvc_parity/parity_voices.py)
+rvc-fixtures-publish:
+	@test "$(I_HAVE_CLEARED_D0)" = "1" || { \
+	  echo "BLOCKED: publishing needs the D0 voice-model redistribution license cleared."; \
+	  echo "cool-jahns is a clone of a real public figure with NO redistribution license (#151 D0 = not cleared)."; \
+	  echo "Do NOT publish until a redistributable voice replaces it. See tests/rvc_parity/fixtures/README.md."; \
+	  echo "Re-run with I_HAVE_CLEARED_D0=1 ONLY after clearance."; exit 2; }
+	@test -x $(RVC_PY) || { echo "no $(RVC_VENV) — run 'make rvc-worker-venv'"; exit 2; }
+	@command -v gh >/dev/null || { echo "gh CLI required to create the release"; exit 2; }
+	@test -n "$(SOURCE)" || { echo "SOURCE=<vetted-public-clip.wav> required"; exit 2; }
+	$(RVC_PY) tests/rvc_parity/gen_targets.py --source $(SOURCE) --bundle
+	$(PYTHON3) tests/rvc_parity/fixtures_io.py $(RVC_BUNDLE_ASSETS)
+	gh release create $(RVC_PUBLISH_TAG) \
+	  $(addprefix tests/rvc_parity/fixtures/,$(RVC_BUNDLE_ASSETS)) \
+	  --title "RVC parity fixtures $(RVC_PUBLISH_TAG)" \
+	  --notes "Torch-reference RVC parity fixtures for 'make rvc-parity' (#151). Trust root: tests/rvc_parity/fixtures.sha256 (committed)."
+	@echo "Published $(RVC_PUBLISH_TAG). Now pin RVC_FIXTURES_TAG + RVC_FIXTURES_BASEURL + fixtures.sha256 in ONE commit (Step 8 merge gate)."
 
 # Single by-ear smoke: one line through scripts/rvc. INDEX_RATE defaults per voice
 # (cool-jahns 0.75, confident-neal 0.5). Pitch fixed to 0 (phase one).

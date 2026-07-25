@@ -1084,3 +1084,45 @@ scopes:
       — distinct branch + PR, reworks #146's surface rather than continuing it.
       Slug pre-supplied + pre-approved via --scope by the build-session single-skill
       runner. Genuine FIRST persist — version 1, scope dir newly created.
+  - slug: rvc-parity-fixtures-151
+    title: RVC parity fixtures — host a public source clip + per-voice log-mel targets as a GitHub Release for fresh-clone reproducibility (issue #151)
+    created: 2026-07-23
+    reasoning: |
+      Plan cycle for GitHub issue #151 — the deferred review blocker B2 from the
+      #144 plan/build review: make the always-on full-pipeline RVC parity gate
+      (make rvc-parity -> tests/rvc_parity/parity_test.py) reproducible on a fresh
+      clone. Today the gate compares the torch-free ONNX worker output against
+      per-voice log-mel .npy targets derived from a PERSONAL (E_baseline /
+      Kokoro-derived) fixtures/source.wav; repo convention + standing order forbid
+      committing .wav/.npy binaries (already gitignored, .gitignore:58-61), so the
+      fixtures are local-only and a fresh clone fails "missing target" (fail-not-skip
+      by design). mimir task-depth 8-step breakdown: (1) pick a PUBLIC
+      permissively-licensed speech clip; (2) re-pin the per-voice log-mel targets
+      via make rvc-parity-gen; (3) commit a text fixtures.sha256 integrity pin;
+      (4) publish the bundle as a GitHub Release asset (one-time gh action, pinned
+      tag); (5) add make rvc-fixtures-fetch (curl into gitignored fixtures/ +
+      verify against fixtures.sha256, atomic temp->move, fail-loud on
+      404/network/partial/checksum-mismatch, idempotent when present+valid);
+      (6) wire it as a rvc-parity PREREQUISITE so a fetch failure aborts the gate;
+      (7) retire stale commit/git-add wording + #151-deferred/PENDING-REAL-ASSETS
+      notes; (8) fresh-clone reproducibility verification. Load-bearing decisions
+      surfaced: ship ALL FIVE binaries (source.wav + 2 *_ref.wav + 2
+      *_logmel_target.npy) not the minimal 3, because parity_test.py:154 reads
+      *_ref.wav under `if os.path.isfile(...)` — omitting them would SILENTLY drop
+      the peak/RMS sub-check on a fresh clone (honesty-rule violation); committed
+      .sha256 + pinned tag for versioned integrity + a re-publish story on
+      logmel.py param change; verify-only-fail-loud on present-but-divergent
+      fixtures; make-prerequisite wiring. Honesty rule respected: the gate must
+      NEVER silently pass when fixtures are absent/unfetchable/corrupt. No overlays
+      activated (local-only non-production test tooling — infra-blast explicitly
+      excludes non-prod/local changes; no schema/API change for public-api-change;
+      the rest silenced by mimir never_overlays). 3 open questions carried (exact
+      clip+license; release tag/host — GitHub Release per AC vs the existing
+      vd09-projects/rvc-voices HF backup repo; present-but-divergent policy).
+      Distinct NEW scope in the rvc-* family (siblings rvc-torch-free-worker-144,
+      rvc-render-decorator-145, rvc-p3-cli-mcp-server-wiring-146,
+      rvc-unified-voice-roster): this is the fixture-hosting follow-up that closes
+      #144's B2, not a continuation of any of them. Slug pre-supplied + pre-approved
+      via --scope by the build-session single-skill runner (rvc-<area>-<issue>
+      form). Genuine FIRST persist — version 1, scope dir newly created. Plan
+      persisted draft (awaiting user approval before sindri consumes).
