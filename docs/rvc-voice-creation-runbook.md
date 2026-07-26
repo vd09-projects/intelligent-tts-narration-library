@@ -18,6 +18,9 @@ Kokoro (writes the words + prosody)  →  RVC (repaints into the trained voice) 
 ```
 Kokoro controls WHAT is said + pacing; the RVC `.pth` controls WHO it sounds like. One narration → any character.
 
+> **This doc trains a voice.** To wire a finished voice into the narration library (render decorator, CLI
+> `--voice`, MCP `speak` `voice` arg, worker ops, verify-by-ear), see **`docs/rvc-integration.md`**.
+
 ---
 
 ## 1. Environment (already set up — verify, don't reinstall)
