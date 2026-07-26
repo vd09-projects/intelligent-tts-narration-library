@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-25-rvc-faithful-pipeline-but-synthetic-source-mismatch
+    title: "RVC pipeline is objectively faithful to torch, but a Kokoro-synthetic source ≠ recognizable target voice by ear"
+    date: 2026-07-25
+    status: accepted
+    category: tradeoff
+    tags: [rvc, voice, by-ear, parity, kokoro, source-mismatch, index-rate, cool-jahns, issue-147]
+    path: tradeoff/2026-07-25-rvc-faithful-pipeline-but-synthetic-source-mismatch.md
+    summary: "#147 verify-by-ear: `narrate --voice cool-jahns` passed every objective signal (manifest voice=cool-jahns, 40 kHz mono s16le, 191 s non-silent) but by ear did NOT sound like Cool Jahns. Diagnosis exonerates all shipped code: the Go decorator only frame-aligns sub-ms; the torch-free ONNX worker reproduces the Applio torch path (full-pipeline log-mel corr 0.9824; per-stage net_g 0.999993 / contentvec 1.0 / rmvpe 1.0; worker-vs-torch on the exact clip corr 0.9824, f0 110 vs 109 Hz). The Applio TORCH reference on a Kokoro am_michael source ALSO doesn't sound like Cool Jahns — so the ceiling is upstream: cool-jahns was trained on REAL Jeremy Jahns speech and a synthetic Kokoro source is out-of-distribution. DECISION: ship the faithful pipeline as-is; keep index_rate 0.75 (by-ear sweep 0.75/0.90/1.00 did not recover character — NOT a roster bump); spin the character fix (retrain/validate on synthetic sources, real-speech source, or different source voice/model) to a follow-up. #147 code+docs done; by-ear character sign-off deferred. Sibling to the single-voice-flow-gate decision (this is exactly the per-voice character regression the gate deliberately does NOT catch)."
   - id: 2026-07-24-rvc-cloned-voice-output-not-redistributable
     title: "RVC voice cloned from a real person without a license: its converted output is not publicly redistributable — swap the parity voice"
     date: 2026-07-24
