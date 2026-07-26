@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -63,6 +63,7 @@ help:
 	@echo "RVC voice wiring (#146 — needs the RVC worker: run 'make rvc-worker-venv' + 'make rvc-export'):"
 	@echo "  rvc-sanity             — narrate \$$SAMPLE at both RVC voices → 40 kHz audio.wav + manifest per voice under \$$RVC_SANITY_OUT (for the #147 by-ear /verify)"
 	@echo "  voice-sanity           — narrate \$$SAMPLE across the roster matrix (am-michael Kokoro 24 kHz + cool-jahns/confident-neal RVC 40 kHz) under \$$VOICE_SANITY_OUT (#156; RVC voices need the worker; for the #147 by-ear /verify)"
+	@echo "  mcp-voice-sanity       — MCP runSpeak by-ear smoke through a roster VOICE (default cool-jahns → RVC 40 kHz via afplay); proves the MCP speak 'voice' arg end-to-end (#147)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -354,3 +355,13 @@ voice-sanity:
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/confident-neal --voice confident-neal
 	@echo "Voice sanity: wrote am-michael (24 kHz Kokoro) + cool-jahns/confident-neal (40 kHz RVC) under $(VOICE_SANITY_OUT)"
 	@echo "Verify (#147): afplay each audio.wav; confirm manifest.json \"voice\" == am_michael (Kokoro engine id) / the RVC slug (D-D)."
+
+# ---- MCP by-ear verify through the speak 'voice' arg (#147) ----
+# Drives the production runSpeak (real pipeline + Kokoro + RVC worker + afplay)
+# with NARRATE_SMOKE_VOICE set, so the MCP `speak` voice arg is exercised
+# end-to-end — the acceptance-criterion-2 counterpart of rvc-sanity's CLI path.
+# Default VOICE=cool-jahns (RVC 40 kHz); pass VOICE=<slug> for any roster voice.
+MCP_VOICE ?= cool-jahns
+mcp-voice-sanity:
+	NARRATE_SMOKE_VOICE=$(MCP_VOICE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
+	@echo "MCP by-ear (#147): heard $(MCP_VOICE) via the MCP speak 'voice' arg (runSpeak → BuildRenderer → RVC decorator → afplay)."

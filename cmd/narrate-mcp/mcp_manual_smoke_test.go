@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -37,11 +38,21 @@ func TestSpeakManualSmoke(t *testing.T) {
 	// wrapper script (and its venv + models) resolvable.
 	t.Chdir(repoRoot)
 
+	// #147: NARRATE_SMOKE_VOICE drives the by-ear MCP verify through a named
+	// roster voice (e.g. cool-jahns → the RVC decorator, 40 kHz via afplay). It
+	// takes precedence over gender (effectiveVoice); empty keeps the legacy
+	// female-Kokoro path so `make test-mcp-manual` is unchanged.
+	voice := os.Getenv("NARRATE_SMOKE_VOICE")
+	if voice != "" {
+		t.Logf("NARRATE_SMOKE_VOICE=%s — narrating through the roster voice (RVC voices repaint via the worker)", voice)
+	}
+
 	resp, err := runSpeak(context.Background(), speakArgs{
 		Source: docPath,
 		Level:  1,
 		Sink:   "ephemeral",
 		Gender: "female",
+		Voice:  voice,
 	})
 	if err != nil {
 		t.Fatalf("runSpeak: %v", err)
