@@ -1126,3 +1126,50 @@ scopes:
       via --scope by the build-session single-skill runner (rvc-<area>-<issue>
       form). Genuine FIRST persist — version 1, scope dir newly created. Plan
       persisted draft (awaiting user approval before sindri consumes).
+  - slug: gptsovits-integration-161
+    title: "GPT-SoVITS as a third render-engine voice option (tickets #161-164)"
+    created: 2026-07-27
+    reasoning: |
+      Task-plan cycle for a mimir ticket-sizing session (no single GitHub issue
+      precedes this scope — it spans and unblocks four new issues #161-164, the
+      same "umbrella plan precedes issue-numbered children" shape as the
+      narrate-claude-code-mcp-listen scope). GPT-SoVITS is productionized from the
+      already-proven docs/gpt-sovits-inference-runbook.md into a third
+      render.Renderer alongside Kokoro (render/sherpa) and RVC (render/rvc).
+      Load-bearing architectural finding: GPT-SoVITS is a PEER engine (text->audio,
+      like Kokoro), NOT a decorator like RVC (audio->audio) — it never inherits
+      Kokoro's already-correct pronunciation for free, so pronunciation coverage
+      (numbers/code/list/table voicing) becomes new test surface RVC never needed.
+      Collapsed the original 5-phase mimir breakdown (P0 artifact-packaging, P1
+      worker, P2 Go engine, P3 roster wiring, P4 verify+docs) to 4 GitHub issues by
+      merging P0 into P1, since artifact packaging alone ships nothing
+      independently testable/usable (violates the project's own phased-delivery
+      discipline), unlike RVC's #143 which was substantial standalone work (real
+      ONNX export + faiss reconstruction). Issues created: #161 (worker + voice
+      artifacts, unblocked, priority:high) -> #162 (Go render/gptsovits peer
+      engine, blocked) -> #163 (roster + CLI/MCP/server wiring, blocked) -> #164
+      (verify-by-ear + perf baseline + docs, blocked), chained via Blocked by +
+      status:blocked labels per this project's 3-signal backlog-ordering
+      convention. User locked three decisions mid-session: ONE voice for phase one
+      (the proven Jeremy Jahns v2Pro clone, slug cool-jahns-gso — distinguishes
+      this engine's render of the same cloned identity from RVC's existing
+      cool-jahns); and NO fixture/parity tests at all, not even a local-only
+      regenerate lane (verify-by-ear only, mirroring RVC's #147 pattern exactly —
+      user's words: "Let's skip the fixtures for now. Voice-to-air test is enough
+      right now. We can improve if we see any issue in the future."). This
+      sidesteps the redistribution gate (decisions/INDEX.md
+      2026-07-24-rvc-cloned-voice-output-not-redistributable) entirely, since
+      cool-jahns-gso is the same non-redistributable real-person clone cool-jahns
+      already hit. Overlays phased-delivery (literal P0..Pn rollout) +
+      perf-critical (worker cold-load/warm-RAM footprint is unmeasured, unlike
+      RVC's already-measured 9.0s cold / 6.9s warm / 2.75-3.7GB baseline) both
+      activated with user confirmation; public-api-change was proposed but the
+      user declined it (roster addition judged additive/backward-compatible by
+      convention, not a real public-contract change). Slug follows the
+      feature-descriptive + primary-issue-number convention (parallel to
+      research/rvc-voice-conversion-integration/'s naming, anchored to #161 as the
+      first/unblocked ticket in the chain) rather than the per-phase
+      rvc-torch-free-worker-144-style split, because this single mimir output
+      covers all four tickets as one roadmap rather than one ticket at a time.
+      Genuine FIRST persist — version 1, scope dir newly created. Plan persisted
+      draft (awaiting user approval before sindri consumes).
