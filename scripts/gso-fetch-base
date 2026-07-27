@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# scripts/gso-fetch-base — fetch the SHARED GPT-SoVITS base-model set (issue #161, AC1).
+#
+# Pulls the MINIMAL 3-model set the v2Pro worker needs (~950MB total) from the public
+# lj1995/GPT-SoVITS HF repo into assets/gptsovits-models/_base/ — NOT the full ~5GB
+# snapshot. Idempotent (present + size-sane -> skipped, no network), bounded curl
+# (fails loud on 404 / hang / partition instead of blocking forever), and size-sanity
+# checked so a truncated download never masquerades as success.
+#
+#   chinese-hubert-base/                (~189 MB)  content encoder
+#   chinese-roberta-wwm-ext-large/      (~651 MB)  text BERT
+#   sv/pretrained_eres2netv2w24s4ep4.ckpt (~108 MB) v2Pro speaker-verification embed
+#
+# All of _base/ is gitignored (large + regenerable). Backup/restore via HF is in
+# assets/gptsovits-models/README.md. Alternative to this script (if the `hf` CLI is
+# available): the single `hf download` in that README.
+#
+# Run:  make gso-fetch-base
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASE_DIR="$ROOT/assets/gptsovits-models/_base"
+HF_REPO="https://huggingface.co/lj1995/GPT-SoVITS/resolve/main"
+
+CONNECT_TIMEOUT="${GSO_FETCH_CONNECT_TIMEOUT:-15}"
+MAX_TIME="${GSO_FETCH_MAX_TIME:-1800}"   # 30 min ceiling for the ~650MB file on a slow link
+RETRY="${GSO_FETCH_RETRY:-3}"
+
+# rel-path                                            min-bytes (sanity floor; loose)
+FILES=(
+  "chinese-hubert-base/config.json|100"
+  "chinese-hubert-base/preprocessor_config.json|100"
+  "chinese-hubert-base/pytorch_model.bin|150000000"
+  "chinese-roberta-wwm-ext-large/config.json|100"
+  "chinese-roberta-wwm-ext-large/tokenizer.json|1000"
+  "chinese-roberta-wwm-ext-large/vocab.txt|1000"
+  "chinese-roberta-wwm-ext-large/pytorch_model.bin|500000000"
+  "sv/pretrained_eres2netv2w24s4ep4.ckpt|80000000"
+)
+
+file_size() {  # portable stat (macOS vs GNU)
+  stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0
+}
+
+fetch_one() {
+  local rel="$1" min="$2"
+  local dest="$BASE_DIR/$rel"
+  local url="$HF_REPO/$rel"
+  mkdir -p "$(dirname "$dest")"
+
+  if [[ -f "$dest" ]]; then
+    local sz; sz="$(file_size "$dest")"
+    if (( sz >= min )); then
+      echo "  skip (present, ${sz}B): $rel"
+      return 0
+    fi
+    echo "  re-fetch (undersized ${sz}B < ${min}B): $rel"
+    rm -f "$dest"
+  fi
+
+  echo "  fetch: $rel"
+  local tmp="$dest.part"
+  # --fail: nonzero on HTTP 4xx/5xx. --location: follow HF redirect to the CDN.
+  if ! curl --fail --location --show-error --silent \
+        --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" --retry "$RETRY" \
+        -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    echo "FATAL: download failed for $rel ($url)" >&2
+    return 1
+  fi
+  local sz; sz="$(file_size "$tmp")"
+  if (( sz < min )); then
+    rm -f "$tmp"
+    echo "FATAL: $rel downloaded only ${sz}B (< sanity floor ${min}B) — truncated/HTML error page?" >&2
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+  echo "    ok (${sz}B)"
+}
+
+echo "gso-fetch-base: fetching the shared base-model set into $BASE_DIR (~950MB, idempotent)"
+mkdir -p "$BASE_DIR"
+rc=0
+for entry in "${FILES[@]}"; do
+  rel="${entry%%|*}"
+  min="${entry##*|}"
+  fetch_one "$rel" "$min" || rc=1
+done
+
+if (( rc != 0 )); then
+  echo "gso-fetch-base: FAILED — one or more artifacts did not fetch/verify (see above)." >&2
+  exit 1
+fi
+echo "gso-fetch-base: done. Base models under $BASE_DIR (gitignored)."
+echo "Next: place the cool-jahns-gso voice checkpoints + ref artifacts (see assets/gptsovits-models/README.md)."
