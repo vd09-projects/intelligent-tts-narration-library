@@ -14,27 +14,43 @@ import (
 	"testing"
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
+	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/gptsovits"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 )
+
+// wantFormatFor derives the expected sink format from a roster engine — the single
+// origin the roster's format() also reads (render.DefaultFormat / rvc.OutputFormat /
+// gptsovits.OutputFormat). Used by the table + the three-way single-origin guard.
+func wantFormatFor(engine pipeline.VoiceEngine) plan.AudioFormat {
+	switch engine {
+	case pipeline.EngineRVC:
+		return rvc.OutputFormat()
+	case pipeline.EngineGSO:
+		return gptsovits.OutputFormat()
+	default:
+		return render.DefaultFormat()
+	}
+}
 
 func TestResolveVoice(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name           string
-		voice          string
-		wantSlug       string
-		wantEngine     pipeline.VoiceEngine
-		wantRenderID   string
-		wantManifest   string
-		wantRequires   bool
-		wantFormat24kb bool // true => render.DefaultFormat() (24 kHz), false => rvc.OutputFormat() (40 kHz)
+		name         string
+		voice        string
+		wantSlug     string
+		wantEngine   pipeline.VoiceEngine
+		wantRenderID string
+		wantManifest string
+		wantRequires bool
 	}{
-		{name: "empty defaults to af-bella", voice: "", wantSlug: "af-bella", wantEngine: pipeline.EngineKokoro, wantRenderID: "af_bella", wantManifest: "af_bella", wantRequires: false, wantFormat24kb: true},
-		{name: "af-bella", voice: "af-bella", wantSlug: "af-bella", wantEngine: pipeline.EngineKokoro, wantRenderID: "af_bella", wantManifest: "af_bella", wantRequires: false, wantFormat24kb: true},
-		{name: "am-michael", voice: "am-michael", wantSlug: "am-michael", wantEngine: pipeline.EngineKokoro, wantRenderID: "am_michael", wantManifest: "am_michael", wantRequires: false, wantFormat24kb: true},
-		{name: "cool-jahns", voice: "cool-jahns", wantSlug: "cool-jahns", wantEngine: pipeline.EngineRVC, wantRenderID: "", wantManifest: "cool-jahns", wantRequires: true, wantFormat24kb: false},
-		{name: "confident-neal", voice: "confident-neal", wantSlug: "confident-neal", wantEngine: pipeline.EngineRVC, wantRenderID: "", wantManifest: "confident-neal", wantRequires: true, wantFormat24kb: false},
+		{name: "empty defaults to af-bella", voice: "", wantSlug: "af-bella", wantEngine: pipeline.EngineKokoro, wantRenderID: "af_bella", wantManifest: "af_bella", wantRequires: false},
+		{name: "af-bella", voice: "af-bella", wantSlug: "af-bella", wantEngine: pipeline.EngineKokoro, wantRenderID: "af_bella", wantManifest: "af_bella", wantRequires: false},
+		{name: "am-michael", voice: "am-michael", wantSlug: "am-michael", wantEngine: pipeline.EngineKokoro, wantRenderID: "am_michael", wantManifest: "am_michael", wantRequires: false},
+		{name: "cool-jahns", voice: "cool-jahns", wantSlug: "cool-jahns", wantEngine: pipeline.EngineRVC, wantRenderID: "", wantManifest: "cool-jahns", wantRequires: true},
+		{name: "confident-neal", voice: "confident-neal", wantSlug: "confident-neal", wantEngine: pipeline.EngineRVC, wantRenderID: "", wantManifest: "confident-neal", wantRequires: true},
+		{name: "cool-jahns-gso", voice: "cool-jahns-gso", wantSlug: "cool-jahns-gso", wantEngine: pipeline.EngineGSO, wantRenderID: "cool-jahns-gso", wantManifest: "cool-jahns-gso", wantRequires: true},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -59,10 +75,7 @@ func TestResolveVoice(t *testing.T) {
 			if info.RequiresWorker != tc.wantRequires {
 				t.Errorf("RequiresWorker = %v, want %v", info.RequiresWorker, tc.wantRequires)
 			}
-			wantFormat := render.DefaultFormat()
-			if !tc.wantFormat24kb {
-				wantFormat = rvc.OutputFormat()
-			}
+			wantFormat := wantFormatFor(tc.wantEngine)
 			if info.Format != wantFormat {
 				t.Errorf("Format = %+v, want %+v", info.Format, wantFormat)
 			}
@@ -126,6 +139,45 @@ func TestRoster_RVCConsistency(t *testing.T) {
 	}
 }
 
+// GSO-roster consistency (#162 drift guard, mirror of the RVC guard): the set of GSO
+// roster slugs must equal gptsovits.SupportedVoices(), so adding a GSO voice needs
+// exactly one gsoVoices entry + one roster entry, and any drift trips this test.
+//
+// It also carries the roster leg of the three-way format single-origin guard
+// (review suggestion 5): every GSO roster VoiceInfo.Format must equal
+// gptsovits.OutputFormat() — the same 32 kHz spec the engine stamps on
+// RenderResult.Format / Timeline.Format (asserted engine-side in
+// render/gptsovits/gptsovits_test.go's happy path). One origin end to end.
+func TestRoster_GSOConsistency(t *testing.T) {
+	t.Parallel()
+	var rosterGSO []string
+	for _, slug := range pipeline.VoiceSlugs() {
+		info, err := pipeline.ResolveVoice(slug)
+		if err != nil {
+			t.Fatalf("ResolveVoice(%q): %v", slug, err)
+		}
+		if info.Engine != pipeline.EngineGSO {
+			continue
+		}
+		rosterGSO = append(rosterGSO, slug)
+		if info.Format != gptsovits.OutputFormat() {
+			t.Errorf("%s VoiceInfo.Format = %+v, want gptsovits.OutputFormat() %+v (format single-origin)",
+				slug, info.Format, gptsovits.OutputFormat())
+		}
+		// GSO is voice-neutral like Kokoro (NOT the RVC meaningful-empty): the slug
+		// flows through as RenderVoiceID so the engine resolves it via opts.Voice.
+		if info.RenderVoiceID != slug {
+			t.Errorf("%s (GSO) RenderVoiceID = %q, want the slug %q (voice-neutral peer)", slug, info.RenderVoiceID, slug)
+		}
+	}
+	gsoSlugs := gptsovits.SupportedVoices()
+	sort.Strings(rosterGSO)
+	sort.Strings(gsoSlugs)
+	if strings.Join(rosterGSO, ",") != strings.Join(gsoSlugs, ",") {
+		t.Errorf("roster GSO slugs %v != gptsovits.SupportedVoices() %v", rosterGSO, gsoSlugs)
+	}
+}
+
 func TestIsVoice(t *testing.T) {
 	t.Parallel()
 	for _, slug := range pipeline.VoiceSlugs() {
@@ -143,7 +195,7 @@ func TestIsVoice(t *testing.T) {
 func TestVoiceSlugs_StableOrder(t *testing.T) {
 	t.Parallel()
 	got := pipeline.VoiceSlugs()
-	want := []string{"af-bella", "am-michael", "cool-jahns", "confident-neal"}
+	want := []string{"af-bella", "am-michael", "cool-jahns", "confident-neal", "cool-jahns-gso"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("VoiceSlugs() = %v, want %v (stable roster order)", got, want)
 	}
@@ -157,6 +209,7 @@ func TestVoiceHelp_TagsEachEntry(t *testing.T) {
 		"am-michael (Kokoro · 24kHz · fast)",
 		"cool-jahns (RVC · 40kHz · needs worker)",
 		"confident-neal (RVC · 40kHz · needs worker)",
+		"cool-jahns-gso (GPT-SoVITS · 32kHz · needs worker)",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("VoiceHelp() = %q, missing %q", help, want)

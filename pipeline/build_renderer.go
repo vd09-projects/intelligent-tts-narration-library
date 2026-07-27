@@ -3,6 +3,7 @@ package pipeline
 import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/gptsovits"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 )
@@ -58,6 +59,12 @@ func BuildRenderer(voice string) (render.Renderer, plan.AudioFormat, error) {
 			return nil, plan.AudioFormat{}, rerr
 		}
 		return r, info.Format, nil
+	}
+	if info.Engine == EngineGSO {
+		// Peer engine (#162), NOT a decorator: no inner renderer to wrap. The engine
+		// is voice-neutral — the slug flows separately via NarrateRequest.Voice
+		// (RenderVoiceID), so a bare gptsovits.Engine backs every GSO voice.
+		return gptsovits.New(gptsovits.EngineConfig{}), info.Format, nil
 	}
 	return sherpa.New(sherpa.EngineConfig{}), info.Format, nil
 }
