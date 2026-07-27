@@ -1173,3 +1173,32 @@ scopes:
       covers all four tickets as one roadmap rather than one ticket at a time.
       Genuine FIRST persist — version 1, scope dir newly created. Plan persisted
       draft (awaiting user approval before sindri consumes).
+  - slug: gso-worker-voice-artifacts-161
+    title: "GSO P1 — worker + voice artifacts (torch subprocess over TTS_infer_pack) (#161)"
+    created: 2026-07-27
+    reasoning: |
+      Task-depth build plan for GitHub issue #161, the root/unblocked child of the
+      GPT-SoVITS initiative broken down in the sibling scope gptsovits-integration-161.
+      DISTINCT scope, NOT an iteration of that umbrella: the umbrella is the
+      initiative-level ticket-sizing roadmap across #161-164 (per-ticket depth of one
+      paragraph each); THIS scope is the single-ticket task-depth build plan for #161
+      alone (phased steps mapping to per-phase Conventional Commits, the restated wire
+      contract, the 7-gotcha hardcoding map, the ERR taxonomy, gitignore/Makefile
+      deltas). Same "umbrella roadmap precedes issue-scoped build plan" split already
+      used elsewhere (e.g. narrate-claude-code-mcp-listen -> narrate-mcp-listen-impl-73).
+      Slug pre-supplied + pre-approved via --scope by the build-session single-skill
+      runner, feature-descriptive + primary-issue-number form (gso-worker-voice-artifacts-161),
+      anchored to #161. String similarity to gptsovits-integration-161 is low (different
+      words), so no close-match collision; caller explicitly directed creating a new
+      scope and NOT touching the umbrella. Overlays phased-delivery (per-phase commits,
+      multi-phase build with checkpoints — shape-defining) + public-api-change activated.
+      Note: the umbrella scope DECLINED public-api-change (roster addition judged
+      additive/backward-compatible); this child ACTIVATES it for a different, genuine
+      reason — the worker stdin/stdout WIRE contract is an explicit v1 public contract
+      (decision 2026-07-22-rvc-worker-wire-contract-err-taxonomy-exit-codes) that #162
+      binds to, and GSO's space-bearing text/prompt_text tokens make shlex-quoting newly
+      load-bearing vs RVC's space-free tokens — a real contract concern, not a roster
+      row. infra-blast + perf-critical considered and skipped (prod/IaC triggers don't
+      fire on a local venv+subprocess; AC5 is a warm-reuse correctness proof, not a
+      quantified latency SLO). Genuine FIRST persist — version 1, scope dir newly
+      created. Plan persisted draft (awaiting user approval before sindri consumes).
