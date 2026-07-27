@@ -1,0 +1,122 @@
+{
+  "_comment": [
+    "Cross-language shlex round-trip golden fixture — GSO wire v1 (issue #161).",
+    "CONTRACT for #162: Go has NO stdlib shlex quoter. #162's encoder MUST emit,",
+    "for each case's `tokens` (the 5 positional request fields in order:",
+    "[text, ref_audio_path, prompt_text, text_split_method, voice_id]), a wire",
+    "line that shlex.split's back to exactly `tokens`. The `wire` field here is",
+    "Python shlex.quote's canonical output; byte-identical output is sufficient",
+    "but NOT required — round-trip equality (split(wire)==tokens) is the contract.",
+    "The Python worker (scripts/gptsovits_worker.py) shlex.split's the wire line",
+    "and requires exactly 5 tokens. No token may contain a newline or CR."
+  ],
+  "wire_field_order": [
+    "text",
+    "ref_audio_path",
+    "prompt_text",
+    "text_split_method",
+    "voice_id"
+  ],
+  "cases": [
+    {
+      "tokens": [
+        "hello",
+        "/models/ref.wav",
+        "hi there",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "hello /models/ref.wav 'hi there' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "replicas set to three, then restart",
+        "/m/cool-jahns-gso/ref_audio.wav",
+        "This is my reference clip.",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'replicas set to three, then restart' /m/cool-jahns-gso/ref_audio.wav 'This is my reference clip.' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "it's a test",
+        "/r.wav",
+        "don't stop",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'it'\"'\"'s a test' /r.wav 'don'\"'\"'t stop' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "say \"hello\" now",
+        "/r.wav",
+        "the \"quote\" test",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'say \"hello\" now' /r.wav 'the \"quote\" test' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "run $(rm -rf /) now; echo `whoami` | cat > out & star *",
+        "/r.wav",
+        "meta chars < > | ; & $ ` * ? [ ]",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'run $(rm -rf /) now; echo `whoami` | cat > out & star *' /r.wav 'meta chars < > | ; & $ ` * ? [ ]' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "hello world",
+        "/my models/cool jahns/ref audio.wav",
+        "prompt with spaces",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'hello world' '/my models/cool jahns/ref audio.wav' 'prompt with spaces' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "café naïve résumé — 日本語 🎙",
+        "/r.wav",
+        "prompt café 日本語",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'café naïve résumé — 日本語 🎙' /r.wav 'prompt café 日本語' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "a\tb tabbed",
+        "/r.wav",
+        "prompt\ttab",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'a\tb tabbed' /r.wav 'prompt\ttab' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "path\\to\\thing and back\\slash",
+        "/r.wav",
+        "back\\slash prompt",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "'path\\to\\thing and back\\slash' /r.wav 'back\\slash prompt' cut4 cool-jahns-gso"
+    },
+    {
+      "tokens": [
+        "single",
+        "/r.wav",
+        "oneword",
+        "cut4",
+        "cool-jahns-gso"
+      ],
+      "wire": "single /r.wav oneword cut4 cool-jahns-gso"
+    }
+  ]
+}
