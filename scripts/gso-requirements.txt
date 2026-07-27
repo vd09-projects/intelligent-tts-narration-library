@@ -9,69 +9,222 @@
 # GPT-SoVITS stack) out of the library. Python 3.10–3.12 ONLY (funasr/pyopenjtalk/
 # jieba_fast target 3.10–3.12) — NEVER system 3.14.
 #
-# HARD RULE: every line is an exact `==` pin. Never a `>=`, never a bare name — an
-# unpinned dep makes `make gso-warmproof` non-reproducible.
+# HARD RULE: every line is an exact `==` pin. Never a `>=`, never a bare name.
 #
-# ── Provenance ──────────────────────────────────────────────────────────────
-# The torch trio (torch/torchaudio/torchcodec) is RECORDED from the approved v3 plan /
-# GPT-SoVITS v2Pro M1-Pro runbook as the versions that produced working inference:
-#     torch 2.13.0 (mac wheel) · torchaudio 2.11.0 · torchcodec 0.15.0
-# The remaining deps below are the GPT-SoVITS-own runtime set minus opencc (see gotcha
-# 2), pinned to best-known py3.11-compatible releases and marked PENDING re-pin. Per
-# the plan's lost-venv mitigation, the AUTHORITATIVE capture is: run
-# `make gso-worker-venv` (which prints `pip freeze`), then replace EVERY line below
-# with the exact frozen version (ideally the full transitive closure) and update this
-# header to "re-derived <date>". Do NOT treat the PENDING pins as final until then.
+# ── Provenance — RE-DERIVED 2026-07-27 (issue #165 machine-run acceptance) ─────
+# This is the FULL transitive closure captured from the on-machine PROVEN venv
+# `pip freeze` (the ~/repos/GPT-SoVITS-local/.venv that produced working v2Pro
+# inference in docs/gpt-sovits-inference-runbook.md), on Apple M1 Pro / Python 3.11.13.
+# It supersedes the earlier PENDING pins.
 #
-# ── The 7 gotchas that touch this file / the venv build ─────────────────────
-#   1 (install order): torch + torchaudio must be installed FIRST — baked as an
-#     explicit first `pip install` step in `make gso-worker-venv`, before this file's
-#     rest resolves. (They are listed here too, for provenance; already-satisfied.)
-#   2 (opencc build fails on arm64): `opencc` is DELIBERATELY ABSENT from this file.
-#     The venv target filters `^opencc` out and installs `opencc-python-reimplemented`
-#     (a drop-in with the SAME `opencc` import name) instead — listed below.
-#   3 (torchcodec for torchaudio.load): torchcodec==0.15.0 is pinned here (arm64
-#     wheel; needs Homebrew ffmpeg on PATH — an environmental prereq noted in the
-#     README, not a pip dep).
-#   4 (NLTK data): downloaded at venv BUILD time by the target (not a pip dep here) so
-#     the worker never hits the network mid-job.
-#   5/6/7 are runtime request-validation gotchas enforced in the worker, not deps.
+# AC3 conflict resolution (the flagged numpy 2.1.3 / numba 0.60.0 conflict): numba
+# 0.60.0 caps numpy < 2.1 and the funasr/librosa/GPT-SoVITS stack is numpy<2 anyway,
+# so the earlier numpy 2.1.3 pin was unsatisfiable. RESOLVED to the proven pair:
+#     numpy==1.26.4  +  numba==0.66.0  (llvmlite==0.48.0)
+# Torch-trio alignment held at the runbook versions (all mutually consistent here):
+#     torch==2.13.0 · torchaudio==2.11.0 · torchcodec==0.15.0
 #
-# ── License note (subprocess boundary is load-bearing) ──────────────────────
-# GPT-SoVITS itself is MIT, but its transitive set (funasr, pyopenjtalk, jieba_fast,
-# and others) carries MIXED and in places restrictive/copyleft-adjacent licenses. The
-# subprocess boundary — torch + this stack are only ever SPOKEN TO over stdin/stdout,
-# never imported/linked into the Go binary — is what keeps the library unencumbered.
-# Same reasoning as the Piper-GPL gotcha in CLAUDE.md. See assets/gptsovits-models/
-# README.md for the full license section.
+# ── The gotchas that touch this file / the venv build ───────────────────────
+#   1 (install order): `make gso-worker-venv` installs torch+torchaudio FIRST, then
+#     torchcodec, before this file's remainder resolves. (Listed here too; already-
+#     satisfied when the -r step runs.)
+#   2 (opencc build fails on arm64): a BARE `opencc` is DELIBERATELY ABSENT. Only the
+#     drop-in `opencc-python-reimplemented` (same `opencc` import name) appears below.
+#     The venv target's `^opencc` filter is a harmless no-op against the reimpl line.
+#   3 (torchcodec for torchaudio.load): torchcodec==0.15.0 pinned (arm64 wheel; needs
+#     Homebrew ffmpeg on PATH — environmental prereq, not a pip dep).
+#   4 (NLTK data): downloaded at venv BUILD time by the target, not a pip dep here.
+#   5/6/7 are runtime request-validation gotchas in the worker, not deps.
+#
+# NOTE: the closure includes the GPT-SoVITS WebUI deps (gradio/fastapi/tensorboard/
+# modelscope/…) present in the proven venv. The worker drives TTS_infer_pack directly
+# and never imports the WebUI, but the full closure is pinned verbatim for exact
+# reproducibility (a pruned set risks a floating transitive re-introducing numpy 2.x).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- torch trio: RECORDED from the runbook (install order gotcha 1: FIRST) -----
+absl-py==2.5.0
+accelerate==1.14.0
+aiofiles==23.2.1
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+aliyun-python-sdk-core==2.16.0
+aliyun-python-sdk-kms==2.16.5
+annotated-doc==0.0.4
+annotated-types==0.8.0
+antlr4-python3-runtime==4.9.3
+anyio==4.14.2
+attrs==26.1.0
+audioread==3.1.0
+av==18.0.0
+budoux==0.8.4
+certifi==2026.7.22
+cffi==2.1.0
+chardet==7.4.3
+charset-normalizer==3.4.9
+click==8.4.2
+cn2an==0.5.24
+colorlog==6.12.0
+contourpy==1.3.3
+crcmod==1.7
+cryptography==49.0.0
+ctranslate2==4.8.1
+cycler==0.12.1
+decorator==5.3.1
+defusedxml==0.7.1
+detect-installer==0.1.0
+Distance==0.1.3
+dnspython==2.8.0
+einops==0.8.2
+einx==0.4.3
+email-validator==2.3.0
+fast-langdetect==1.0.1
+fastapi==0.140.0
+fastapi-cli==0.0.32
+fastapi-cloud-cli==0.22.2
+fastar==0.11.0
+fasttext-predict==0.9.2.4
+ffmpeg-python==0.2.0
+ffmpy==1.0.0
+filelock==3.32.0
+flatbuffers==25.12.19
+fonttools==4.63.0
+frozendict==2.4.7
+frozenlist==1.8.0
+fsspec==2026.6.0
+funasr==1.3.29
+future==1.0.0
+g2p-en==2.1.0
+g2pk2==0.0.3
+gradio==4.44.1
+gradio_client==1.3.0
+grpcio==1.83.0
+h11==0.16.0
+hf-xet==1.5.2
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+huggingface_hub==0.36.2
+hydra-core==1.3.4
+idna==3.18
+importlib_resources==6.5.2
+inflect==7.5.0
+jaconv==0.5.0
+jamo==0.4.1
+jieba==0.42.1
+jieba_fast==0.53
+Jinja2==3.1.6
+jmespath==0.10.0
+joblib==1.5.3
+kaldiio==2.18.1
+kiwisolver==1.5.0
+ko-pron==1.3
+lazy-loader==0.5
+librosa==0.10.2
+lightning-utilities==0.15.3
+llvmlite==0.48.0
+loguru==0.7.3
+Markdown==3.10.2
+markdown-it-py==4.2.0
+MarkupSafe==2.1.5
+matplotlib==3.11.1
+mdurl==0.1.2
+modelscope==1.38.1
+modelscope-hub==0.1.8
+more-itertools==11.1.0
+mpmath==1.3.0
+msgpack==1.2.1
+multidict==6.7.1
+narwhals==2.24.0
+networkx==3.6.1
+nltk==3.10.0
+numba==0.66.0
+numpy==1.26.4
+omegaconf==2.3.1
+onnxruntime==1.28.0
+opencc-python-reimplemented==0.1.7
+orjson==3.11.9
+oss2==2.19.1
+packaging==26.2
+pandas==2.3.3
+peft==0.17.1
+pillow==10.4.0
+platformdirs==4.11.0
+pooch==1.9.0
+proces==0.1.7
+propcache==0.5.2
+protobuf==7.35.1
+psutil==7.2.2
+pycparser==3.0
+pycryptodome==3.23.0
+pydantic==2.10.6
+pydantic-extra-types==2.11.1
+pydantic-settings==2.14.2
+pydantic_core==2.27.2
+pydub==0.25.1
+Pygments==2.20.0
+pynndescent==0.6.0
+pyopenjtalk==0.4.1
+pyparsing==3.3.2
+pypinyin==0.55.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+python-mecab-ko==1.3.7
+python-mecab-ko-dic==2.1.1.post2
+python-multipart==0.0.32
+pytorch-lightning==2.6.5
+pytz==2026.3.post1
+PyYAML==6.0.3
+RapidFuzz==3.14.5
+regex==2026.7.19
+requests==2.34.2
+rich==15.0.0
+rich-toolkit==0.20.3
+rignore==0.8.0
+robust-downloader==0.0.2
+rotary-embedding-torch==0.9.1
+ruff==0.16.0
+safetensors==0.8.0
+scikit-learn==1.9.0
+scipy==1.17.1
+semantic-version==2.10.0
+sentencepiece==0.2.2
+sentry-sdk==2.66.1
+shellingham==1.5.4
+six==1.17.0
+soundfile==0.14.0
+soxr==1.1.0
+split-lang==2.1.1
+starlette==1.3.1
+sympy==1.14.0
+tensorboard==2.21.0
+tensorboard-data-server==0.7.2
+tensorboardX==2.6.5
+threadpoolctl==3.6.0
+tiktoken==0.13.0
+ToJyutping==3.2.0
+tokenizers==0.21.4
+tomlkit==0.12.0
 torch==2.13.0
+torch-complex==0.4.4
+torch-einops-utils==0.1.11
 torchaudio==2.11.0
 torchcodec==0.15.0
-
-# --- opencc drop-in (gotcha 2): reimplemented build, same `opencc` import name ---
-opencc-python-reimplemented==0.1.7
-
-# --- audio I/O (PENDING re-pin from `make gso-worker-venv` freeze) --------------
-soundfile==0.13.1
-numpy==2.1.3
-
-# --- GPT-SoVITS-own runtime deps, minus opencc (PENDING re-pin from freeze) -----
-# These are the runtime (inference) subset of GPT-SoVITS's requirements. The exact
-# transitive closure + versions MUST be captured from the venv freeze on the machine
-# run and pinned here; the set below is the known-needed core.
-librosa==0.10.2
-numba==0.60.0
-pyopenjtalk==0.4.1
-g2p-en==2.1.0
-jieba-fast==0.53
-transformers==4.43.4
-pytorch-lightning==2.4.0
-ffmpeg-python==0.2.0
-cn2an==0.5.22
-pypinyin==0.53.0
-nltk==3.9.1
-funasr==1.1.6
-x-transformers==1.44.4
+torchmetrics==1.5.0
+tqdm==4.69.1
+transformers==4.50.0
+typeguard==4.6.0
+typer==0.27.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+tzdata==2026.3
+umap-learn==0.5.12
+urllib3==2.7.0
+uvicorn==0.50.1
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==12.0
+Werkzeug==3.1.8
+wordsegment==1.3.1
+x-transformers==2.24.0
+yarl==1.24.5

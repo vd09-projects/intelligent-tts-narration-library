@@ -34,7 +34,9 @@ FILES=(
   "chinese-hubert-base/pytorch_model.bin|150000000"
   "chinese-roberta-wwm-ext-large/config.json|100"
   "chinese-roberta-wwm-ext-large/tokenizer.json|1000"
-  "chinese-roberta-wwm-ext-large/vocab.txt|1000"
+  # NOTE (#165 AC1 machine-run): lj1995/GPT-SoVITS ships NO chinese-roberta-wwm-ext-
+  # large/vocab.txt (it 404s); the fast tokenizer uses tokenizer.json, and neither the
+  # worker's startup check nor v2Pro inference needs vocab.txt (proven without it).
   "chinese-roberta-wwm-ext-large/pytorch_model.bin|500000000"
   "sv/pretrained_eres2netv2w24s4ep4.ckpt|80000000"
 )
