@@ -61,3 +61,26 @@ assets/rvc-models/_shared/
 tests/rvc_parity/fixtures/*.wav
 tests/rvc_parity/fixtures/*.npy
 tests/rvc_parity/fixtures/*.part
+
+# ── GPT-SoVITS voice artifacts (#161) ────────────────────────────────────────
+# Large + non-redistributable clone (weights, reference audio, ~950MB base models);
+# NEVER commit them. But DO track the DR runbook README — a deliberate improvement
+# over the RVC README (which is untracked). git cannot re-include a file whose PARENT
+# DIR is excluded, and the wholesale `assets` rule above excludes it, so re-include the
+# parent-dir chain, immediately re-ignore the contents, then re-include ONLY the one
+# README (last, so it wins). Other assets/* subdirs (rvc-models, huginn-samples,
+# voice-clips) are re-ignored by `assets/*`, so their untracked status is unchanged.
+!assets/
+assets/*
+!assets/gptsovits-models/
+assets/gptsovits-models/*
+# belt-and-suspenders: weights/audio/base stay ignored even if the line above narrows
+assets/gptsovits-models/**/*.ckpt
+assets/gptsovits-models/**/*.pth
+assets/gptsovits-models/**/*.wav
+assets/gptsovits-models/_base/
+# ...but DO track the DR runbook / restore doc:
+!assets/gptsovits-models/README.md
+
+# GSO torch worker venv (per-machine; torch isolated to this subprocess, never linked)
+.venv-gso

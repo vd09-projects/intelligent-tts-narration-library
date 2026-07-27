@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# GPT-SoVITS (GSO) warm-load-once TTS worker wrapper (issue #161).
+#
+# Activates the DEDICATED torch venv (.venv-gso — NOT the shared .venv which carries
+# kokoro-onnx, and NOT .venv-rvc which is torch-FREE) and execs the Python worker.
+# The worker reads a stdin/stdout line loop:
+#   <text> <ref_audio_path> <prompt_text> <text_split_method> <voice_id>
+#     -> OK <worker-minted-out> / ERR <category> <message>
+#
+# Inverse of scripts/rvc: this worker REQUIRES torch (it infers with it) and asserts
+# torch PRESENT at startup. Build the venv once with:  make gso-worker-venv
+#
+# See scripts/gptsovits_worker.py (module docstring) for the full wire protocol +
+# failure modes, and assets/gptsovits-models/README.md for artifacts + DR runbook.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="$ROOT/.venv-gso"
+
+if [[ ! -f "$VENV/bin/activate" ]]; then
+  echo "gso: torch venv missing at $VENV — run 'make gso-worker-venv'" >&2
+  exit 2
+fi
+
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
+
+exec python3 "$ROOT/scripts/gptsovits_worker.py" "$@"

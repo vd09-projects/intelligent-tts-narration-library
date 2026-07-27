@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -64,6 +64,12 @@ help:
 	@echo "  rvc-sanity             — narrate \$$SAMPLE at both RVC voices → 40 kHz audio.wav + manifest per voice under \$$RVC_SANITY_OUT (for the #147 by-ear /verify)"
 	@echo "  voice-sanity           — narrate \$$SAMPLE across the roster matrix (am-michael Kokoro 24 kHz + cool-jahns/confident-neal RVC 40 kHz) under \$$VOICE_SANITY_OUT (#156; RVC voices need the worker; for the #147 by-ear /verify)"
 	@echo "  mcp-voice-sanity       — MCP runSpeak by-ear smoke through a roster VOICE (default cool-jahns → RVC 40 kHz via afplay); proves the MCP speak 'voice' arg end-to-end (#147)"
+	@echo ""
+	@echo "GPT-SoVITS (#161 — torch subprocess over TTS_infer_pack; consumes .ckpt/.pth directly, NO ONNX; 32 kHz):"
+	@echo "  gso-fetch-base         — fetch + size-sanity the ~950MB shared base models into assets/gptsovits-models/_base/ (idempotent; needs network)"
+	@echo "  gso-worker-venv        — build .venv-gso (python3.11) from scripts/gso-requirements.txt; gotchas 1-4 baked; asserts torch PRESENT (inverse of RVC) + prints freeze"
+	@echo "  gso-contract-test      — torch-free wire/ERR-taxonomy contract test + shlex golden round-trip + warmproof negative dry-check (stock python3; no venv/network/models)"
+	@echo "  gso-warmproof          — AC5 warm-load CORRECTNESS smoke: LOAD-once, non-silent 32 kHz, A,B,A determinism (per-response byte-buffering) + distinct B!=A, warm-vs-cold (distinct dirs); needs .venv-gso + real artifacts"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -365,3 +371,60 @@ MCP_VOICE ?= cool-jahns
 mcp-voice-sanity:
 	NARRATE_SMOKE_VOICE=$(MCP_VOICE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
 	@echo "MCP by-ear (#147): heard $(MCP_VOICE) via the MCP speak 'voice' arg (runSpeak → BuildRenderer → RVC decorator → afplay)."
+
+# ---- GPT-SoVITS (GSO) torch inference worker (#161) ----
+# The ephemeral warm-load-once subprocess engine (#162 drives it later). Its venv is
+# DEDICATED + torch-PRESENT (.venv-gso, NOT the shared .venv and NOT the torch-free
+# .venv-rvc). Inverse of the RVC worker: the GSO worker infers WITH torch and asserts
+# torch present at startup (explicit `if not importable: FATAL sys.exit(78)`, EX_CONFIG,
+# unstrippable by `python -O`). Built with python3.11 (3.10-3.12 only; funasr/
+# pyopenjtalk/jieba_fast target that range; NEVER system 3.14). Torch is reached ONLY
+# across the stdin/stdout subprocess boundary — never linked into any Go binary.
+GSO_VENV := .venv-gso
+GSO_PY := $(GSO_VENV)/bin/python
+PYTHON311 ?= python3.11
+
+# Fetch the shared ~950MB base-model set (chinese-hubert-base + chinese-roberta-wwm-
+# ext-large + the v2Pro sv embedding). Idempotent + size-sanity checked + fail-loud.
+gso-fetch-base:
+	scripts/gso-fetch-base
+
+# Build .venv-gso with gotchas 1-4 baked as hardcoded recipe steps (NOT re-discovered):
+#   1 install order — torch + torchaudio FIRST, before the rest resolves.
+#   2 opencc build failure — filter a bare `opencc` pin out (keeping the reimpl), then
+#     install opencc-python-reimplemented (same `opencc` import name).
+#   3 torchcodec — pinned in gso-requirements.txt (arm64 wheel; needs Homebrew ffmpeg).
+#   4 NLTK data — downloaded at BUILD time so the worker never hits network mid-job.
+# Asserts torch PRESENT (inverse of rvc-worker-venv) + prints freeze for provenance.
+gso-worker-venv:
+	$(PYTHON311) -m venv $(GSO_VENV)
+	$(GSO_PY) -m pip install --upgrade pip
+	$(GSO_PY) -m pip install torch==2.13.0 torchaudio==2.11.0
+	$(GSO_PY) -m pip install torchcodec==0.15.0
+	grep -ivE '^opencc([[:space:]=<>!~]|$$)' scripts/gso-requirements.txt > $(GSO_VENV)/reqs.filtered.txt
+	$(GSO_PY) -m pip install -r $(GSO_VENV)/reqs.filtered.txt
+	$(GSO_PY) -m pip install opencc-python-reimplemented
+	$(GSO_PY) -m nltk.downloader averaged_perceptron_tagger_eng averaged_perceptron_tagger cmudict punkt punkt_tab
+	@$(GSO_PY) -c "import torch; print('torch present:', torch.__version__)" || { echo "FAIL: torch missing in $(GSO_VENV)"; exit 1; }
+	@echo "ok: $(GSO_VENV) has torch. Freeze below — capture into scripts/gso-requirements.txt provenance:"
+	@$(GSO_PY) -m pip freeze
+
+# Torch-free contract gate — runs under a STOCK python3 (no venv/network/models):
+#   * the wire/ERR-taxonomy + drift + minted-path + OK-after-write contract test
+#     (includes the shlex golden round-trip fixture #162 must satisfy), AND
+#   * the warmproof NEGATIVE DRY-CHECK — proves the AC5 determinism/distinctness oracle
+#     CAN go RED on subtle + gross warm-state corruption and stale-cache reuse (and
+#     stays GREEN on sub-threshold jitter) before it is ever trusted to pass green.
+gso-contract-test:
+	$(PYTHON3) scripts/gso_worker_contract_test.py
+	$(PYTHON3) scripts/gso_warmproof.py --negative-dry-check
+
+# AC5 warm-load CORRECTNESS smoke (needs .venv-gso + the real checkpoints + fetched
+# base models). Feeds A,B,A to ONE warm worker, buffering each OK's WAV bytes before
+# the next request (so A1 survives A2's idempotent overwrite on the shared content-
+# addressed path), then asserts: LOAD-once, non-silent 32 kHz, determinism A1~=A2,
+# distinct B!=A, and warm-vs-cold equivalence with DISTINCT GSO_OUT_DIRs. Latency is
+# an informational note, not a gate.
+gso-warmproof:
+	@test -x $(GSO_PY) || { echo "no $(GSO_VENV) — run 'make gso-worker-venv'"; exit 2; }
+	$(GSO_PY) scripts/gso_warmproof.py
