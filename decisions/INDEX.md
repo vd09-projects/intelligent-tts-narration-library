@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-27-gso-warm-load-chdir-repo-inert-config-keys
+    title: "GSO warm load needs os.chdir(GSO_REPO) into an external clone; the v2Pro TTS_Config sv_path/cnhubert keys are inert and were masked by chdir"
+    date: 2026-07-27
+    status: accepted
+    category: architecture
+    tags: [gso, gpt-sovits, warm-load, chdir, gso-repo, sv-path, cnhubert, inert-config-keys, stdout-wire-isolation, fixed-seed, determinism, offline, m1-pro, machine-run, issue-165, issue-162]
+    path: architecture/2026-07-27-gso-warm-load-chdir-repo-inert-config-keys.md
+    summary: "#165's M1-Pro machine run proved the #161 worker's config dict was copied from the runbook but DROPPED the runbook's os.chdir(REPO) — which had been MASKING several inert/hidden behaviors, so the warm load would not resolve. Fixes, all now explicit in _GsoPipeline._build(): (1) resolve an EXTERNAL GPT-SoVITS code clone via env GSO_REPO (default ~/repos/GPT-SoVITS-local), os.chdir into it + sys.path insert before importing GPT_SoVITS — load-bearing because GPT_SoVITS/sv.py uses CWD-relative imports (eres2net) + a module-global sv_path; code only, weights stay under assets/. (2) the v2Pro TTS_Config `sv_path` key is INERT (SV(device,is_half) takes no path arg; hasattr(cfg,'sv_path')=False) — worker overrides sv.sv_path to the fetched _base embedding. (3) TTS.py reads `cnhuhbert_base_path` (extra h) so the runbook's `cnhubert_base_path` was inert — fixed so CNHuBERT loads from _base. (4) GPT-SoVITS floods stdout, burying/losing the OK/ERR wire — worker preserves the real stdout for the wire + shunts fd 1 -> stderr, and run_loop uses readline() so an interactive caller can't deadlock on text-iterator read-ahead. (5) fixed seed=42 + runbook sampling params — GPT-SoVITS randomizes the seed otherwise, breaking the AC5 determinism/warm-vs-cold oracles (now RMS 0.0). REJECTED relying on the config-dict keys alone (runbook style) — proven to silently no-op without chdir. Binds #162: launch with GSO_REPO available, expect 32 kHz, read ONLY the fd-1 wire. Perf baseline (M1 Pro): cold ~17-22s (<=30s), warm/block ~3.6-3.8s (<=20s), peak RSS ~3.5GB (<=8GB); offline load succeeds with an empty HF cache."
   - id: 2026-07-27-gso-worker-wire-contract-rvc-shaped-not-verbatim
     title: "GSO worker wire contract is RVC-shaped but NOT verbatim — worker-minted content-addressed path, direct .ckpt/.pth, 32 kHz"
     date: 2026-07-27

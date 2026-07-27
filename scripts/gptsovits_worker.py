@@ -176,6 +176,17 @@ TEXT_LANG = "en"             # English only, phase one (CLAUDE.md)
 PROMPT_LANG = "en"
 SR_EXPECTED = 32000          # v2Pro emits 32 kHz directly; never resampled (CLAUDE.md)
 
+# Deterministic inference params (#165 AC5 machine-run finding): with NO seed passed,
+# GPT-SoVITS picks a RANDOM one ("Set seed to <rand>") — every request diverges, which
+# breaks the warm-load determinism oracle (A1 must ~= A2) and warm-vs-cold equivalence.
+# Pin a FIXED seed + the runbook's proven-good sampling params so repeat requests are
+# reproducible within the harness RMS tolerance (and quality matches the runbook).
+INFER_SEED = 42
+INFER_TOP_K = 15
+INFER_TOP_P = 1.0
+INFER_TEMPERATURE = 1.0
+INFER_REPETITION_PENALTY = 1.35
+
 # ── ERR taxonomy — CLOSED, append-only (same tokens as the RVC worker) ────────
 ERR_CATEGORIES = ("bad-args", "bad-voice", "read-failed", "infer-failed", "write-failed")
 _MSG_CAP = 300
@@ -274,6 +285,27 @@ def _atomic_write_wav(sample_rate: int, pcm_s16le: bytes, out_path: str) -> None
 # torch + the base models + the voice checkpoints (M1 Pro machine run).
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── External GPT-SoVITS code clone (never vendored — subprocess/licensing boundary) ─
+# The worker imports GPT_SoVITS.* from an EXTERNAL clone resolved at build time via env
+# GSO_REPO, defaulting to ~/repos/GPT-SoVITS-local (the runbook's location). Only the
+# CODE is reached from here; the model WEIGHTS come from assets/gptsovits-models. This
+# is the same subprocess/licensing boundary as torch itself — GPT-SoVITS's mixed-license
+# transitive stack is only ever spoken to across the process boundary, never linked.
+DEFAULT_GSO_REPO = os.path.expanduser("~/repos/GPT-SoVITS-local")
+
+
+def _resolve_gso_repo() -> str:
+    """Resolve the external GPT-SoVITS clone (env GSO_REPO, else the runbook default).
+    Raised here (not at module scope) so the torch-free wire/ERR/mint surface never
+    needs the clone present."""
+    repo = os.environ.get("GSO_REPO", DEFAULT_GSO_REPO)
+    if not os.path.isdir(os.path.join(repo, "GPT_SoVITS", "TTS_infer_pack")):
+        raise FileNotFoundError(
+            f"GPT-SoVITS code clone not found at {repo!r} — set env GSO_REPO or clone "
+            "https://github.com/RVC-Boss/GPT-SoVITS there (needed for warm load)")
+    return repo
+
+
 def _assert_torch_present() -> None:
     """Startup guard (inverse of the RVC worker). Torch MUST be importable — the
     GSO worker infers with torch. Absent torch -> FATAL 78 (EX_CONFIG, "venv
@@ -302,8 +334,26 @@ class _GsoPipeline:
         self._pipeline = None  # the TTS object, built on first synthesize()
 
     def _build(self):
-        """Import torch + GPT-SoVITS and construct the TTS pipeline ONCE. Faithful
-        to the v2Pro runbook. Runtime-gated (needs torch + real artifacts)."""
+        """Import torch + GPT-SoVITS and construct the TTS pipeline ONCE. Faithful to
+        the v2Pro runbook — INCLUDING its os.chdir(REPO) + sys.path preamble, which the
+        machine run (#165) proved is LOAD-BEARING, not optional: without it neither
+        `GPT_SoVITS.*` nor the CWD-relative loads inside GPT_SoVITS/sv.py resolve.
+        Runtime-gated (needs torch + the GPT-SoVITS clone + real artifacts)."""
+        # MPS fallback for the few ops without an MPS kernel (runbook §1).
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+        # Put the external GPT-SoVITS clone on sys.path AND chdir into it. sv.py does
+        # `sys.path.append(f"{os.getcwd()}/GPT_SoVITS/eres2net")` + hardcodes a
+        # CWD-relative module-global `sv_path`, so the runbook's os.chdir(REPO) is
+        # required (#165 machine-run finding). Only the CODE comes from the clone; all
+        # WEIGHTS are absolute paths under <models_root>/<base_root>, so chdir is safe
+        # (out_base was already abspath'd at startup, before this runs).
+        repo = _resolve_gso_repo()
+        os.chdir(repo)
+        for p in (repo, os.path.join(repo, "GPT_SoVITS")):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
         import torch  # noqa: F401
         from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 
@@ -323,6 +373,16 @@ class _GsoPipeline:
         # v2Pro speaker-verification embedding (sv/pretrained_eres2netv2w24s4ep4.ckpt).
         sv_ckpt = os.path.join(self.base_root, "sv", "pretrained_eres2netv2w24s4ep4.ckpt")
 
+        # sv_path RESOLUTION (#165 "sv_path confirm" finding): v2Pro's TTS_Config has NO
+        # functional `sv_path` key — GPT_SoVITS/sv.py loads the SV embedding from a
+        # MODULE-GLOBAL `sv_path` (CWD-relative default) and TTS.py calls
+        # `SV(device, is_half)` with no path arg. To load the FETCHED _base embedding
+        # deterministically (not the clone's own copy), override that module global
+        # here — after importing TTS (which did `from sv import SV`), before TTS(config)
+        # constructs it. `import sv` finds the same already-loaded module.
+        import sv as _sv  # noqa: E402 — same module TTS.py imported
+        _sv.sv_path = sv_ckpt
+
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         config = TTS_Config({
             "custom": {
@@ -331,11 +391,13 @@ class _GsoPipeline:
                 "version": "v2Pro",
                 "t2s_weights_path": gpt_ckpt,
                 "vits_weights_path": sovits_pth,
-                "cnhubert_base_path": cnhubert,
+                # TTS.py reads `cnhuhbert_base_path` (that spelling). The runbook's
+                # `cnhubert_base_path` was an inert key masked by chdir; use the real
+                # one so cnhubert loads from _base, not the CWD-relative default (#165).
+                "cnhuhbert_base_path": cnhubert,
                 "bert_base_path": bert,
-                # v2Pro consumes the sv embedding; exact attribute confirmed on the
-                # machine run (see build artifact: pending-machine-run). The runbook
-                # wires it via the sv model path below.
+                # Kept for intent/forward-compat though inert in this version — the
+                # sv.sv_path override above is what actually loads the embedding.
                 "sv_path": sv_ckpt,
             }
         })
@@ -362,6 +424,16 @@ class _GsoPipeline:
             "prompt_lang": PROMPT_LANG,
             "text_split_method": TEXT_SPLIT_METHOD,  # cut4 (gotcha 7)
             "return_fragment": False,
+            # FIXED seed + runbook sampling params -> reproducible warm/cold output
+            # (#165 AC5). Without an explicit seed GPT-SoVITS randomizes per request.
+            "seed": INFER_SEED,
+            "top_k": INFER_TOP_K,
+            "top_p": INFER_TOP_P,
+            "temperature": INFER_TEMPERATURE,
+            "repetition_penalty": INFER_REPETITION_PENALTY,
+            "batch_size": 1,
+            "parallel_infer": True,
+            "split_bucket": False,
         })
         sample_rate, audio = next(gen)  # single yield (return_fragment=False)
 
@@ -527,22 +599,44 @@ class _Worker:
 # Protocol loop + startup
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _emit(response: str) -> None:
-    """Print one response line + flush. BrokenPipe propagates (clean exit 0)."""
-    sys.stdout.write(response + "\n")
+def _isolate_wire_stdout():
+    """Preserve the REAL stdout (fd 1) for the OK/ERR wire, then point fd 1 at stderr
+    so the chatty GPT-SoVITS stack — which prints load/inference progress COPIOUSLY to
+    stdout ("Loading VITS weights…", "Set seed to…", tqdm bars) — cannot corrupt the
+    wire. Returns a line-buffered text stream bound to the preserved fd; it is the ONLY
+    thing that may ever write an OK/ERR line.
+
+    #165 machine-run finding: without this the OK line is buried under ~5KB of library
+    chatter (or lost to block-buffering), so a reader taking the FIRST stdout line gets
+    "Loading Text2Semantic weights…" instead of "OK <path>". Set up BEFORE any heavy
+    import. Torch-free-safe: with no chatty library loaded it is a harmless fd shuffle
+    and the wire still carries exactly the OK/ERR lines the contract test reads."""
     sys.stdout.flush()
+    wire_fd = os.dup(sys.stdout.fileno())               # private handle to real stdout
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())   # fd 1 -> stderr (noise sink)
+    return os.fdopen(wire_fd, "w", buffering=1)         # line-buffered wire
 
 
-def run_loop(worker: "_Worker") -> int:
-    """Service stdin line by line until EOF. One response per input line — a blank
-    line is NOT skipped: it shlex-splits to 0 tokens and yields a natural
-    `ERR bad-args`, preserving response-count == request-count. Returns the process
-    exit code (0 on EOF)."""
-    for line in sys.stdin:
-        line = line.rstrip("\n")
-        response = worker.handle(line)   # exactly one line back
-        _emit(response)
-    return 0
+def _emit(wire, response: str) -> None:
+    """Write one response line to the PRESERVED wire + flush. BrokenPipe propagates
+    (clean exit 0)."""
+    wire.write(response + "\n")
+    wire.flush()
+
+
+def run_loop(worker: "_Worker", wire) -> int:
+    """Service stdin line by line until EOF. Uses readline() (NOT `for line in
+    sys.stdin`) so an INTERACTIVE caller — the warmproof harness / #162 — that writes
+    one request then blocks for its response never deadlocks on text-iterator
+    read-ahead. One response per input line: a blank line is NOT skipped — it
+    shlex-splits to 0 tokens and yields a natural `ERR bad-args`, preserving
+    response-count == request-count. Returns the process exit code (0 on EOF)."""
+    while True:
+        line = sys.stdin.readline()
+        if not line:                     # '' == EOF (a blank line is '\n', not '')
+            return 0
+        response = worker.handle(line.rstrip("\n"))   # exactly one line back
+        _emit(wire, response)
 
 
 def _resolve_out_base() -> str:
@@ -607,6 +701,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     base_root = os.path.join(args.models_root, "_base")
 
+    # Preserve the real stdout for the wire and shunt fd 1 -> stderr BEFORE any heavy
+    # import can pollute it (#165). All OK/ERR lines go through `wire`; FATAL/OUT_BASE/
+    # LOAD + all library chatter go to stderr.
+    wire = _isolate_wire_stdout()
+
     # Startup (torch presence + artifact resolve + out-base) is fatal-if-it-raises:
     # emit ONE clean FATAL line + a stable nonzero exit, never a raw traceback. #162
     # reads the nonzero exit.
@@ -628,13 +727,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"OUT_BASE {out_base}", file=sys.stderr, flush=True)
 
     try:
-        return run_loop(worker)
+        return run_loop(worker, wire)
     except BrokenPipeError:
         # Parent closed the pipe — clean exit 0. Silence the final flush-on-exit
-        # BrokenPipe by redirecting stdout to devnull.
+        # BrokenPipe by redirecting the WIRE fd (the one that broke) to devnull.
         try:
             devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, sys.stdout.fileno())
+            os.dup2(devnull, wire.fileno())
         except OSError:
             pass
         return 0

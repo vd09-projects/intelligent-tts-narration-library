@@ -34,8 +34,9 @@ stale-cache stub. This proves the oracle CAN fail (and does not false-positive)
 BEFORE it is trusted to pass green on real artifacts.
 
 Real mode (default) needs `.venv-gso` + the real checkpoints + fetched base models;
-it is machine-gated (see the build artifact: pending-machine-run). The negative
-dry-check needs neither and is the in-session proof.
+it is machine-gated and was PROVEN on the M1 Pro in #165 (PASS: LOAD-once, non-silent
+32 kHz, determinism RMS 0.0, warm-vs-cold RMS 0.0). The negative dry-check needs
+neither and is the in-session proof.
 
 Usage:
     python3 scripts/gso_warmproof.py --negative-dry-check      # torch-free self-test
@@ -300,7 +301,8 @@ def run_real_warmproof(models_root: str) -> int:
     transcript_path = os.path.join(voice_dir, "ref_transcript.txt")
     if not os.path.isfile(transcript_path):
         print(f"gso-warmproof: packaged transcript missing at {transcript_path} — "
-              f"place the real voice artifacts first (pending-machine-run).", file=sys.stderr)
+              f"place/restore the real voice artifacts first (see "
+              f"assets/gptsovits-models/README.md).", file=sys.stderr)
         return 2
     with open(transcript_path, encoding="utf-8") as fh:
         prompt_text = " ".join(fh.read().split())
