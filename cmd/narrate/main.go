@@ -445,7 +445,10 @@ func (a flagSet) validate() error {
 	// cmd/narrate/listen_oto.go) is deferred to #154.
 	if a.Listen {
 		if info, rerr := pipeline.ResolveVoice(a.effectiveVoice()); rerr == nil && info.RequiresWorker {
-			return fmt.Errorf("--listen cannot be combined with --voice=%s (RVC is 40 kHz; listen plays through a fixed 24 kHz context — pending dynamic oto rate, #154)", a.effectiveVoice())
+			// Message generalized off the roster-resolved rate (RVC 40 kHz, GSO 32 kHz,
+			// any future worker-backed voice) instead of hardcoding "RVC is 40 kHz" —
+			// correct for every requires_worker voice. Gate unchanged (RequiresWorker).
+			return fmt.Errorf("--listen cannot be combined with --voice=%s (worker-backed voices render at %d kHz; listen plays through a fixed 24 kHz context — pending dynamic oto rate, #154)", a.effectiveVoice(), info.Format.SampleRate/1000)
 		}
 	}
 	return nil
