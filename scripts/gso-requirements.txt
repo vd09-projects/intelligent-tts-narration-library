@@ -1,0 +1,77 @@
+# scripts/gso-requirements.txt — GPT-SoVITS (GSO) torch inference worker (issue #161)
+#
+# The pinned dependency set for scripts/gptsovits_worker.py. Installed into a
+# DEDICATED venv (.venv-gso) by `make gso-worker-venv` — NOT the shared .venv (kokoro-
+# onnx) and NOT .venv-rvc (which is torch-FREE). This worker is the INVERSE of the RVC
+# worker: it REQUIRES torch and asserts torch PRESENT at startup (torch is the engine
+# here). Torch stays isolated to this subprocess venv and is NEVER linked into any Go
+# binary — the subprocess boundary is what keeps it (and the mixed-license transitive
+# GPT-SoVITS stack) out of the library. Python 3.10–3.12 ONLY (funasr/pyopenjtalk/
+# jieba_fast target 3.10–3.12) — NEVER system 3.14.
+#
+# HARD RULE: every line is an exact `==` pin. Never a `>=`, never a bare name — an
+# unpinned dep makes `make gso-warmproof` non-reproducible.
+#
+# ── Provenance ──────────────────────────────────────────────────────────────
+# The torch trio (torch/torchaudio/torchcodec) is RECORDED from the approved v3 plan /
+# GPT-SoVITS v2Pro M1-Pro runbook as the versions that produced working inference:
+#     torch 2.13.0 (mac wheel) · torchaudio 2.11.0 · torchcodec 0.15.0
+# The remaining deps below are the GPT-SoVITS-own runtime set minus opencc (see gotcha
+# 2), pinned to best-known py3.11-compatible releases and marked PENDING re-pin. Per
+# the plan's lost-venv mitigation, the AUTHORITATIVE capture is: run
+# `make gso-worker-venv` (which prints `pip freeze`), then replace EVERY line below
+# with the exact frozen version (ideally the full transitive closure) and update this
+# header to "re-derived <date>". Do NOT treat the PENDING pins as final until then.
+#
+# ── The 7 gotchas that touch this file / the venv build ─────────────────────
+#   1 (install order): torch + torchaudio must be installed FIRST — baked as an
+#     explicit first `pip install` step in `make gso-worker-venv`, before this file's
+#     rest resolves. (They are listed here too, for provenance; already-satisfied.)
+#   2 (opencc build fails on arm64): `opencc` is DELIBERATELY ABSENT from this file.
+#     The venv target filters `^opencc` out and installs `opencc-python-reimplemented`
+#     (a drop-in with the SAME `opencc` import name) instead — listed below.
+#   3 (torchcodec for torchaudio.load): torchcodec==0.15.0 is pinned here (arm64
+#     wheel; needs Homebrew ffmpeg on PATH — an environmental prereq noted in the
+#     README, not a pip dep).
+#   4 (NLTK data): downloaded at venv BUILD time by the target (not a pip dep here) so
+#     the worker never hits the network mid-job.
+#   5/6/7 are runtime request-validation gotchas enforced in the worker, not deps.
+#
+# ── License note (subprocess boundary is load-bearing) ──────────────────────
+# GPT-SoVITS itself is MIT, but its transitive set (funasr, pyopenjtalk, jieba_fast,
+# and others) carries MIXED and in places restrictive/copyleft-adjacent licenses. The
+# subprocess boundary — torch + this stack are only ever SPOKEN TO over stdin/stdout,
+# never imported/linked into the Go binary — is what keeps the library unencumbered.
+# Same reasoning as the Piper-GPL gotcha in CLAUDE.md. See assets/gptsovits-models/
+# README.md for the full license section.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# --- torch trio: RECORDED from the runbook (install order gotcha 1: FIRST) -----
+torch==2.13.0
+torchaudio==2.11.0
+torchcodec==0.15.0
+
+# --- opencc drop-in (gotcha 2): reimplemented build, same `opencc` import name ---
+opencc-python-reimplemented==0.1.7
+
+# --- audio I/O (PENDING re-pin from `make gso-worker-venv` freeze) --------------
+soundfile==0.13.1
+numpy==2.1.3
+
+# --- GPT-SoVITS-own runtime deps, minus opencc (PENDING re-pin from freeze) -----
+# These are the runtime (inference) subset of GPT-SoVITS's requirements. The exact
+# transitive closure + versions MUST be captured from the venv freeze on the machine
+# run and pinned here; the set below is the known-needed core.
+librosa==0.10.2
+numba==0.60.0
+pyopenjtalk==0.4.1
+g2p-en==2.1.0
+jieba-fast==0.53
+transformers==4.43.4
+pytorch-lightning==2.4.0
+ffmpeg-python==0.2.0
+cn2an==0.5.22
+pypinyin==0.53.0
+nltk==3.9.1
+funasr==1.1.6
+x-transformers==1.44.4
