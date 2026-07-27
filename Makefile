@@ -1,9 +1,10 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof gso-sanity
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
 RVC_SANITY_OUT ?= /tmp/rvc-sanity-$(shell date +%s)
 VOICE_SANITY_OUT ?= /tmp/voice-sanity-$(shell date +%s)
+GSO_SANITY_OUT ?= /tmp/gso-sanity-$(shell date +%s)
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
@@ -70,6 +71,7 @@ help:
 	@echo "  gso-worker-venv        — build .venv-gso (python3.11) from scripts/gso-requirements.txt; gotchas 1-4 baked; asserts torch PRESENT (inverse of RVC) + prints freeze"
 	@echo "  gso-contract-test      — torch-free wire/ERR-taxonomy contract test + shlex golden round-trip + warmproof negative dry-check (stock python3; no venv/network/models)"
 	@echo "  gso-warmproof          — AC5 warm-load CORRECTNESS smoke: LOAD-once, non-silent 32 kHz, A,B,A determinism (per-response byte-buffering) + distinct B!=A, warm-vs-cold (distinct dirs); needs .venv-gso + real artifacts"
+	@echo "  gso-sanity             — narrate \$$SAMPLE at cool-jahns-gso → 32 kHz audio.wav + manifest under \$$GSO_SANITY_OUT (#162 AC5 Timeline smoke; needs the GSO worker: .venv-gso + gso-fetch-base + a GSO_REPO clone)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -355,12 +357,13 @@ rvc-sanity:
 # (honesty rule). The Kokoro leg proves manifest.voice records the engine id
 # (am_michael, underscore) at 24 kHz; the RVC legs prove the slug at 40 kHz.
 voice-sanity:
-	@mkdir -p $(VOICE_SANITY_OUT)/am-michael $(VOICE_SANITY_OUT)/cool-jahns $(VOICE_SANITY_OUT)/confident-neal
+	@mkdir -p $(VOICE_SANITY_OUT)/am-michael $(VOICE_SANITY_OUT)/cool-jahns $(VOICE_SANITY_OUT)/confident-neal $(VOICE_SANITY_OUT)/cool-jahns-gso
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/am-michael --voice am-michael
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/cool-jahns --voice cool-jahns
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/confident-neal --voice confident-neal
-	@echo "Voice sanity: wrote am-michael (24 kHz Kokoro) + cool-jahns/confident-neal (40 kHz RVC) under $(VOICE_SANITY_OUT)"
-	@echo "Verify (#147): afplay each audio.wav; confirm manifest.json \"voice\" == am_michael (Kokoro engine id) / the RVC slug (D-D)."
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(VOICE_SANITY_OUT)/cool-jahns-gso --voice cool-jahns-gso
+	@echo "Voice sanity: wrote am-michael (24 kHz Kokoro) + cool-jahns/confident-neal (40 kHz RVC) + cool-jahns-gso (32 kHz GPT-SoVITS) under $(VOICE_SANITY_OUT)"
+	@echo "Verify (#147/#162): afplay each audio.wav; confirm manifest.json \"voice\" == am_michael (Kokoro engine id) / the RVC/GSO slug (D-D)."
 
 # ---- MCP by-ear verify through the speak 'voice' arg (#147) ----
 # Drives the production runSpeak (real pipeline + Kokoro + RVC worker + afplay)
@@ -428,3 +431,16 @@ gso-contract-test:
 gso-warmproof:
 	@test -x $(GSO_PY) || { echo "no $(GSO_VENV) — run 'make gso-worker-venv'"; exit 2; }
 	$(GSO_PY) scripts/gso_warmproof.py
+
+# gso-sanity (#162 AC5) renders $(SAMPLE) at the GSO peer voice through the persistent
+# sink → a 32 kHz audio.wav + manifest for the by-ear /verify. Real end-to-end: needs
+# the GSO worker stack (make gso-worker-venv + make gso-fetch-base + a GSO_REPO clone
+# of GPT-SoVITS). A missing worker STOPS non-zero (honesty rule: ErrWorkerMissing,
+# never a silent Kokoro fallback). The unit suite (make test) does NOT depend on this
+# — it drives the torch-free fake worker; this target is the manual Timeline-correctness
+# smoke only (pronunciation quality is #164, not asserted here).
+gso-sanity:
+	@mkdir -p $(GSO_SANITY_OUT)/cool-jahns-gso
+	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(GSO_SANITY_OUT)/cool-jahns-gso --voice cool-jahns-gso
+	@echo "GSO sanity: wrote a 32 kHz cool-jahns-gso render under $(GSO_SANITY_OUT)"
+	@echo "Verify (#162 AC5): afplay $(GSO_SANITY_OUT)/cool-jahns-gso/audio.wav; confirm one BlockTiming per plan block, monotonic non-overlapping offsets, EndMs-StartMs byte-consistent with the 32 kHz WAVs, and manifest.json \"voice\" == cool-jahns-gso (Timeline correctness only — pronunciation is #164)."

@@ -7,6 +7,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/gptsovits"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 )
@@ -44,6 +45,19 @@ func TestBuildRenderer(t *testing.T) {
 			if format != rvc.OutputFormat() {
 				t.Errorf("BuildRenderer(%q) format = %+v, want %+v (40 kHz)", slug, format, rvc.OutputFormat())
 			}
+		}
+	})
+
+	t.Run("GSO slug → peer engine at 32kHz", func(t *testing.T) {
+		r, format, err := pipeline.BuildRenderer("cool-jahns-gso")
+		if err != nil {
+			t.Fatalf("BuildRenderer(cool-jahns-gso) err = %v, want nil", err)
+		}
+		if _, ok := r.(*gptsovits.Engine); !ok {
+			t.Errorf("BuildRenderer(cool-jahns-gso) renderer type = %T, want *gptsovits.Engine (peer, not decorator)", r)
+		}
+		if format != gptsovits.OutputFormat() {
+			t.Errorf("BuildRenderer(cool-jahns-gso) format = %+v, want %+v (32 kHz)", format, gptsovits.OutputFormat())
 		}
 	})
 

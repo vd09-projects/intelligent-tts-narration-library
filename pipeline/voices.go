@@ -29,6 +29,7 @@ import (
 
 	"github.com/vd09-projects/intelligent-tts-narration-library/plan"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/gptsovits"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 )
 
@@ -44,14 +45,23 @@ const (
 	// EngineRVC is the render/rvc decorator over Kokoro (40 kHz mono, needs the
 	// RVC worker subprocess).
 	EngineRVC
+	// EngineGSO is the render/gptsovits PEER engine (GPT-SoVITS, 32 kHz mono, needs
+	// the GSO worker subprocess). Unlike EngineRVC it wraps nothing — it is a source
+	// engine like Kokoro, and like Kokoro it is voice-neutral (the slug flows via
+	// RenderVoiceID, not bound at construction).
+	EngineGSO
 )
 
 // label is the human-facing engine tag used in --voice help text.
 func (e VoiceEngine) label() string {
-	if e == EngineRVC {
+	switch e {
+	case EngineRVC:
 		return "RVC"
+	case EngineGSO:
+		return "GPT-SoVITS"
+	default:
+		return "Kokoro"
 	}
-	return "Kokoro"
 }
 
 // voiceEntry is one row of the unified roster.
@@ -85,6 +95,10 @@ var roster = []voiceEntry{
 	{Slug: "am-michael", Engine: EngineKokoro, KokoroVoiceID: "am_michael", RequiresWorker: false},
 	{Slug: "cool-jahns", Engine: EngineRVC, KokoroVoiceID: "", RequiresWorker: true},
 	{Slug: "confident-neal", Engine: EngineRVC, KokoroVoiceID: "", RequiresWorker: true},
+	// GSO peer engine (#162): voice-neutral like Kokoro, so KokoroVoiceID reuses the
+	// field as the engine-native voice id (the slug the gptsovits engine resolves
+	// from RenderOptions.Voice) — NOT a Kokoro id and NOT the meaningful empty RVC uses.
+	{Slug: "cool-jahns-gso", Engine: EngineGSO, KokoroVoiceID: "cool-jahns-gso", RequiresWorker: true},
 }
 
 // defaultVoiceSlug is the phase-one default (female), byte-identical to today's
@@ -159,10 +173,14 @@ type VoiceInfo struct {
 // format derives the entry's audio format from its engine — never a copied
 // 24000/40000 literal, so the format SoT stays in render / render/rvc.
 func (e voiceEntry) format() plan.AudioFormat {
-	if e.Engine == EngineRVC {
+	switch e.Engine {
+	case EngineRVC:
 		return rvc.OutputFormat()
+	case EngineGSO:
+		return gptsovits.OutputFormat()
+	default:
+		return render.DefaultFormat()
 	}
-	return render.DefaultFormat()
 }
 
 // renderVoiceID is the NarrateRequest.Voice hint: the Kokoro engine id for a
@@ -175,9 +193,10 @@ func (e voiceEntry) renderVoiceID() string {
 }
 
 // manifestVoice is the manifest.voice provenance id (D-D): the Kokoro engine id
-// for a Kokoro voice; the RVC slug for an RVC voice.
+// for a Kokoro voice; the slug (the character voice the user hears) for an RVC or
+// GSO voice.
 func (e voiceEntry) manifestVoice() string {
-	if e.Engine == EngineRVC {
+	if e.Engine == EngineRVC || e.Engine == EngineGSO {
 		return e.Slug
 	}
 	return e.KokoroVoiceID
