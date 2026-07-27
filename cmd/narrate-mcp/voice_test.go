@@ -18,6 +18,7 @@ import (
 	"github.com/vd09-projects/intelligent-tts-narration-library/intelligence"
 	"github.com/vd09-projects/intelligent-tts-narration-library/pipeline"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render"
+	"github.com/vd09-projects/intelligent-tts-narration-library/render/gptsovits"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/rvc"
 	"github.com/vd09-projects/intelligent-tts-narration-library/render/sherpa"
 	"github.com/vd09-projects/intelligent-tts-narration-library/sink/ephemeral"
@@ -35,6 +36,7 @@ func TestSpeakArgs_Validate_Voice(t *testing.T) {
 		{"am-michael", false}, // Kokoro roster slug (#156)
 		{"cool-jahns", false},
 		{"confident-neal", false},
+		{"cool-jahns-gso", false}, // GSO peer roster slug (#162/#163) — accepted
 		{"bogus", true},
 		{"af_bella", true}, // an underscore ENGINE id is not a roster slug
 	}
@@ -134,6 +136,28 @@ func TestNewFilePipeline_VoiceRoutesRendererAndFormat(t *testing.T) {
 		t.Fatalf("sink = %T, want *persistent.WAVFileSink", pp.Sink)
 	} else if ws.ExpectedFormat != render.DefaultFormat() {
 		t.Errorf("WAVFile ExpectedFormat = %+v, want 24 kHz default %+v (no WithExpectedFormat)", ws.ExpectedFormat, render.DefaultFormat())
+	}
+}
+
+// #163 — a GSO voice resolves through BuildRenderer to the gptsovits PEER engine
+// (not a decorator) AND a 32 kHz WAVFile ExpectedFormat. Same assertion depth as
+// the RVC row above: the concrete engine type + the explicit 32 kHz format, not a
+// generic IsVoice pass-through. gptsovits.New spawns no subprocess at construction.
+func TestNewFilePipeline_GSOVoiceRoutesEngineAndFormat(t *testing.T) {
+	t.Parallel()
+
+	gsoPipe := newFilePipeline(t.TempDir(), "/tmp/out.wav", speakArgs{Level: 1, Voice: "cool-jahns-gso"}, file.New(), nil)
+	p, ok := gsoPipe.(*pipeline.Pipeline)
+	if !ok {
+		t.Fatalf("newFilePipeline returned %T, want *pipeline.Pipeline", gsoPipe)
+	}
+	if _, ok := p.Renderer.(*gptsovits.Engine); !ok {
+		t.Errorf("with GSO voice, renderer = %T, want *gptsovits.Engine (peer, not decorator)", p.Renderer)
+	}
+	if ws, ok := p.Sink.(*persistent.WAVFileSink); !ok {
+		t.Fatalf("sink = %T, want *persistent.WAVFileSink", p.Sink)
+	} else if ws.ExpectedFormat != gptsovits.OutputFormat() {
+		t.Errorf("GSO WAVFile ExpectedFormat = %+v, want 32 kHz %+v", ws.ExpectedFormat, gptsovits.OutputFormat())
 	}
 }
 
