@@ -32,7 +32,7 @@ func TestFlagSet_Validate_Voice(t *testing.T) {
 		{"cool-jahns", false},     // known RVC slug
 		{"confident-neal", false}, // known RVC slug
 		{"cool-jahns-gso", false}, // GSO peer roster slug (#162/#163) — accepted, resolves
-		{"bogus", true},           // unknown slug → caller-error (ErrUnknownVoice, no silent fallback)
+		{"bogus", true},           // unknown slug → rejected here (err != nil only); the ErrUnknownVoice class is pinned in pipeline/build_renderer_test.go
 		{"af_bella", true},        // an underscore ENGINE id is not a roster slug
 	}
 	for _, tc := range cases {
