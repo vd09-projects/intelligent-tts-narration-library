@@ -26,4 +26,14 @@ fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 
+# OFFLINE POSTURE (#165 offline-load confirm): all warm-load inputs are local files
+# (checkpoints + _base BERT/HuBERT/SV), so the transitive HF stack (transformers /
+# huggingface_hub) must never phone home. Pin the offline flags so the local-only
+# posture is PROVABLE — a warm load that still succeeds under these has demonstrably
+# no network dependency. Callers may override by exporting them =0 before invoking.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+# MPS fallback for the few ops lacking an MPS kernel (runbook §1); worker also sets it.
+export PYTORCH_ENABLE_MPS_FALLBACK="${PYTORCH_ENABLE_MPS_FALLBACK:-1}"
+
 exec python3 "$ROOT/scripts/gptsovits_worker.py" "$@"

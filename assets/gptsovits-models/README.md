@@ -56,6 +56,32 @@ guardrail, not transcript enforcement** — the wire value still wins.
   ffmpeg (`brew install ffmpeg`). Environmental prereq (gotcha), not a pip dep.
 - **Python 3.10–3.12 only** (never system 3.14) — `funasr`/`pyopenjtalk`/`jieba_fast`
   target 3.10–3.12. The venv is built from `$(PYTHON311)`.
+- **GPT-SoVITS code clone on disk** — the worker imports `GPT_SoVITS.*` from an
+  EXTERNAL clone (never vendored here; subprocess/licensing boundary), resolved via env
+  `GSO_REPO`, default `~/repos/GPT-SoVITS-local` (`git clone
+  https://github.com/RVC-Boss/GPT-SoVITS`). Only the CODE comes from the clone; all
+  WEIGHTS come from this dir. See `docs/gpt-sovits-inference-runbook.md`.
+
+### Machine-run findings (#165 — how warm load actually resolves the base models)
+The M1-Pro acceptance run surfaced that the v2Pro config keys the runbook passes are
+partly inert and are masked only by its `os.chdir(REPO)`; the worker now handles all of
+this explicitly (see `scripts/gptsovits_worker.py::_GsoPipeline._build`):
+- **chdir + sys.path is load-bearing** — `GPT_SoVITS/sv.py` hardcodes CWD-relative
+  paths (`sys.path.append(f"{os.getcwd()}/GPT_SoVITS/eres2net")` + a module-global
+  `sv_path`), so the worker `os.chdir(GSO_REPO)` + inserts it on `sys.path` before
+  importing GPT-SoVITS.
+- **`cnhubert_base_path` is the wrong key** — TTS.py reads `cnhuhbert_base_path` (extra
+  `h`); the worker uses the correct spelling so CNHuBERT loads from `_base/`.
+- **TTS_Config `sv_path` is INERT** — v2Pro's `SV(device, is_half)` takes no path arg;
+  the SV embedding loads from `sv.py`'s module-global `sv_path`. The worker overrides
+  `sv.sv_path` to `_base/sv/pretrained_eres2netv2w24s4ep4.ckpt` so the fetched embedding
+  is used deterministically.
+- **Fixed inference seed** — GPT-SoVITS randomizes the seed when none is passed; the
+  worker pins `seed=42` + the runbook sampling params so warm output is reproducible.
+- **stdout is a noise sink** — GPT-SoVITS prints copiously to stdout; the worker
+  preserves the real stdout for the OK/ERR wire and shunts fd 1 → stderr.
+- **Offline-provable** — `scripts/gso` pins `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`;
+  warm load succeeds with an empty HF cache (nothing is fetched).
 
 ## Setup
 ```bash
