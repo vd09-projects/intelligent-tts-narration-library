@@ -86,7 +86,14 @@ class BaselineError(RuntimeError):
 
 
 # ── plan.json → per-block spoken text (faithful port of gptsovits.go spokenTextFor) ──
+# NO-PARITY PORT: this is a deliberate hand-maintained port of spokenTextFor from
+# render/gptsovits/gptsovits.go:339 (the Go source of truth). Keep the two in sync
+# MANUALLY — per the #164 no-parity decision nothing automated catches drift between
+# this port, its sibling in scripts/gso_g2p_dump.py, and the Go original.
 def spoken_text_for(block: dict) -> str:
+    # DIVERGENCE from Go: gptsovits.go:341-343 ERRORS on a refused block whose
+    # Refusal.Message is empty (ErrMalformedPlan); this port instead yields "" and the
+    # caller skips the block. Deliberate — the ports never raise on a malformed plan.
     if block.get("status") == STATUS_REFUSED:
         refusal = block.get("refusal") or {}
         return (refusal.get("message") or "").strip()
