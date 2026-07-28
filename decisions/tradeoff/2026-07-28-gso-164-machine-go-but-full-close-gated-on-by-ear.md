@@ -7,6 +7,27 @@
 | Category | tradeoff         |
 | Tags     | gso, gpt-sovits, go-no-go, by-ear, peak-rss, ram-ceiling, latency, g2p-en, pronunciation-ceiling, mcp-blocked, honesty-over-optimism, cool-jahns-gso, issue-164 |
 
+## Update 2026-07-29 — AC2 unblocked inline (supersedes the "AC2 BLOCKED" snapshot below)
+
+The AC2 blocker was a renderer per-block timeout that was too short for a legit
+long verbatim-prose block, and the smoke test hardcoding its source. Per user
+direction, both were folded into PR #170 **inline** this session rather than
+deferred to follow-ups:
+
+- `render/gptsovits/config.go`: `defaultPerBlockTimeout` **30s → 5min**
+  (first-block 45s → 6min, wall-clock 10min → 15min). Generous-local bound — a
+  genuinely stuck worker still errors, without falsely killing the measured
+  161s worst-case legit block. Latency stays informational, never a gate.
+- `cmd/narrate-mcp/mcp_manual_smoke_test.go`: added `NARRATE_SMOKE_SOURCE`
+  override (+ `MCP_SOURCE` Makefile var) so the MCP by-ear can target a short
+  doc.
+
+Result: `make mcp-voice-sanity MCP_VOICE=cool-jahns-gso MCP_SOURCE=<short doc>`
+now **PASSES** (65.51s, 5 blocks voiced through the GSO peer via the MCP `speak`
+path). **AC2 is now STAGED, pending human ears — same status as AC1**, not
+blocked. The go/no-go verdict below is unchanged (GO on the RAM gate). The two
+g2p_en pronunciation ceilings remain documented-only, not folded in.
+
 ## Context
 
 #164 (GSO P4) is the go/no-go gate + verify close-out of the GPT-SoVITS integration —
