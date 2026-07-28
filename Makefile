@@ -1,10 +1,11 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof gso-sanity
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof gso-sanity gso-perf-baseline
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
 RVC_SANITY_OUT ?= /tmp/rvc-sanity-$(shell date +%s)
 VOICE_SANITY_OUT ?= /tmp/voice-sanity-$(shell date +%s)
 GSO_SANITY_OUT ?= /tmp/gso-sanity-$(shell date +%s)
+GSO_PERF_OUT ?= /tmp/gso-perf-$(shell date +%s)
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
@@ -72,6 +73,9 @@ help:
 	@echo "  gso-contract-test      — torch-free wire/ERR-taxonomy contract test + shlex golden round-trip + warmproof negative dry-check (stock python3; no venv/network/models)"
 	@echo "  gso-warmproof          — AC5 warm-load CORRECTNESS smoke: LOAD-once, non-silent 32 kHz, A,B,A determinism (per-response byte-buffering) + distinct B!=A, warm-vs-cold (distinct dirs); needs .venv-gso + real artifacts"
 	@echo "  gso-sanity             — narrate \$$SAMPLE at cool-jahns-gso → 32 kHz audio.wav + manifest under \$$GSO_SANITY_OUT (#162 AC5 Timeline smoke; needs the GSO worker: .venv-gso + gso-fetch-base + a GSO_REPO clone)"
+	@echo ""
+	@echo "GPT-SoVITS go/no-go evidence (#164 — SURFACES/STAGES machine evidence for the human gate; NEVER self-verifies by ear):"
+	@echo "  gso-perf-baseline      — OFFICIAL AC4 baseline: drive the warm worker over \$$SAMPLE, record cold/warm-per-block/peak-RSS vs ceilings (cold 30s / warm ~20s INFORMATIONAL, peak-RSS 8GB go/no-go). NEEDS the .venv-gso worker (real numbers only; absent worker → AC4 UNSATISFIED)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -444,3 +448,21 @@ gso-sanity:
 	go run ./cmd/narrate --file $(SAMPLE) --sink persistent --out $(GSO_SANITY_OUT)/cool-jahns-gso --voice cool-jahns-gso
 	@echo "GSO sanity: wrote a 32 kHz cool-jahns-gso render under $(GSO_SANITY_OUT)"
 	@echo "Verify (#162 AC5): afplay $(GSO_SANITY_OUT)/cool-jahns-gso/audio.wav; confirm one BlockTiming per plan block, monotonic non-overlapping offsets, EndMs-StartMs byte-consistent with the 32 kHz WAVs, and manifest.json \"voice\" == cool-jahns-gso (Timeline correctness only — pronunciation is #164)."
+
+# ---- #164 go/no-go evidence: perf baseline + G2P coverage (machine-checkable) ----
+# gso-perf-baseline (#164 AC4) records the OFFICIAL cold/warm-per-block/peak-RSS
+# baseline by driving the REAL warm worker over $(SAMPLE) — a SEPARATE script from
+# gso_warmproof.py (S2: warmproof is the correctness oracle, left byte-unchanged).
+# cmd/plandump emits the engine-neutral plan.json (pure planner, NO worker, NO audio)
+# so the worker is fed exactly the per-block spoken text the GSO renderer would send.
+# Latency (cold 30s / warm ~20s) is INFORMATIONAL; peak RSS (8GB on a 16GB M1 Pro) is
+# the HARD go/no-go input, sampled off the .venv-gso worker pid with the unified-memory
+# caveat printed. A missing worker STOPS non-zero (honesty rule) → AC4 UNSATISFIED, and
+# #164 does NOT substitute #165's smoke reading.
+gso-perf-baseline:
+	@test -x $(GSO_PY) || { echo "no $(GSO_VENV) — AC4 UNSATISFIED without the real worker; run 'make gso-worker-venv' (do NOT substitute #165's smoke number)"; exit 2; }
+	@mkdir -p $(GSO_PERF_OUT)
+	go run ./cmd/plandump --file $(SAMPLE) > $(GSO_PERF_OUT)/plan.json
+	@echo "gso-perf-baseline: wrote engine-neutral plan.json (no worker/no audio) to $(GSO_PERF_OUT)/plan.json"
+	$(GSO_PY) scripts/gso_perf_baseline.py --plan $(GSO_PERF_OUT)/plan.json | tee $(GSO_PERF_OUT)/baseline.txt
+	@echo "gso-perf-baseline: baseline recorded at $(GSO_PERF_OUT)/baseline.txt (copy verbatim into the AC6 entry + PR body)."

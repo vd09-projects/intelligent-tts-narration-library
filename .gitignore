@@ -84,3 +84,5 @@ assets/gptsovits-models/_base/
 
 # GSO torch worker venv (per-machine; torch isolated to this subprocess, never linked)
 .venv-gso
+# plandump dev helper binary (go build ./cmd/plandump); use `go run` — never commit
+/plandump
