@@ -32,6 +32,20 @@ func TestSpeakManualSmoke(t *testing.T) {
 		t.Fatalf("resolve sample doc: %v", err)
 	}
 
+	// #164: NARRATE_SMOKE_SOURCE overrides the canonical demo doc so the MCP
+	// by-ear verify can target a short doc. sample.md's long verbatim-prose
+	// blocks synth for minutes under a slow peer engine (GSO), so a short doc
+	// keeps the by-ear loop fast. Empty keeps sample.md, so make test-mcp-manual
+	// is unchanged. Relative paths resolve against the repo root (the test
+	// chdirs there below), mirroring the sample.md default.
+	if src := os.Getenv("NARRATE_SMOKE_SOURCE"); src != "" {
+		if filepath.IsAbs(src) {
+			docPath = src
+		} else if docPath, err = filepath.Abs(filepath.Join(repoRoot, src)); err != nil {
+			t.Fatalf("resolve NARRATE_SMOKE_SOURCE: %v", err)
+		}
+	}
+
 	// runSpeak builds its pipeline with sherpa's default BinaryPath
 	// ("./scripts/kokoro"), resolved against the working directory. The test
 	// binary runs from cmd/narrate-mcp/, so chdir to the repo root makes the

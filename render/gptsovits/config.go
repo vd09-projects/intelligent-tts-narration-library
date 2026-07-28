@@ -2,20 +2,22 @@ package gptsovits
 
 import "time"
 
-// Default worker path + timeouts. GSO's cold load (~17-22 s on an M1 Pro) is
-// materially slower than a warm block (~3.6-3.8 s), so the first block of a
-// Render (and every RenderBlock call) gets a larger budget than warm blocks.
-//
-// First-pass figures — headroomed guesses pending a by-ear /verify against the
-// real worker (#164). Do not treat these as measured.
+// Default worker path + timeouts. GSO's cold load (~22 s on an M1 Pro, #164
+// measured) is slower than a typical warm block (~3 s median), but a single long
+// verbatim-prose block can synth for far longer — #164 measured a legitimate
+// block at 161 s. The per-block budget must clear that worst-case legit block so
+// a genuinely stuck worker still errors, without falsely killing long content
+// (the 30 s first pass hard-stopped real renders — #164). Latency is
+// informational, never a gate (warm-load-proof standing order); the wall-clock
+// cap is the runaway backstop that bounds a truly hung worker.
 const (
 	defaultWrapperPath = "./scripts/gso"
 
 	defaultModelsRoot = "assets/gptsovits-models"
 
-	defaultPerBlockTimeout   = 30 * time.Second
-	defaultFirstBlockTimeout = 45 * time.Second
-	defaultWallClockTimeout  = 10 * time.Minute
+	defaultPerBlockTimeout   = 5 * time.Minute
+	defaultFirstBlockTimeout = 6 * time.Minute
+	defaultWallClockTimeout  = 15 * time.Minute
 )
 
 // EngineConfig configures the GSO peer renderer.

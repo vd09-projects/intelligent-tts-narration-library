@@ -6,6 +6,11 @@
 > Training instructions live in `research/expressive-voice-clone-m1/finetune/gpt_sovits_finetune_colab.ipynb`.
 >
 > **Proven once on this machine** (M1 Pro, 16GB, macOS, no NVIDIA GPU). Every gotcha below was actually hit.
+>
+> **See also — `docs/gpt-sovits-integration.md`:** how the fine-tuned voice threads into the
+> narration library as a **peer** `render.Renderer` (not an RVC decorator) and reaches the user
+> through the CLI, the MCP `speak` tool, and the HTTP server. This runbook is the upstream
+> "run one WAV by hand"; the integration doc is the downstream "wire it into render / CLI / MCP".
 
 ---
 
