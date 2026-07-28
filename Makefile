@@ -68,7 +68,7 @@ help:
 	@echo "RVC voice wiring (#146 — needs the RVC worker: run 'make rvc-worker-venv' + 'make rvc-export'):"
 	@echo "  rvc-sanity             — narrate \$$SAMPLE at both RVC voices → 40 kHz audio.wav + manifest per voice under \$$RVC_SANITY_OUT (for the #147 by-ear /verify)"
 	@echo "  voice-sanity           — narrate \$$SAMPLE across the roster matrix (am-michael Kokoro 24 kHz + cool-jahns/confident-neal RVC 40 kHz) under \$$VOICE_SANITY_OUT (#156; RVC voices need the worker; for the #147 by-ear /verify)"
-	@echo "  mcp-voice-sanity       — MCP runSpeak by-ear smoke through a roster VOICE (default cool-jahns → RVC 40 kHz via afplay); proves the MCP speak 'voice' arg end-to-end (#147)"
+	@echo "  mcp-voice-sanity       — MCP runSpeak by-ear smoke through a roster MCP_VOICE (default cool-jahns → RVC 40 kHz via afplay); set MCP_SOURCE=<doc> to target a short doc (e.g. for the slow GSO peer); proves the MCP speak 'voice' arg end-to-end (#147/#164)"
 	@echo ""
 	@echo "GPT-SoVITS (#161 — torch subprocess over TTS_infer_pack; consumes .ckpt/.pth directly, NO ONNX; 32 kHz):"
 	@echo "  gso-fetch-base         — fetch + size-sanity the ~950MB shared base models into assets/gptsovits-models/_base/ (idempotent; needs network)"
@@ -379,8 +379,9 @@ voice-sanity:
 # end-to-end — the acceptance-criterion-2 counterpart of rvc-sanity's CLI path.
 # Default VOICE=cool-jahns (RVC 40 kHz); pass VOICE=<slug> for any roster voice.
 MCP_VOICE ?= cool-jahns
+MCP_SOURCE ?=
 mcp-voice-sanity:
-	NARRATE_SMOKE_VOICE=$(MCP_VOICE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
+	NARRATE_SMOKE_VOICE=$(MCP_VOICE) NARRATE_SMOKE_SOURCE=$(MCP_SOURCE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
 	@echo "MCP by-ear (#147/#164): heard $(MCP_VOICE) via the MCP speak 'voice' arg (runSpeak → BuildRenderer → the resolved engine [Kokoro / RVC decorator / GSO peer] → afplay)."
 
 # ---- GPT-SoVITS (GSO) torch inference worker (#161) ----
