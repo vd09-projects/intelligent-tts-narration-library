@@ -1,4 +1,4 @@
-.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof gso-sanity gso-perf-baseline
+.PHONY: help build build-mcp build-mcp-bin build-server test test-race test-race-planner test-manual test-manual-persistent test-mcp-manual bench fmt lint run run-detail run-male run-persistent run-listen run-mcp run-observe run-observe-manual run-server sanity clean preview-mockup earshot-dev earshot-build earshot-test earshot-lint rvc-export rvc-export-shared rvc-worker-venv rvc-parity rvc-parity-gen rvc-fixtures-fetch rvc-fixtures-test rvc-fixtures-publish rvc-convert rvc-sanity voice-sanity mcp-voice-sanity gso-fetch-base gso-worker-venv gso-contract-test gso-warmproof gso-sanity gso-perf-baseline gso-g2p-check
 
 SAMPLE ?= docs/samples/sample.md
 OUT ?= /tmp/narrate-persistent-$(shell date +%s)
@@ -6,6 +6,9 @@ RVC_SANITY_OUT ?= /tmp/rvc-sanity-$(shell date +%s)
 VOICE_SANITY_OUT ?= /tmp/voice-sanity-$(shell date +%s)
 GSO_SANITY_OUT ?= /tmp/gso-sanity-$(shell date +%s)
 GSO_PERF_OUT ?= /tmp/gso-perf-$(shell date +%s)
+GSO_G2P_OUT ?= /tmp/gso-g2p-$(shell date +%s)
+GSO_G2P_DOC ?= docs/samples/gso-g2p-coverage.md
+GSO_G2P_LEVEL ?= 3
 OBSERVE_FILE ?= /tmp/narrate-observe-manual.jsonl
 ADDR ?= 127.0.0.1:8080
 CORS_ORIGIN ?= http://localhost:5173
@@ -76,6 +79,7 @@ help:
 	@echo ""
 	@echo "GPT-SoVITS go/no-go evidence (#164 — SURFACES/STAGES machine evidence for the human gate; NEVER self-verifies by ear):"
 	@echo "  gso-perf-baseline      — OFFICIAL AC4 baseline: drive the warm worker over \$$SAMPLE, record cold/warm-per-block/peak-RSS vs ceilings (cold 30s / warm ~20s INFORMATIONAL, peak-RSS 8GB go/no-go). NEEDS the .venv-gso worker (real numbers only; absent worker → AC4 UNSATISFIED)"
+	@echo "  gso-g2p-check          — AC3 machine coverage of \$$GSO_G2P_DOC: half A surfaces Segment.Text per structured class from plan.json (NO worker); half B dumps g2p_en ARPAbet phoneme STRINGS (NEEDS .venv-gso). Textual inspection only — acoustic realism is AC3-ear (staged for human ears)"
 	@echo ""
 	@echo "Override sample doc: make run SAMPLE=path/to/file.md"
 	@echo "Override persistent out: make run-persistent OUT=path/to/dir"
@@ -466,3 +470,24 @@ gso-perf-baseline:
 	@echo "gso-perf-baseline: wrote engine-neutral plan.json (no worker/no audio) to $(GSO_PERF_OUT)/plan.json"
 	$(GSO_PY) scripts/gso_perf_baseline.py --plan $(GSO_PERF_OUT)/plan.json | tee $(GSO_PERF_OUT)/baseline.txt
 	@echo "gso-perf-baseline: baseline recorded at $(GSO_PERF_OUT)/baseline.txt (copy verbatim into the AC6 entry + PR body)."
+
+# gso-g2p-check (#164 AC3, machine halves) surfaces two textual, NO-listening halves of
+# the G2P coverage over $(GSO_G2P_DOC) at level $(GSO_G2P_LEVEL) (L3 so the table reads
+# its header + rows deterministically): half A = Segment.Text per structured class from
+# plan.json (pure planner, NO worker, NO audio); half B = the g2p_en ARPAbet phoneme
+# STRING per Segment.Text (NEEDS .venv-gso). Any acoustic-only question is AC3-ear —
+# staged for human ears, NEVER recorded here as a machine verdict. NO golden/fixture
+# assertion (a #164 non-goal). Half A runs with or without .venv-gso; half B is skipped
+# (with a loud notice) when the worker venv is absent.
+gso-g2p-check:
+	@mkdir -p $(GSO_G2P_OUT)
+	go run ./cmd/plandump --file $(GSO_G2P_DOC) --level $(GSO_G2P_LEVEL) > $(GSO_G2P_OUT)/plan.json
+	@echo "gso-g2p-check: wrote plan.json (half A Segment.Text source; no worker/no audio) to $(GSO_G2P_OUT)/plan.json"
+	@if [ -x $(GSO_PY) ]; then \
+		echo "gso-g2p-check: .venv-gso present — running half A + half B (g2p_en phoneme strings)"; \
+		$(GSO_PY) scripts/gso_g2p_dump.py --plan $(GSO_G2P_OUT)/plan.json | tee $(GSO_G2P_OUT)/g2p.txt; \
+	else \
+		echo "gso-g2p-check: no $(GSO_VENV) — half B SKIPPED (needs 'make gso-worker-venv'); surfacing half A Segment.Text only"; \
+		$(PYTHON3) scripts/gso_g2p_dump.py --plan $(GSO_G2P_OUT)/plan.json --no-phonemes | tee $(GSO_G2P_OUT)/g2p.txt; \
+	fi
+	@echo "gso-g2p-check: coverage surfaced at $(GSO_G2P_OUT)/g2p.txt (record the 5 target classes into docs/samples/gso-g2p-coverage.md; acoustic residue → AC3-ear, human-owned)."
