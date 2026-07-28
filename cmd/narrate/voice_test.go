@@ -31,7 +31,8 @@ func TestFlagSet_Validate_Voice(t *testing.T) {
 		{"am-michael", false},     // Kokoro roster slug (#156)
 		{"cool-jahns", false},     // known RVC slug
 		{"confident-neal", false}, // known RVC slug
-		{"bogus", true},           // unknown slug → caller-error
+		{"cool-jahns-gso", false}, // GSO peer roster slug (#162/#163) — accepted, resolves
+		{"bogus", true},           // unknown slug → rejected here (err != nil only); the ErrUnknownVoice class is pinned in pipeline/build_renderer_test.go
 		{"af_bella", true},        // an underscore ENGINE id is not a roster slug
 	}
 	for _, tc := range cases {
@@ -56,6 +57,7 @@ func TestFlagSet_Validate_VoiceWithListen(t *testing.T) {
 	}{
 		{"cool-jahns", true},     // RVC 40 kHz → rejected pending #154
 		{"confident-neal", true}, // RVC 40 kHz → rejected
+		{"cool-jahns-gso", true}, // GSO 32 kHz, requires worker → rejected (S2 generalized message)
 		{"af-bella", false},      // Kokoro 24 kHz → allowed
 		{"am-michael", false},    // Kokoro 24 kHz → allowed
 		{"", false},              // no voice → allowed (gender alias)

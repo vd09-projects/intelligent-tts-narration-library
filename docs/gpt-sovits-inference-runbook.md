@@ -199,3 +199,13 @@ options if this isn't good enough as-is:
 ## Pinned versions (this machine)
 Python 3.11.13 (Homebrew) · torch 2.13.0 (mac wheel, MPS-capable) · torchaudio 2.11.0 · torchcodec 0.15.0 ·
 opencc-python-reimplemented · GPT-SoVITS main branch (2026-07) · v2Pro config, 32kHz output.
+
+---
+
+## Wiring note — picking up `cool-jahns-gso` in a running `narrate-mcp` ⚠️
+
+> **A running `narrate-mcp` is a compiled *binary*, not source.** A live server connected before the
+> `cool-jahns-gso` roster wiring (#163) advertises only the old roster and will not offer the new voice.
+> After pulling this work, rebuild + restart it (`make build-mcp-bin`, then restart the client's MCP
+> connection) or `cool-jahns-gso` is invisible to a connected client even though the code supports it.
+> Same gotcha the RVC roster hit (`docs/rvc-integration.md`).

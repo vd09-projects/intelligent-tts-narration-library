@@ -8,6 +8,14 @@
 
 ```yaml
 decisions:
+  - id: 2026-07-28-gso-163-roster-wiring-landed-inside-162-s-merge
+    title: "GSO #163 roster wiring landed inside #162's merge; #163 pivoted to docs+tests-only"
+    date: 2026-07-28
+    status: accepted
+    category: process
+    tags: [gso, gpt-sovits, scope, process, 163, 162, roster]
+    path: process/2026-07-28-gso-163-roster-wiring-landed-inside-162-s-merge.md
+    summary: "The GPT-SoVITS roster row, the pipeline.BuildRenderer EngineGSO arm, and their pipeline unit tests — the nominal deliverables of #163 (GSO P3) — were actually authored and merged as part of #162 (commit c0d98c3, the GSO peer render engine), so AC1/AC2/AC3-seam/AC4/AC5 were already green on HEAD. #163 was re-scoped to close only the gaps #162 left: the AC6 narrate-mcp rebuild+restart gotcha note (in docs/gpt-sovits-inference-runbook.md), GSO-named cmd-level voice assertions at both roots, and a cosmetic --listen rejection-message generalization. No pipeline/ production code changed in #163 — the PR is docs+tests-only. Records why a reviewer won't find the roster wiring diff in #163, and flags the #162->#163 engine-wiring scope bleed on the #161-#164 GSO chain trail. Not an architecture decision; the load-bearing GSO architecture decisions were already recorded during #161/#162."
   - id: 2026-07-28-gso-render-peer-renderer-not-rvc-decorator
     title: "render/gptsovits is a peer render.Renderer (sherpa-shaped), deliberately NOT an rvc-style decorator"
     date: 2026-07-28
