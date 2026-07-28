@@ -381,7 +381,7 @@ voice-sanity:
 MCP_VOICE ?= cool-jahns
 mcp-voice-sanity:
 	NARRATE_SMOKE_VOICE=$(MCP_VOICE) go test -tags manual -v -run TestSpeakManualSmoke ./cmd/narrate-mcp/...
-	@echo "MCP by-ear (#147): heard $(MCP_VOICE) via the MCP speak 'voice' arg (runSpeak → BuildRenderer → RVC decorator → afplay)."
+	@echo "MCP by-ear (#147/#164): heard $(MCP_VOICE) via the MCP speak 'voice' arg (runSpeak → BuildRenderer → the resolved engine [Kokoro / RVC decorator / GSO peer] → afplay)."
 
 # ---- GPT-SoVITS (GSO) torch inference worker (#161) ----
 # The ephemeral warm-load-once subprocess engine (#162 drives it later). Its venv is
